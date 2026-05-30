@@ -1,0 +1,31 @@
+name: acceptance
+
+# Runs the sluice acceptance harness on Linux. The Docker job is the gate; the Podman
+# job is best-effort (informational) because rootless podman may restrict the
+# route_localnet / disable_ipv6 sysctls the egress proxy needs (hence rootful here).
+on:
+  push:
+  pull_request:
+
+jobs:
+  docker:
+    name: Linux · Docker
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Acceptance tests (Docker)
+        run: ./test/acceptance.sh   # docker is preinstalled and group-accessible on GH runners
+
+  podman:
+    name: Linux · Podman (rootful, best-effort)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install podman
+        run: sudo apt-get update && sudo apt-get install -y podman
+      - name: Acceptance tests (rootful Podman)
+        # Rootful so the sysctls apply; -E preserves PATH so bin/sluice finds podman/curl.
+        run: sudo -E env SLUICE_ENGINE=podman ./test/acceptance.sh
