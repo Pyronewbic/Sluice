@@ -1,22 +1,22 @@
-# JupyterLab — a Python notebook server, served from a sluice.
+# JupyterLab - a Python notebook server, served from a sluice.
 #
 # Usage: copy this file into an (empty) project dir as sluice.config.sh, then run `sluice`.
 #   mkdir notebooks && cp examples/jupyter.config.sh notebooks/sluice.config.sh
 #   cd notebooks && sluice
 # Then open http://localhost:8888 in your HOST browser. Your project dir is mounted, so
 # notebooks you create are saved on the host. Token auth is disabled for easy localhost
-# access — fine because the port is published to 127.0.0.1 only.
+# access - fine because the port is published to 127.0.0.1 only.
 #
 # Contrast with the Strudel example: a totally different stack (Python/pip, not npm),
-# and it needs NO runtime egress — the lab UI assets are served locally, so
+# and it needs NO runtime egress - the lab UI assets are served locally, so
 # SLUICE_ALLOW_DOMAINS stays empty. The only network use is pip at BUILD time (free egress).
 
 # --- software (build time) ------------------------------------------------------
-# Wolfi's Python + pip. (Wolfi is glibc-based, so pip pulls manylinux wheels — no
+# Wolfi's Python + pip. (Wolfi is glibc-based, so pip pulls manylinux wheels - no
 # compiler needed for jupyterlab/ipykernel/pyzmq.)
 SLUICE_EXTRA_PKGS="python-3.12 py3.12-pip"
 
-# Install JupyterLab + a Python kernel as the node user (--user → ~/.local), and
+# Install JupyterLab + a Python kernel as the node user (--user -> ~/.local), and
 # register the kernel. Runs before the firewall, so pip reaches PyPI freely.
 SLUICE_SETUP_CMDS='
 pip install --user --no-input jupyterlab ipykernel

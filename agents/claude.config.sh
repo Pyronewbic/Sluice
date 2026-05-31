@@ -1,8 +1,8 @@
-# Claude Code — Anthropic's agentic coding CLI — run YOLO inside a sluice.
+# Claude Code - Anthropic's agentic coding CLI - run YOLO inside a sluice.
 #
 #   sluice agent claude
 #
-# Auth: export ANTHROPIC_API_KEY (or CLAUDE_CODE_OAUTH_TOKEN) on the HOST before running —
+# Auth: export ANTHROPIC_API_KEY (or CLAUDE_CODE_OAUTH_TOKEN) on the HOST before running -
 # it's forwarded into the box, never baked into the image. The browser OAuth login can't
 # complete in a headless sandbox, so use a key/token.
 SLUICE_EXTRA_NPM="@anthropic-ai/claude-code"

@@ -1,4 +1,4 @@
-# OpenAI Codex CLI — run inside a sluice.
+# OpenAI Codex CLI - run inside a sluice.
 #
 #   sluice agent codex
 #

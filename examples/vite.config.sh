@@ -1,4 +1,4 @@
-# Vite dev server (React/Vue/Svelte/Solid/…) for YOUR repo, sandboxed + firewalled.
+# Vite dev server (React/Vue/Svelte/Solid/...) for YOUR repo, sandboxed + firewalled.
 # Copy into a Vite project as sluice.config.sh, then `sluice`.
 #
 # Installs deps into the mounted repo (the npm registry is allowed by default), then serves

@@ -1,4 +1,4 @@
-# sluice — sandbox image for running untrusted code/deps behind an egress firewall.
+# sluice - sandbox image for running untrusted code/deps behind an egress firewall.
 # Wolfi-based (Chainguard's open-source undistro): low-CVE, daily-patched, apk.
 # This is wolfi-base + apk (NOT distroless): the sluice needs a shell, iptables + squid
 # for the egress firewall, and whatever dev tooling each project declares.
@@ -7,7 +7,7 @@ FROM cgr.dev/chainguard/wolfi-base
 # wolfi-base's apk points only at the curated apk.cgr.dev/chainguard repo (a subset).
 # Bootstrap curl (wolfi-base ships none), fetch the Wolfi OS signing key, and add the
 # full open-source Wolfi OS repo so SLUICE_EXTRA_PKGS can pull anything Wolfi publishes.
-# The build runs on the host, BEFORE the sluice firewall — network is unrestricted here.
+# The build runs on the host, BEFORE the sluice firewall - network is unrestricted here.
 RUN apk add --no-cache curl \
     && curl -fsSL https://packages.wolfi.dev/os/wolfi-signing.rsa.pub \
         -o /etc/apk/keys/wolfi-signing.rsa.pub \
@@ -23,7 +23,7 @@ COPY --chmod=0644 sluice.config.sh /usr/local/share/sluice.config.sh
 # node/npm/git/gh/curl/jq + the firewall toolchain: iptables (v4+v6) and squid (the
 # hostname-filtering egress proxy); openssl mints squid's splice cert. coreutils: GNU
 # userland the scripts assume (`sleep infinity`; busybox lacks it). bind-tools: `dig`
-# for diagnostics. Project tooling (e.g. terraform, a language runtime) → SLUICE_EXTRA_PKGS.
+# for diagnostics. Project tooling (e.g. terraform, a language runtime) -> SLUICE_EXTRA_PKGS.
 RUN . /usr/local/share/sluice.config.sh && apk add --no-cache \
       bash coreutils ca-certificates-bundle curl git less vim procps sudo shadow \
       iptables bind-tools jq gh squid openssl \
@@ -50,7 +50,7 @@ ENV PATH=/home/node/.npm-global/bin:${PATH}
 # Runs as the NON-ROOT node user in its home, so anything it produces (cloned repos,
 # node_modules, framework caches) is node-owned and writable when the dev server runs.
 # Runs on the host before the sluice firewall, so clones/downloads have free egress; the
-# RUNNING container is still locked to the allowlist. System packages → SLUICE_EXTRA_PKGS.
+# RUNNING container is still locked to the allowlist. System packages -> SLUICE_EXTRA_PKGS.
 USER node
 WORKDIR /home/node
 RUN . /usr/local/share/sluice.config.sh \
@@ -61,7 +61,7 @@ WORKDIR /
 # --- egress filter (squid): user, runtime dirs, splice cert ---------------------
 # squid runs as its own uid (the firewall's `--uid-owner squid` rule is the only uid
 # allowed direct egress). Ensure the user + dirs exist and mint a throwaway self-signed
-# cert for the ssl-bump parser — we only SPLICE (never forge), so it's never used to MITM.
+# cert for the ssl-bump parser - we only SPLICE (never forge), so it's never used to MITM.
 RUN { getent group squid  >/dev/null 2>&1 || groupadd -r squid; } \
     && { getent passwd squid >/dev/null 2>&1 || useradd -r -g squid -d /var/cache/squid -s /bin/false squid; } \
     && mkdir -p /etc/squid/ssl /var/log/squid /var/cache/squid /run/squid \

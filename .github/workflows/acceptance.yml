@@ -9,7 +9,7 @@ on:
 
 jobs:
   docker:
-    name: Linux · Docker
+    name: Linux, Docker
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -18,7 +18,7 @@ jobs:
         run: ./test/acceptance.sh   # docker is preinstalled and group-accessible on GH runners
 
   podman:
-    name: Linux · Podman (rootful, best-effort)
+    name: Linux, Podman (rootful, best-effort)
     runs-on: ubuntu-latest
     timeout-minutes: 25
     continue-on-error: true

@@ -1,10 +1,10 @@
-# sluice project config — copy to your project as `sluice.config.sh` and edit.
+# sluice project config - copy to your project as `sluice.config.sh` and edit.
 #
 # Sourced in three places, so keep it POSIX-sh-safe:
-#   - the Dockerfile build   (/bin/sh)  → SLUICE_EXTRA_PKGS, SLUICE_EXTRA_NPM, SLUICE_SETUP_CMDS
-#   - init-firewall.sh at boot (bash)   → SLUICE_ALLOW_DOMAINS, SLUICE_ALLOW_IPS, SLUICE_PORTS
-#   - bin/sluice on the host      (bash)   → SLUICE_PORTS, SLUICE_RUN_CMD, SLUICE_ENV, SLUICE_MOUNTS, SLUICE_PRELAUNCH
-# Use plain space/newline-separated strings — NO bash arrays.
+#   - the Dockerfile build   (/bin/sh)  -> SLUICE_EXTRA_PKGS, SLUICE_EXTRA_NPM, SLUICE_SETUP_CMDS
+#   - init-firewall.sh at boot (bash)   -> SLUICE_ALLOW_DOMAINS, SLUICE_ALLOW_IPS, SLUICE_PORTS
+#   - bin/sluice on the host      (bash)   -> SLUICE_PORTS, SLUICE_RUN_CMD, SLUICE_ENV, SLUICE_MOUNTS, SLUICE_PRELAUNCH
+# Use plain space/newline-separated strings - NO bash arrays.
 #
 # Every knob is optional. A minimal config is just a SLUICE_RUN_CMD.
 
@@ -19,7 +19,7 @@ SLUICE_EXTRA_PKGS=""
 SLUICE_EXTRA_NPM=""
 
 # Build-time setup: clones, dependency installs, codegen. Runs as the non-root node
-# user in /home/node, on the host BEFORE the firewall — so egress is unrestricted here
+# user in /home/node, on the host BEFORE the firewall - so egress is unrestricted here
 # (the *running* container is still locked to the allowlist). One shell string; chain
 # with && or newlines. Whatever it writes is node-owned and writable at runtime.
 # e.g. "git clone --depth 1 https://example.com/app && cd app && npm ci"
@@ -29,19 +29,19 @@ SLUICE_SETUP_CMDS=""
 
 # HTTP/HTTPS hosts the running container may reach, ON TOP of the base (npm/yarn
 # registries + GitHub git/release hosts). Space/newline-separated. Egress is matched by
-# Host/TLS-SNI through an in-sluice proxy (by name, not IP — survives IP rotation); a leading
+# Host/TLS-SNI through an in-sluice proxy (by name, not IP - survives IP rotation); a leading
 # dot matches subdomains (".example.com"). This is usually the one thing you must get
 # right: anything the app fetches at runtime (CDNs, sample/asset hosts, APIs) must be
 # listed or the proxy silently blocks it.
 SLUICE_ALLOW_DOMAINS=""
 
-# Fixed IPs/CIDRs for NON-HTTP services (e.g. a database) — direct egress on any port,
+# Fixed IPs/CIDRs for NON-HTTP services (e.g. a database) - direct egress on any port,
 # bypassing the hostname proxy. Space-separated. Keep minimal. e.g. "203.0.113.7/32"
 SLUICE_ALLOW_IPS=""
 
 # --- serving --------------------------------------------------------------------
 
-# TCP ports to publish to the host (bound to 127.0.0.1 → reach via localhost only).
+# TCP ports to publish to the host (bound to 127.0.0.1 -> reach via localhost only).
 # Space-separated. The firewall opens a matching inbound rule for each. The app MUST
 # bind 0.0.0.0 inside the container (not 127.0.0.1) for forwarded traffic to reach it.
 SLUICE_PORTS=""
@@ -52,7 +52,7 @@ SLUICE_PORTS=""
 # dir). Defaults to an interactive bash if unset. e.g. "npm run dev -- --host 0.0.0.0"
 SLUICE_RUN_CMD="bash"
 
-# --- optional: credentials / extra wiring (host → container) --------------------
+# --- optional: credentials / extra wiring (host -> container) --------------------
 
 # Names of host env vars to forward into the container session (values come from your
 # host environment / the prelaunch hook below). Space-separated. e.g. "GH_TOKEN API_KEY"
@@ -63,7 +63,7 @@ SLUICE_ENV=""
 #   $HOME/.cache/app:/home/node/.cache/app"
 SLUICE_MOUNTS=""
 
-# Name of a shell function defined in THIS file, run on the host before launch — use
+# Name of a shell function defined in THIS file, run on the host before launch - use
 # it to mint/stage short-lived credentials (write a token file, then expose its path
 # via SLUICE_MOUNTS, or export an env var named in SLUICE_ENV). Keeps cred plumbing in the
 # project config, out of the generic core. e.g.

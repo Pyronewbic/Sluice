@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # sluice acceptance tests. Builds the example sluices and asserts the security + serving
-# invariants end-to-end. Engine-agnostic — honours SLUICE_ENGINE (docker or podman). Exits
+# invariants end-to-end. Engine-agnostic - honours SLUICE_ENGINE (docker or podman). Exits
 # non-zero on any failure, so it doubles as the CI gate.
 #
 #   test/acceptance.sh            # run everything
-#   ACCEPTANCE_QUICK=1 …          # skip the (slower) Strudel serve test
-#   SLUICE_ENGINE=podman …           # run against podman instead of docker
+#   ACCEPTANCE_QUICK=1 ...          # skip the (slower) Strudel serve test
+#   SLUICE_ENGINE=podman ...           # run against podman instead of docker
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -24,10 +24,10 @@ bad()  { FAIL=$((FAIL+1)); printf '  FAIL %s\n' "$1"; }
 # assert_block "label" <cmd...>: PASS if the command FAILS (egress blocked).
 # assert_pass  "label" <cmd...>: PASS if the command SUCCEEDS.
 bxrun() { ( cd "$1" && shift && "$SLUICE" run "$@" ) >/dev/null 2>&1; }
-# Allow-checks: success = the connection REACHED the host (the proxy allowed it), not 2xx —
+# Allow-checks: success = the connection REACHED the host (the proxy allowed it), not 2xx -
 # so they use plain `curl -sS` (no -f). A 4xx like github.com rate-limiting CI runner IPs
 # (429) still means "allowed". They also retry, so a single transient blip isn't a failure.
-# (Deny-checks keep -f — squid's 403 page for a blocked HTTP host must read as failure — and
+# (Deny-checks keep -f - squid's 403 page for a blocked HTTP host must read as failure - and
 # aren't retried, since they pass when curl fails, which a blip only helps.)
 retry() { local n=1; until "$@"; do [ "$n" -ge 3 ] && return 1; n=$((n+1)); sleep 2; done; }
 
@@ -77,7 +77,7 @@ else
     && ok "runtime: sample host raw.githubusercontent.com reachable (sound loads)" \
     || bad "runtime: sample host raw.githubusercontent.com reachable"
   bxrun "$WORK/strudel" curl -fsS --max-time 8 -o /dev/null https://unpkg.com/@strudel/repl@1.3.0 \
-    && bad "runtime: unpkg.com (was reachable — should be build-only!)" \
+    && bad "runtime: unpkg.com (was reachable - should be build-only!)" \
     || ok "runtime: unpkg.com blocked (bundle was baked at build)"
   ( cd "$WORK/strudel" && "$SLUICE" stop ) >/dev/null 2>&1
 fi

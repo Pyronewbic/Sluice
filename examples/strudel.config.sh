@@ -1,4 +1,4 @@
-# Strudel — the live-coding music REPL, served from a sluice.
+# Strudel - the live-coding music REPL, served from a sluice.
 #
 # Usage: copy this file into an (empty) project dir as sluice.config.sh, then run `sluice`.
 #   mkdir strudel && cp examples/strudel.config.sh strudel/sluice.config.sh
@@ -7,14 +7,14 @@
 # Ctrl+Enter to play. Audio + UI happen host-side; the sluice stays headless + firewalled.
 #
 # What this demonstrates: a single config file turns an empty dir into a sandboxed,
-# firewalled web app — exercising SLUICE_SETUP_CMDS (build-time), SLUICE_PORTS (published +
+# firewalled web app - exercising SLUICE_SETUP_CMDS (build-time), SLUICE_PORTS (published +
 # firewall-opened), SLUICE_RUN_CMD (the server), and SLUICE_ALLOW_DOMAINS (runtime egress).
 # No credentials, no SLUICE_PRELAUNCH.
 
 # --- build-time: bake the REPL bundle + the page + a tiny static server ----------
 # Runs as the node user before the firewall (free egress), so the curl below works.
 # The @strudel/repl bundle (a self-contained 2.2 MB IIFE that registers the
-# <strudel-editor> web component) is downloaded ONCE here and served locally — so at
+# <strudel-editor> web component) is downloaded ONCE here and served locally - so at
 # RUNTIME the only egress the app needs is the sample host (see SLUICE_ALLOW_DOMAINS).
 SLUICE_SETUP_CMDS='
 mkdir -p /home/node/strudel-app
@@ -33,7 +33,7 @@ cat > /home/node/strudel-app/index.html <<"HTML"
   </style>
 </head>
 <body>
-  <header>Strudel, served from a sluice — click the editor and press Ctrl+Enter to play. Stop with Ctrl+. </header>
+  <header>Strudel, served from a sluice - click the editor and press Ctrl+Enter to play. Stop with Ctrl+. </header>
   <strudel-editor>
     <!--
 samples("github:tidalcycles/dirt-samples")

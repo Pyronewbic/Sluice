@@ -1,4 +1,4 @@
-# Amp (Sourcegraph) — inside a sluice.   [best-effort: confirm host(s)]
+# Amp (Sourcegraph) - inside a sluice.   [best-effort: confirm host(s)]
 #
 #   sluice agent amp
 #

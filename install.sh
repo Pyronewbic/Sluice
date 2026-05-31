@@ -33,6 +33,6 @@ ln -sf "$src/bin/sluice" "$BIN/sluice"
 echo "Linked $BIN/sluice -> $src/bin/sluice"
 
 case ":$PATH:" in
-  *":$BIN:"*) echo "Ready — run 'sluice init' in a project, or 'sluice agent claude'." ;;
+  *":$BIN:"*) echo "Ready - run 'sluice init' in a project, or 'sluice agent claude'." ;;
   *) echo "Add ~/.local/bin to PATH:  echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.profile" ;;
 esac

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Egress firewall. All HTTP/HTTPS egress is forced through the in-sluice squid proxy, which
 # allows by HOSTNAME (HTTP Host header / TLS SNI) and splices allowed connections WITHOUT
-# decrypting them. Everything else — other ports, IPv6, direct-IP — is default-DROP.
+# decrypting them. Everything else - other ports, IPv6, direct-IP - is default-DROP.
 #
 # This replaces IP-allowlisting: the allow/deny decision is by domain, so it survives IP
 # rotation, and the direct-IP / DoH / IPv6 bypasses are closed. squid (started by the
@@ -11,7 +11,7 @@ set -euo pipefail
 
 echo "[firewall] configuring hostname-filtered egress..."
 
-# Per-project config (SLUICE_PORTS, SLUICE_ALLOW_IPS) — baked at /usr/local/share/sluice.config.sh.
+# Per-project config (SLUICE_PORTS, SLUICE_ALLOW_IPS) - baked at /usr/local/share/sluice.config.sh.
 [ -f /usr/local/share/sluice.config.sh ] && . /usr/local/share/sluice.config.sh
 
 SQUID_UID="$(id -u squid)"
@@ -28,7 +28,7 @@ iptables -t nat -X 2>/dev/null || true
 iptables -A INPUT -i lo -j ACCEPT
 iptables -A INPUT -s 127.0.0.11 -j ACCEPT                              # docker embedded DNS
 iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
-# Published ports (docker -p) are DNAT'd to the container — allow them inbound.
+# Published ports (docker -p) are DNAT'd to the container - allow them inbound.
 for p in ${SLUICE_PORTS:-}; do
   iptables -A INPUT -p tcp --dport "$p" -j ACCEPT
 done
@@ -41,10 +41,10 @@ iptables -t nat -A OUTPUT -p tcp --dport 443 -m owner ! --uid-owner "$SQUID_UID"
 
 # --- OUTPUT (v4) ---------------------------------------------------------------
 iptables -A OUTPUT -o lo -j ACCEPT                                     # loopback
-iptables -A OUTPUT -d 127.0.0.0/8 -j ACCEPT                            # REDIRECT'd pkts (dst rewritten to localhost → squid)
+iptables -A OUTPUT -d 127.0.0.0/8 -j ACCEPT                            # REDIRECT'd pkts (dst rewritten to localhost -> squid)
 iptables -A OUTPUT -m owner --uid-owner "$SQUID_UID" -j ACCEPT         # squid's own egress (enforces the allowlist)
 # DNS only to the resolvers the container actually uses (covers Docker's embedded
-# 127.0.0.11 on Linux and Docker Desktop's host resolver) — blocks DNS tunneling to an
+# 127.0.0.11 on Linux and Docker Desktop's host resolver) - blocks DNS tunneling to an
 # arbitrary nameserver, while letting apps resolve names so their 80/443 can be proxied.
 for ns in $(awk '/^nameserver/ { print $2 }' /etc/resolv.conf 2>/dev/null); do
   case "$ns" in *:*) continue;; esac                                  # skip IPv6 resolvers
@@ -53,7 +53,7 @@ for ns in $(awk '/^nameserver/ { print $2 }' /etc/resolv.conf 2>/dev/null); do
 done
 iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
 # Reviewed fixed IPs/CIDRs (e.g. a database) get direct egress on any port, bypassing the
-# HTTP(S) proxy — the escape hatch for non-HTTP services.
+# HTTP(S) proxy - the escape hatch for non-HTTP services.
 for ip in ${SLUICE_ALLOW_IPS:-}; do
   iptables -A OUTPUT -d "$ip" -j ACCEPT
 done
@@ -74,7 +74,7 @@ fi
 
 # --- verify (fail closed on the deny tests) ------------------------------------
 # Deny: a non-allowlisted host must be terminated by the proxy. Pick a reachable canary
-# that ISN'T in this project's allowlist — so a project that legitimately allows
+# that ISN'T in this project's allowlist - so a project that legitimately allows
 # example.com (etc.) doesn't trip its own boot self-test.
 deny_canary=""
 for c in example.com example.net example.org; do
@@ -83,18 +83,18 @@ for c in example.com example.net example.org; do
 done
 if [ -n "$deny_canary" ]; then
   if curl -sS -o /dev/null --max-time 6 "https://$deny_canary" 2>/dev/null; then
-    echo "[firewall] FAIL: $deny_canary reachable — hostname filtering not enforced" >&2
+    echo "[firewall] FAIL: $deny_canary reachable - hostname filtering not enforced" >&2
     exit 1
   fi
 else
-  echo "[firewall] WARN: every deny-canary is allowlisted — skipping the deny self-test" >&2
+  echo "[firewall] WARN: every deny-canary is allowlisted - skipping the deny self-test" >&2
 fi
-# Deny: a direct-IP HTTPS connection carries no SNI → the proxy must block it.
+# Deny: a direct-IP HTTPS connection carries no SNI -> the proxy must block it.
 if curl -sS -o /dev/null --max-time 6 https://1.1.1.1 2>/dev/null; then
-  echo "[firewall] FAIL: direct-IP egress reachable — proxy bypassed" >&2
+  echo "[firewall] FAIL: direct-IP egress reachable - proxy bypassed" >&2
   exit 1
 fi
 # Allow: an always-allowlisted base host must work THROUGH the proxy. Warn-only (transient).
 curl -sS -o /dev/null --max-time 12 https://registry.npmjs.org 2>/dev/null \
-  || echo "[firewall] WARN: registry.npmjs.org unreachable via proxy — check 'docker exec <sluice> cat /var/log/squid/cache.log'" >&2
+  || echo "[firewall] WARN: registry.npmjs.org unreachable via proxy - check 'docker exec <sluice> cat /var/log/squid/cache.log'" >&2
 echo "[firewall] hostname-filtered egress active (proxy: squid)."
