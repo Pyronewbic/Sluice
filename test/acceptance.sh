@@ -1,11 +1,6 @@
 #!/usr/bin/env bash
-# sluice acceptance tests. Builds the example sluices and asserts the security + serving
-# invariants end-to-end. Engine-agnostic - honours SLUICE_ENGINE (docker or podman). Exits
-# non-zero on any failure, so it doubles as the CI gate.
-#
-#   test/acceptance.sh            # run everything
-#   ACCEPTANCE_QUICK=1 ...          # skip the (slower) Strudel serve test
-#   SLUICE_ENGINE=podman ...           # run against podman instead of docker
+# sluice acceptance tests: build the example sluices, assert the security + serving invariants
+# end-to-end (the CI gate). Engine-agnostic (SLUICE_ENGINE). ACCEPTANCE_QUICK=1 skips Strudel.
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -21,14 +16,9 @@ trap cleanup EXIT
 
 ok()   { PASS=$((PASS+1)); printf '  ok   %s\n' "$1"; }
 bad()  { FAIL=$((FAIL+1)); printf '  FAIL %s\n' "$1"; }
-# assert_block "label" <cmd...>: PASS if the command FAILS (egress blocked).
-# assert_pass  "label" <cmd...>: PASS if the command SUCCEEDS.
 bxrun() { ( cd "$1" && shift && "$SLUICE" run "$@" ) >/dev/null 2>&1; }
-# Allow-checks: success = the connection REACHED the host (the proxy allowed it), not 2xx -
-# so they use plain `curl -sS` (no -f). A 4xx like github.com rate-limiting CI runner IPs
-# (429) still means "allowed". They also retry, so a single transient blip isn't a failure.
-# (Deny-checks keep -f - squid's 403 page for a blocked HTTP host must read as failure - and
-# aren't retried, since they pass when curl fails, which a blip only helps.)
+# Allow-checks use curl -sS (no -f): success = reached the host (4xx still = allowed) + retry.
+# Deny-checks keep -f and don't retry (they pass when curl fails).
 retry() { local n=1; until "$@"; do [ "$n" -ge 3 ] && return 1; n=$((n+1)); sleep 2; done; }
 
 echo "== sluice acceptance (engine: ${SLUICE_ENGINE:-docker}) =="
@@ -41,13 +31,9 @@ if ( cd "$WORK/empty" && "$SLUICE" build ) >/dev/null 2>&1; then ok "builds"; el
 
 retry bxrun "$WORK/empty" curl -sS --max-time 15 -o /dev/null https://registry.npmjs.org/ \
   && ok "allow: registry.npmjs.org reachable (spliced by SNI)" || bad "allow: registry.npmjs.org reachable"
-# github.com is a base-allowlisted host, but its edge intermittently resets datacenter/CI
-# runner IPs - the origin refusing us, not our egress policy failing. The allow ENFORCEMENT
-# mechanism is already proven live by the registry.npmjs.org check above (and deny enforcement
-# by the blocks below), so when github's own edge refuses us we fall back to the deterministic,
-# engine-agnostic assertion that github.com is on the active squid allowlist. That file is
-# world-readable, so this works as the node user under both docker and podman, and it can
-# never mask a real block - a denied host is never on the allowlist.
+# github.com's edge intermittently resets CI IPs (not our policy failing). Allow-enforcement is
+# already proven by npm above, so on a live-fetch failure fall back to asserting github.com is
+# on the squid allowlist (can't mask a real block - a denied host is never on it).
 if retry bxrun "$WORK/empty" curl -sS --max-time 15 -o /dev/null https://github.com/; then
   ok "allow: github.com reachable"
 elif bxrun "$WORK/empty" grep -qx github.com /etc/squid/allowlist.txt; then

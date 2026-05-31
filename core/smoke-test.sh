@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
-# Smoke-test the sluice image: base tooling present + the session is non-root.
-# Run by `sluice smoke` (as the node user, in a throwaway container). The firewall
-# allow/deny invariants are verified separately by init-firewall.sh at real boot.
-# Exits non-zero if any check fails.
+# `sluice smoke`: check base tooling is present + the session is non-root (firewall invariants
+# are verified separately by init-firewall.sh at boot). Exits non-zero on any failure.
 set -u
 
 fail=0

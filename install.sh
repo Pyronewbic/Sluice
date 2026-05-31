@@ -1,10 +1,6 @@
 #!/bin/sh
-# Install the global `sluice` CLI by symlinking bin/sluice onto PATH.
-#
-#   from a checkout:   ./install.sh
-#   one-liner:         curl -fsSL https://raw.githubusercontent.com/Pyronewbic/Sluice/main/install.sh | sh
-#
-# Env overrides: SLUICE_REPO (git URL), SLUICE_HOME (clone dir, default ~/.local/share/sluice).
+# Install the `sluice` CLI by symlinking bin/sluice onto PATH (from a checkout, or curl|sh).
+# Env: SLUICE_REPO (git URL), SLUICE_HOME (clone dir, default ~/.local/share/sluice).
 set -eu
 
 REPO="${SLUICE_REPO:-https://github.com/Pyronewbic/Sluice.git}"

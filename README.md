@@ -1,5 +1,7 @@
 # sluice
 
+<img src="assets/logo-badge.svg" width="84" align="right" alt="sluice logo">
+
 A sandboxed, firewalled, isolated container for any project - drop a `sluice.config.sh`
 in a directory and run `sluice`. The sluice runs untrusted code/dependencies behind a
 **default-DROP egress firewall** (only allowlisted hosts are reachable), as a

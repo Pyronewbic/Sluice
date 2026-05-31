@@ -1,11 +1,7 @@
 #!/usr/bin/env bash
-# Build-smoke each runtime example end-to-end: `sluice build` -> serve -> curl, through the
-# sandbox, with the app's dependency fetched through the egress proxy. This is the slow
-# integration layer (real toolchains + network), so it runs nightly / on demand - NOT on the
-# PR gate (that stays the fast egress acceptance + init-detection unit tests).
-#
-# Each example is copied to a temp workdir first, so build artifacts never touch the repo.
-#   test/verify-runtimes.sh
+# Build-smoke each runtime example (build -> serve -> curl, deps through the proxy). Slow
+# integration layer; runs nightly/on-demand, not the PR gate. Each example is copied to a
+# temp dir first so build artifacts never touch the repo.
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

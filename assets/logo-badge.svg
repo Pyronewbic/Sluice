@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <title>sluice</title>
+  <rect width="64" height="64" rx="14" fill="#0d1117"/>
+  <g fill="none" stroke="#e6edf3" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 16V52M52 16V52"/>
+    <circle cx="32" cy="9" r="3.5" fill="#e6edf3" stroke="none"/>
+    <path d="M32 12V19"/>
+    <rect x="21" y="19" width="22" height="14" rx="2" fill="#e6edf3" stroke="none"/>
+    <path d="M15 42q4.5-5 9 0t9 0 9 0 9 0"/>
+    <path d="M15 50q4.5-5 9 0t9 0 9 0 9 0"/>
+  </g>
+</svg>

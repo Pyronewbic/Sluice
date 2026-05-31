@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
-# Unit tests for `sluice init` stack detection. No Docker: this exercises only the scaffolder
-# (which builds nothing), so it is fast and never flaky. It asserts the generated
-# sluice.config.sh for synthetic manifests, locking in detection AND the toolchain fixes
-# (ruby/rust build deps, the honor-the-real-dev-script-port behavior, the polyglot note).
-#
-#   test/init-detection.sh
+# Unit tests for `sluice init` detection (no Docker: fast, never flaky). Asserts the generated
+# sluice.config.sh for synthetic manifests, locking in detection + the toolchain fixes.
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

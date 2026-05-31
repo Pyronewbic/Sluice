@@ -3,10 +3,7 @@
 # network (init-firewall.sh), then idle so sessions can be exec'd in as the node user.
 set -e
 
-# --- build squid's hostname allowlist from the baked config + base hosts --------
-# Base hosts every sluice gets: package registries + GitHub git/release plumbing. Anything an
-# app fetches at runtime (CDNs, raw content, sample/asset hosts, APIs) is project-specific
-# and comes from SLUICE_ALLOW_DOMAINS. (A leading dot in an entry matches subdomains.)
+# --- squid allowlist: base hosts (registries + GitHub) + SLUICE_ALLOW_DOMAINS ---
 . /usr/local/share/sluice.config.sh 2>/dev/null || true
 {
   printf '%s\n' github.com api.github.com codeload.github.com objects.githubusercontent.com \
@@ -14,16 +11,13 @@ set -e
   for d in ${SLUICE_ALLOW_DOMAINS:-}; do printf '%s\n' "$d"; done
 } > /etc/squid/allowlist.txt
 
-# IPv6 is disabled and route_localnet enabled via --sysctl at `docker run` (bin/sluice);
-# /proc/sys is read-only here, so they can't be set from the entrypoint.
+# (IPv6-off + route_localnet are set via --sysctl at docker run; /proc/sys is ro here.)
 
 # --- start the egress filter BEFORE the firewall --------------------------------
 # (init-firewall.sh's self-test makes a real request through the proxy.)
 mkdir -p /var/log/squid /var/cache/squid /run/squid
 chown -R squid:squid /var/log/squid /var/cache/squid /run/squid 2>/dev/null || true
-# Foreground single process (-N), backgrounded: avoids the daemon coordinator's flaky
-# SMP/shm startup in a minimal container. squid drops to its own uid (cache_effective_user)
-# after binding, which the firewall's --uid-owner squid rule matches.
+# -N (single process) avoids flaky SMP/shm startup; squid drops to its own uid after binding.
 squid -N &
 ok=0
 for _ in $(seq 1 40); do
@@ -42,10 +36,7 @@ fi
 mkdir -p /home/node/.npm-global
 chown node:node /home/node/.npm-global 2>/dev/null || true
 
-# Make the bind-mounted repo writable by the node user. On Linux a bind mount keeps the
-# host uid; if that isn't node's (1000), the sandboxed user (and any agent it runs) can't
-# write to the repo. chown the mounted paths to node when they aren't already node-owned.
-# (No-op when the host uid is already 1000, and on Docker Desktop, which remaps mount perms.)
+# chown the mounted repo to node when it isn't already (Linux bind mounts keep the host uid).
 for d in "${SLUICE_WORKDIR:-}" "${SLUICE_GITDIR:-}"; do
   if [ -n "$d" ] && [ -d "$d" ]; then
     if [ "$(stat -c %u "$d" 2>/dev/null || echo 0)" != 1000 ]; then
