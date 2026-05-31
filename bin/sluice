@@ -748,9 +748,11 @@ cmd_learn() {
   found="$(blocked_hosts 2>/dev/null || true)"
   [ -n "$found" ] || { echo "[sluice] no blocked hosts seen yet - exercise the app more (load it, click around), then re-run 'sluice learn'."; return 0; }
 
-  # Keep only hosts not already allowed (config + the always-on base), collapsed to one line.
+  # Keep only hosts not already allowed (config + the always-on base), minus the reserved example.*
+  # domains the firewall's own boot deny-canary hits (RFC2606 - never a real dependency to allow).
+  # Collapsed to one line.
   # shellcheck disable=SC2086
-  new="$(blocked_new 2>/dev/null | sort -u | tr '\n' ' ' | sed 's/ *$//')"
+  new="$(blocked_new 2>/dev/null | grep -vxE 'example\.(com|net|org)' | sort -u | tr '\n' ' ' | sed 's/ *$//' || true)"
   [ -n "$new" ] || { echo "[sluice] every blocked host is already in your allowlist - nothing to add."; return 0; }
 
   echo "[sluice] hosts your app reached that the firewall BLOCKED:"
