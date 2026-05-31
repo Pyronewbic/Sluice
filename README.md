@@ -51,21 +51,28 @@ auto-detection: set `SLUICE_EXTRA_PKGS` (the toolchain's Wolfi apk packages) and
 The full command set:
 
 ```bash
-sluice init [--force]  # scaffold a sluice.config.sh by detecting the repo's stack
-sluice agent <name>    # run a coding agent (run `sluice agent` with no name to list them)
-sluice learn           # propose the egress allowlist from the hosts the proxy blocked
+# Common
 sluice                 # build (if needed) + run SLUICE_RUN_CMD in the sandbox
+sluice agent <name>    # run a coding agent (run `sluice agent` with no name to list them)
+sluice init [--force]  # scaffold a sluice.config.sh by detecting the repo's stack
+sluice learn           # propose the egress allowlist from the hosts the proxy blocked
 sluice shell           # a bash shell in the sandbox (as the non-root sluice user)
 sluice run <cmd...>    # an ad-hoc command instead of SLUICE_RUN_CMD
-sluice build           # (re)build the project's image
-sluice rebuild         # rebuild + recreate the container
-sluice lock            # record installed apk+npm versions to sluice.lock (supply-chain audit)
+
+# Build & lifecycle
+sluice build           # build the image (if missing or the config changed)
+sluice rebuild         # build + recreate the container - apply config/allowlist edits
 sluice update          # rebuild from scratch (re-resolve packages) + refresh sluice.lock
-sluice smoke           # build (if needed) + run the image smoke test
-sluice logs            # follow firewall/readiness logs
-sluice doctor          # health check: engine, image, allowlist, blocked egress
 sluice stop            # remove the project's container
+
+# Inspect
+sluice doctor          # health check: engine, image, allowlist, blocked egress
+sluice logs            # follow firewall/readiness logs
+sluice lock            # record installed apk+npm versions to sluice.lock (supply-chain audit)
+sluice smoke           # build (if needed) + run the image smoke test
 ```
+
+> Pre-1.0: the command surface is still stabilizing and may change before the 1.0 lock.
 
 `sluice lock` writes a committable `sluice.lock` — a full inventory of the image (every apk +
 global npm package with its version and digest) so what's in your sandbox is reviewable in a
