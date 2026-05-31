@@ -1,0 +1,345 @@
+#!/usr/bin/env bash
+# sluice — run any project in a sandboxed, egress-firewalled container.
+#
+# Drop a sluice.config.sh in a project directory, then from anywhere inside it:
+#   sluice init         scaffold a sluice.config.sh by detecting the project's stack
+#   sluice agent <name> run a coding agent (claude/codex/aider/cursor) sandboxed + firewalled
+#   sluice learn        propose the egress allowlist from the hosts the proxy has blocked
+#   sluice              build (if needed) + run SLUICE_RUN_CMD in the sandbox
+#   sluice shell        drop into a bash shell in the sandbox (as the node user)
+#   sluice run <cmd…>   run an ad-hoc command in the sandbox instead of SLUICE_RUN_CMD
+#   sluice build        (re)build the project's image
+#   sluice rebuild      rebuild the image and recreate the container
+#   sluice smoke        build (if needed) + run the image smoke test
+#   sluice logs         follow the container logs (firewall + readiness)
+#   sluice stop         remove the project's container
+#
+# The image/container are named per project, so projects never collide. The image
+# auto-rebuilds when sluice.config.sh or the core changes (config hash baked as a label).
+# Container engine: docker by default, podman if docker is absent (override: SLUICE_ENGINE).
+set -euo pipefail
+
+# --- resolve our own install dir (core/ lives next to bin/) --------------------
+# bin/sluice is symlinked onto PATH (install.sh), so resolve the symlink chain to the
+# real install dir rather than trusting $0.
+SELF="$0"
+while [ -h "$SELF" ]; do
+  link="$(readlink "$SELF")"
+  case "$link" in /*) SELF="$link";; *) SELF="$(dirname "$SELF")/$link";; esac
+done
+ROOT="$(cd "$(dirname "$SELF")/.." && pwd)"
+CORE="$ROOT/core"
+
+die() { echo "[sluice] $*" >&2; exit 1; }
+
+# --- container engine ----------------------------------------------------------
+# docker and podman share the same CLI surface for everything used here. Prefer docker;
+# fall back to podman; override with SLUICE_ENGINE. (Podman needs the route_localnet /
+# disable_ipv6 sysctls below, which rootless podman may restrict — use rootful there.)
+ENGINE="${SLUICE_ENGINE:-}"
+if [ -z "$ENGINE" ]; then
+  if command -v docker >/dev/null 2>&1; then ENGINE=docker
+  elif command -v podman >/dev/null 2>&1; then ENGINE=podman
+  else die "no container engine found — install docker or podman, or set SLUICE_ENGINE"; fi
+fi
+command -v "$ENGINE" >/dev/null 2>&1 || die "SLUICE_ENGINE=$ENGINE not found on PATH"
+
+# --- `sluice init`: scaffold a sluice.config.sh from the project's detected stack ----
+# Runs BEFORE find_config (there's no config yet). Reads the manifest files in $PWD and
+# writes a sensible starter config — the run command and ports are usually inferable; the
+# egress allowlist is not (that's `sluice learn`'s job), so it's left for you to fill.
+cmd_init() {
+  local dir="$PWD" cfg
+  cfg="$dir/sluice.config.sh"
+  [ -e "$cfg" ] && die "$cfg already exists — edit it, or remove it to re-init."
+
+  local stack="generic" extra_pkgs="" extra_npm="" run_cmd="bash" ports="" allow="" note=""
+  if [ -f "$dir/package.json" ]; then
+    stack="node"
+    local pm="npm"
+    if   [ -f "$dir/pnpm-lock.yaml" ]; then pm="pnpm"; extra_npm="pnpm"
+    elif [ -f "$dir/yarn.lock" ];      then pm="yarn"; extra_npm="yarn"; fi
+    local port=3000 hostflag="--host 0.0.0.0"
+    if   grep -q '"vite"'  "$dir/package.json" 2>/dev/null; then port=5173
+    elif grep -q '"astro"' "$dir/package.json" 2>/dev/null; then port=4321
+    elif grep -q '"next"'  "$dir/package.json" 2>/dev/null; then hostflag="-H 0.0.0.0"; fi
+    local script="dev"; grep -q '"dev"' "$dir/package.json" 2>/dev/null || script="start"
+    ports="$port"
+    if [ "$pm" = npm ]; then run_cmd="npm install && npm run $script -- $hostflag --port $port"
+    else                     run_cmd="$pm install && $pm $script -- $hostflag --port $port"; fi
+    note="registries are already allowed; add runtime CDNs/APIs below or run 'sluice learn'."
+  elif [ -f "$dir/requirements.txt" ] || [ -f "$dir/pyproject.toml" ] || [ -f "$dir/Pipfile" ]; then
+    stack="python"; extra_pkgs="python-3.12 py3.12-pip"; allow="pypi.org files.pythonhosted.org"
+    local inst="pip install --user"
+    [ -f "$dir/requirements.txt" ] && inst="pip install --user -r requirements.txt"
+    run_cmd="$inst && python app.py"
+    note="PyPI is allowed for runtime installs — but SET YOUR ENTRY COMMAND ('python app.py' is a guess)."
+  elif [ -f "$dir/Cargo.toml" ]; then
+    stack="rust"; extra_pkgs="rust"; allow="static.crates.io index.crates.io"; run_cmd="cargo run"
+  elif [ -f "$dir/go.mod" ]; then
+    stack="go"; extra_pkgs="go"; allow="proxy.golang.org sum.golang.org"; run_cmd="go run ."
+  fi
+
+  {
+    echo "# sluice config — scaffolded by 'sluice init' (detected: $stack)."
+    echo "# Review the values, then 'sluice' (or 'sluice learn' to discover the egress allowlist)."
+    [ -n "$note" ] && echo "# NOTE: $note"
+    echo ""
+    [ -n "$extra_pkgs" ] && echo "SLUICE_EXTRA_PKGS=\"$extra_pkgs\""
+    [ -n "$extra_npm" ]  && echo "SLUICE_EXTRA_NPM=\"$extra_npm\""
+    echo "SLUICE_PORTS=\"$ports\"            # ports to publish (the app MUST bind 0.0.0.0)"
+    echo "SLUICE_RUN_CMD=\"$run_cmd\""
+    echo "SLUICE_ALLOW_DOMAINS=\"$allow\"    # runtime egress hosts (or run 'sluice learn')"
+  } > "$cfg"
+
+  echo "[sluice] detected stack: $stack"
+  echo "[sluice] wrote $cfg"
+  echo "[sluice] next: review it, then 'sluice'  (or 'sluice learn' to fill the allowlist)."
+}
+if [ "${1:-}" = init ]; then shift; cmd_init "$@"; exit 0; fi
+
+# --- locate the project by walking cwd upward for sluice.config.sh (like git) ------
+find_config() {
+  d="$PWD"
+  while [ "$d" != / ]; do
+    [ -f "$d/sluice.config.sh" ] && { echo "$d/sluice.config.sh"; return 0; }
+    d="$(dirname "$d")"
+  done
+  return 1
+}
+
+# --- `sluice agent [name]`: run a coding agent, sandboxed + firewalled --------------
+# Agent specifics live in agents/<name>.config.sh preset files — never in core/. With no
+# name, list them. `sluice agent claude` writes the preset (if there's no config yet) and
+# falls through to the normal build+run, dropping you into the agent.
+if [ "${1:-}" = agent ]; then
+  shift
+  agents_dir="$ROOT/agents"
+  if [ -z "${1:-}" ]; then
+    echo "[sluice] available agents (use: sluice agent <name>):"
+    for f in "$agents_dir"/*.config.sh; do [ -f "$f" ] && echo "  $(basename "$f" .config.sh)"; done
+    exit 0
+  fi
+  preset="$agents_dir/$1.config.sh"
+  [ -f "$preset" ] || die "unknown agent '$1' — run 'sluice agent' to list available presets."
+  if cfg="$(find_config)"; then
+    echo "[sluice] using existing config: $cfg"
+  else
+    cp "$preset" "$PWD/sluice.config.sh"
+    echo "[sluice] wrote $PWD/sluice.config.sh from the '$1' agent preset."
+    echo "[sluice] export the agent's auth env var on your host first (see the file's header)."
+  fi
+  set -- run-default     # continue into the normal build + run flow below
+fi
+
+PROJECT_CONFIG="$(find_config)" || die "no sluice.config.sh found in $PWD or any parent.
+Create one (see sluice.config.example.sh) — it declares this project's tooling, egress
+allowlist, ports, and run command."
+PROJECT_DIR="$(cd "$(dirname "$PROJECT_CONFIG")" && pwd)"
+
+# Load the config on the host so SLUICE_RUN_CMD/SLUICE_PORTS/SLUICE_ENV/SLUICE_MOUNTS/SLUICE_PRELAUNCH
+# are available here. (The same file is baked into the image for the Dockerfile and
+# the firewall.) Keep sluice.config.sh POSIX-sh-safe — it's also sourced by /bin/sh.
+# shellcheck disable=SC1090
+. "$PROJECT_CONFIG"
+
+# --- per-project image + container names (no cross-project collisions) ----------
+slug="$(printf '%s' "$(basename "$PROJECT_DIR")" | tr '[:upper:]' '[:lower:]' | tr -C 'a-z0-9' '-')"
+tag="sluice-$slug"
+container="$tag"
+
+# Hash of config + core so the image rebuilds when either changes (stored as an image
+# label; compared on every run). Avoids stale images without proliferating tags.
+config_hash() {
+  { cat "$PROJECT_CONFIG"; find "$CORE" -type f | LC_ALL=C sort | while read -r f; do cat "$f"; done; } \
+    | shasum | awk '{print $1}' | cut -c1-12
+}
+
+running() { [ "$("$ENGINE" inspect -f '{{.State.Running}}' "$container" 2>/dev/null || true)" = "true" ]; }
+
+# --- build: assemble a temp context (core + this project's config) and build ----
+build() {
+  local tmp; tmp="$(mktemp -d)"
+  cp -R "$CORE"/. "$tmp"/
+  cp "$PROJECT_CONFIG" "$tmp/sluice.config.sh"
+  echo "[sluice] building $tag ..."
+  if "$ENGINE" build --label "sluice.confighash=$(config_hash)" -t "$tag" "$tmp"; then
+    rm -rf "$tmp"
+  else
+    rm -rf "$tmp"; die "image build failed"
+  fi
+  "$ENGINE" rm -f "$container" >/dev/null 2>&1 || true   # rebuilt image → fresh container
+}
+
+# Build only if the image is missing or its baked config hash is stale.
+maybe_build() {
+  local have want
+  want="$(config_hash)"
+  have="$("$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.confighash" }}' "$tag" 2>/dev/null || true)"
+  [ "$have" = "$want" ] || build
+}
+
+# --- start: run the idle container (firewall comes up in the entrypoint) --------
+start() {
+  "$ENGINE" rm -f "$container" >/dev/null 2>&1 || true
+
+  # Optional host-side hook to stage credentials/secrets before launch.
+  if [ -n "${SLUICE_PRELAUNCH:-}" ]; then
+    command -v "$SLUICE_PRELAUNCH" >/dev/null 2>&1 \
+      || die "SLUICE_PRELAUNCH=$SLUICE_PRELAUNCH is not a function/command defined in sluice.config.sh"
+    echo "[sluice] running prelaunch hook: $SLUICE_PRELAUNCH"
+    "$SLUICE_PRELAUNCH"
+  fi
+
+  # route_localnet: let iptables REDIRECT deliver externally-addressed packets to the
+  # local squid proxy. disable_ipv6: we proxy IPv4 only, so force v4 (a dual-stack app
+  # preferring v6 would bypass the v4 redirect). /proc/sys is read-only in the container,
+  # so these must be set at run time.
+  local run_args=(--cap-add NET_ADMIN --cap-add NET_RAW
+    --sysctl net.ipv4.conf.all.route_localnet=1
+    --sysctl net.ipv6.conf.all.disable_ipv6=1
+    --sysctl net.ipv6.conf.default.disable_ipv6=1)
+
+  # Mount the project dir rw at the same absolute path.
+  run_args+=(-v "$PROJECT_DIR":"$PROJECT_DIR")
+
+  # If the project is a git worktree, also mount the git common dir so the worktree's
+  # gitdir pointer resolves and refs/logs are writable (only when it's outside the
+  # project dir — otherwise the project mount already covers it).
+  if git -C "$PROJECT_DIR" rev-parse --git-common-dir >/dev/null 2>&1; then
+    local common; common="$(git -C "$PROJECT_DIR" rev-parse --git-common-dir)"
+    case "$common" in /*) ;; *) common="$PROJECT_DIR/$common";; esac
+    common="$(cd "$common" 2>/dev/null && pwd || true)"
+    if [ -n "$common" ]; then
+      case "$common/" in "$PROJECT_DIR"/*) ;; *) run_args+=(-v "$common":"$common");; esac
+    fi
+  fi
+
+  # Extra mounts (newline-separated host:container[:ro]).
+  if [ -n "${SLUICE_MOUNTS:-}" ]; then
+    while IFS= read -r m; do
+      [ -n "$m" ] && run_args+=(-v "$m")
+    done <<EOF
+$SLUICE_MOUNTS
+EOF
+  fi
+
+  # Publish declared ports, bound to host loopback only (reachable via localhost, not
+  # exposed to the LAN). init-firewall.sh opens the matching inbound ACCEPT.
+  for p in ${SLUICE_PORTS:-}; do
+    run_args+=(-p "127.0.0.1:$p:$p")
+  done
+
+  echo "[sluice] starting $container ..."
+  "$ENGINE" run -d --name "$container" "${run_args[@]}" "$tag" >/dev/null
+  for _ in $(seq 1 60); do
+    "$ENGINE" logs "$container" 2>&1 | grep -q "\[sluice\] ready" && break
+    sleep 0.5
+  done
+  running || die "container failed to come up — see: sluice logs"
+}
+
+ensure_up() { maybe_build; running || start; }
+
+# Exec a command in the running container as the node user, forwarding SLUICE_ENV vars.
+# Allocate a TTY only when attached to one, so pipes/scripts (and `sluice run … | …`) work.
+exec_in() {
+  local exec_args=(-i --user node -w "$PROJECT_DIR")
+  [ -t 0 ] && [ -t 1 ] && exec_args+=(-t)
+  for v in ${SLUICE_ENV:-}; do
+    exec_args+=(-e "$v")
+  done
+  exec "$ENGINE" exec "${exec_args[@]}" "$container" "$@"
+}
+
+# --- `sluice learn`: propose an allowlist from the hosts the proxy has BLOCKED -------
+# The squid proxy logs every host it blocks (by SNI/Host). Run your app first, exercise
+# it so it makes its calls, then `sluice learn` reads the log and offers the missing hosts.
+cmd_learn() {
+  running || die "no running sandbox. Start your app first ('sluice'), exercise it so it makes its network calls, then run 'sluice learn'."
+  echo "[sluice] reading blocked egress from the proxy log..."
+  local log found base cur new proposed
+  log="$("$ENGINE" exec "$container" cat /var/log/squid/access.log 2>/dev/null || true)"
+  # Pull the hostname out of each DENIED line (SNI for HTTPS, Host for HTTP); skip raw IPs.
+  found="$(printf '%s\n' "$log" | awk '
+    { sni="";
+      for (i=1;i<=NF;i++) if ($i ~ /^ssl_sni=/) sni=substr($i,9);
+      status=$3; url=$5;
+      if (status !~ /NONE_NONE/ && status !~ /TCP_DENIED/ && status !~ /\/000/) next;
+      host="";
+      if (sni != "" && sni != "-") host=sni;
+      else if (url ~ /^http:\/\//) { h=url; sub(/^http:\/\//,"",h); sub(/\/.*/,"",h); sub(/:.*/,"",h); host=h }
+      if (host == "" || host ~ /^[0-9.]+$/) next;
+      print host
+    }' | sort -u)"
+  [ -n "$found" ] || { echo "[sluice] no blocked hosts seen yet — exercise the app more (load it, click around), then re-run 'sluice learn'."; return 0; }
+
+  # Drop hosts already allowed (this config + the always-on base).
+  base="github.com api.github.com codeload.github.com objects.githubusercontent.com registry.npmjs.org registry.yarnpkg.com"
+  cur="${SLUICE_ALLOW_DOMAINS:-} $base"
+  new=""
+  while IFS= read -r h; do
+    [ -n "$h" ] || continue
+    case " $cur " in *" $h "*) ;; *) new="$new $h";; esac
+  done <<EOF
+$found
+EOF
+  # shellcheck disable=SC2086
+  new="$(printf '%s\n' $new | sed '/^$/d' | sort -u | tr '\n' ' ' | sed 's/^ *//; s/ *$//')"
+  [ -n "$new" ] || { echo "[sluice] every blocked host is already in your allowlist — nothing to add."; return 0; }
+
+  echo "[sluice] hosts your app reached that the firewall BLOCKED:"
+  # shellcheck disable=SC2086
+  printf '    %s\n' $new
+  proposed="$(printf '%s %s\n' "${SLUICE_ALLOW_DOMAINS:-}" "$new" | tr ' ' '\n' | sed '/^$/d' | sort -u | tr '\n' ' ' | sed 's/ *$//')"
+  echo
+  echo "[sluice] suggested:  SLUICE_ALLOW_DOMAINS=\"$proposed\""
+  printf '[sluice] write this into %s? [y/N] ' "$PROJECT_CONFIG"
+  local ans; read -r ans 2>/dev/null || ans=""
+  case "$ans" in
+    y|Y|yes|YES)
+      if grep -q '^SLUICE_ALLOW_DOMAINS=' "$PROJECT_CONFIG"; then
+        local tmp; tmp="$(mktemp)"
+        awk -v val="$proposed" '/^SLUICE_ALLOW_DOMAINS=/ && !seen {print "SLUICE_ALLOW_DOMAINS=\"" val "\""; seen=1; next} {print}' \
+          "$PROJECT_CONFIG" > "$tmp" && mv "$tmp" "$PROJECT_CONFIG"
+      else
+        printf 'SLUICE_ALLOW_DOMAINS="%s"\n' "$proposed" >> "$PROJECT_CONFIG"
+      fi
+      chmod 0644 "$PROJECT_CONFIG" 2>/dev/null || true   # mktemp is 0600; the build sources it as the node user
+      echo "[sluice] updated $PROJECT_CONFIG — run 'sluice rebuild' to apply."
+      ;;
+    *) echo "[sluice] unchanged. Paste the line above into $PROJECT_CONFIG when ready, then 'sluice rebuild'." ;;
+  esac
+}
+
+case "${1:-run-default}" in
+  build)   build; exit 0 ;;
+  rebuild) build; start; exit 0 ;;
+  stop)    "$ENGINE" rm -f "$container" >/dev/null 2>&1 || true; echo "[sluice] $container stopped"; exit 0 ;;
+  logs)    "$ENGINE" logs -f "$container" ;;
+  smoke)
+    maybe_build
+    "$ENGINE" run --rm --user node --entrypoint bash "$tag" /usr/local/bin/smoke-test.sh
+    exit $?
+    ;;
+  learn)   cmd_learn; exit 0 ;;
+  shell)   ensure_up; exec_in bash ;;
+  run)
+    shift
+    [ "$#" -gt 0 ] || die "usage: sluice run <cmd…>"
+    ensure_up; exec_in "$@"
+    ;;
+  run-default)
+    ensure_up
+    # If the config forwards auth env vars (SLUICE_ENV) but none are set on the host, warn
+    # — agents otherwise fail to authenticate (and fall back to a browser login that can't
+    # work headless).
+    if [ -n "${SLUICE_ENV:-}" ]; then
+      _any=0; for _v in $SLUICE_ENV; do [ -n "${!_v:-}" ] && _any=1; done
+      [ "$_any" = 1 ] || echo "[sluice] note: none of [$SLUICE_ENV] is set on the host — auth may fail; export it and re-run." >&2
+    fi
+    # Default action: run SLUICE_RUN_CMD (a single shell string). Falls back to a shell.
+    exec_in sh -lc "${SLUICE_RUN_CMD:-bash}"
+    ;;
+  *) die "unknown command: $1 (try: sluice init, sluice agent <name>, sluice learn, sluice, sluice shell, sluice run <cmd>, sluice build, sluice rebuild, sluice smoke, sluice logs, sluice stop)" ;;
+esac
