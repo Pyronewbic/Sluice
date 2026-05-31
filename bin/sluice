@@ -2,7 +2,7 @@
 # sluice - run any project in a sandboxed, egress-firewalled container.
 #
 # Drop a sluice.config.sh in a project directory, then from anywhere inside it:
-#   sluice init         scaffold a sluice.config.sh by detecting the project's stack
+#   sluice init [--force]  scaffold a sluice.config.sh by detecting the project's stack
 #   sluice agent <name> run a coding agent (claude/codex/gemini/aider/cursor/opencode/amp)
 #   sluice learn        propose the egress allowlist from the hosts the proxy has blocked
 #   sluice              build (if needed) + run SLUICE_RUN_CMD in the sandbox
@@ -44,56 +44,190 @@ if [ -z "$ENGINE" ]; then
 fi
 command -v "$ENGINE" >/dev/null 2>&1 || die "SLUICE_ENGINE=$ENGINE not found on PATH"
 
+# --- `sluice init` helpers (best-effort manifest parsing, no jq dependency) -----------
+# Each returns 0 even when nothing matches, so they're safe under `set -e`.
+_init_json_str()  { printf '%s' "$(grep -oE "\"$2\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" "$1" 2>/dev/null | head -1 | sed -E 's/^.*:[[:space:]]*"([^"]*)".*$/\1/')"; }
+_init_port_from() { printf '%s' "$(printf '%s' "$1" | grep -oiE -- '(--port|--server\.port|-p|PORT)[ =]+[0-9]+' | grep -oE '[0-9]+' | head -1)"; }
+_init_pkg_has()   { grep -qE "\"$2(\"|/)" "$1" 2>/dev/null; }          # dependency / scoped-pkg key
+_init_has_script(){ grep -qE "\"$2\"[[:space:]]*:" "$1" 2>/dev/null; } # a package.json/deno.json script
+_init_py_has()    { grep -qiE "(^|[^a-zA-Z0-9_.-])$1" "$dir/requirements.txt" "$dir/pyproject.toml" "$dir/Pipfile" 2>/dev/null; }
+# Quote a config value: single-quote if it contains $ or " (we never emit a literal single quote).
+_init_q()         { case "$1" in *[\$\"]*) printf "'%s'" "$1" ;; *) printf '"%s"' "$1" ;; esac; }
+
 # --- `sluice init`: scaffold a sluice.config.sh from the project's detected stack ----
 # Runs BEFORE find_config (there's no config yet). Reads the manifest files in $PWD and
-# writes a sensible starter config - the run command and ports are usually inferable; the
-# egress allowlist is not (that's `sluice learn`'s job), so it's left for you to fill.
+# writes a sensible starter config: package manager, framework, the real dev-script port,
+# and entry point are inferred; the egress allowlist is left for `sluice learn` to fill.
 cmd_init() {
-  local dir="$PWD" cfg
-  cfg="$dir/sluice.config.sh"
-  [ -e "$cfg" ] && die "$cfg already exists - edit it, or remove it to re-init."
-
-  local stack="generic" extra_pkgs="" extra_npm="" run_cmd="bash" ports="" allow="" note=""
-  if [ -f "$dir/package.json" ]; then
-    stack="node"
-    local pm="npm"
-    if   [ -f "$dir/pnpm-lock.yaml" ]; then pm="pnpm"; extra_npm="pnpm"
-    elif [ -f "$dir/yarn.lock" ];      then pm="yarn"; extra_npm="yarn"; fi
-    local port=3000 hostflag="--host 0.0.0.0"
-    if   grep -q '"vite"'  "$dir/package.json" 2>/dev/null; then port=5173
-    elif grep -q '"astro"' "$dir/package.json" 2>/dev/null; then port=4321
-    elif grep -q '"next"'  "$dir/package.json" 2>/dev/null; then hostflag="-H 0.0.0.0"; fi
-    local script="dev"; grep -q '"dev"' "$dir/package.json" 2>/dev/null || script="start"
-    ports="$port"
-    if [ "$pm" = npm ]; then run_cmd="npm install && npm run $script -- $hostflag --port $port"
-    else                     run_cmd="$pm install && $pm $script -- $hostflag --port $port"; fi
-    note="registries are already allowed; add runtime CDNs/APIs below or run 'sluice learn'."
-  elif [ -f "$dir/requirements.txt" ] || [ -f "$dir/pyproject.toml" ] || [ -f "$dir/Pipfile" ]; then
-    stack="python"; extra_pkgs="python-3.12 py3.12-pip"; allow="pypi.org files.pythonhosted.org"
-    local inst="pip install --user"
-    [ -f "$dir/requirements.txt" ] && inst="pip install --user -r requirements.txt"
-    run_cmd="$inst && python app.py"
-    note="PyPI is allowed for runtime installs - but SET YOUR ENTRY COMMAND ('python app.py' is a guess)."
-  elif [ -f "$dir/Cargo.toml" ]; then
-    stack="rust"; extra_pkgs="rust"; allow="static.crates.io index.crates.io"; run_cmd="cargo run"
-  elif [ -f "$dir/go.mod" ]; then
-    stack="go"; extra_pkgs="go"; allow="proxy.golang.org sum.golang.org"; run_cmd="go run ."
+  local force=0
+  case "${1:-}" in -f|--force) force=1; shift ;; esac
+  local dir="$PWD" cfg pj
+  cfg="$dir/sluice.config.sh"; pj="$dir/package.json"
+  if [ -e "$cfg" ] && [ "$force" -ne 1 ]; then
+    die "$cfg already exists - edit it, remove it, or re-run with --force."
   fi
 
+  local stack="generic" detected="generic" extra_pkgs="" extra_npm="" setup="" \
+        run_cmd="bash" ports="" allow="" note="" note2=""
+
+  if [ -f "$pj" ]; then
+    # ---------------- node / bun ----------------
+    stack="node"
+    local pm="npm"
+    if   [ -f "$dir/bun.lockb" ] || [ -f "$dir/bun.lock" ]; then pm="bun"
+    elif [ -f "$dir/pnpm-lock.yaml" ];    then pm="pnpm"
+    elif [ -f "$dir/yarn.lock" ];         then pm="yarn"
+    elif [ -f "$dir/package-lock.json" ]; then pm="npm"
+    else case "$(_init_json_str "$pj" packageManager)" in
+           pnpm*) pm="pnpm" ;; yarn*) pm="yarn" ;; bun*) pm="bun" ;;
+         esac
+    fi
+    case "$pm" in pnpm|yarn) extra_npm="$pm" ;; bun) extra_pkgs="bun" ;; esac
+
+    # framework -> default port + the flag spelling that framework uses + preferred script
+    local fw="" port=3000 hostflag="--host 0.0.0.0" portflag="--port" pref="dev"
+    if   _init_pkg_has "$pj" '@angular/core'; then fw="angular";    port=4200; pref="start"
+    elif _init_pkg_has "$pj" '@sveltejs/kit'; then fw="sveltekit";  port=5173
+    elif _init_pkg_has "$pj" 'vitepress';     then fw="vitepress";  port=5173
+    elif _init_pkg_has "$pj" 'nuxt';          then fw="nuxt";       port=3000
+    elif _init_pkg_has "$pj" 'astro';         then fw="astro";      port=4321
+    elif _init_pkg_has "$pj" '@remix-run';    then fw="remix";      port=3000
+    elif _init_pkg_has "$pj" '@docusaurus';   then fw="docusaurus"; port=3000
+    elif _init_pkg_has "$pj" 'gatsby';        then fw="gatsby";     port=8000; hostflag="-H 0.0.0.0"; portflag="-p"; pref="develop"
+    elif _init_pkg_has "$pj" 'next';          then fw="next";       port=3000; hostflag="-H 0.0.0.0"; portflag="-p"
+    elif _init_pkg_has "$pj" 'vite';          then fw="vite";       port=5173
+    fi
+
+    local script="" s
+    for s in "$pref" dev develop serve start; do
+      if _init_has_script "$pj" "$s"; then script="$s"; break; fi
+    done
+    [ -z "$script" ] && script="$pref"
+
+    # honor a host/port the dev script already sets, rather than fighting it
+    local sval ep
+    sval="$(_init_json_str "$pj" "$script")"
+    ep="$(_init_port_from "$sval")"; [ -n "$ep" ] && port="$ep"
+    ports="$port"
+
+    local inst run_script
+    case "$pm" in
+      npm)  inst="npm install";  run_script="npm run $script" ;;
+      pnpm) inst="pnpm install"; run_script="pnpm run $script" ;;
+      yarn) inst="yarn install"; run_script="yarn $script" ;;
+      bun)  inst="bun install";  run_script="bun run $script" ;;
+    esac
+    case "$sval" in
+      *0.0.0.0*|*--host*|*-H\ *)
+        run_cmd="$inst && $run_script"
+        note="the dev script already sets host/port; the egress allowlist is what's left - run 'sluice learn'." ;;
+      *)
+        run_cmd="$inst && $run_script -- $hostflag $portflag $port"
+        note="npm/yarn registries are allowed; add runtime CDNs/APIs or run 'sluice learn'." ;;
+    esac
+    detected="node/$pm${fw:+ ($fw)}"
+
+  elif [ -f "$dir/requirements.txt" ] || [ -f "$dir/pyproject.toml" ] || [ -f "$dir/Pipfile" ]; then
+    # ---------------- python ----------------
+    stack="python"; allow="pypi.org files.pythonhosted.org"
+    local pyver="3.12" v
+    if [ -f "$dir/.python-version" ]; then
+      v="$(grep -oE '3\.(11|12|13)' "$dir/.python-version" 2>/dev/null | head -1 || true)"; [ -n "$v" ] && pyver="$v"
+    elif [ -f "$dir/pyproject.toml" ]; then
+      v="$(grep -oE 'requires-python[^0-9]*3\.(11|12|13)' "$dir/pyproject.toml" 2>/dev/null | grep -oE '3\.(11|12|13)' | head -1 || true)"; [ -n "$v" ] && pyver="$v"
+    fi
+    local px="${pyver#3.}"
+    extra_pkgs="python-$pyver py3.$px-pip"
+    local pm="pip"
+    if   [ -f "$dir/uv.lock" ]; then pm="uv"; extra_pkgs="$extra_pkgs uv"
+    elif [ -f "$dir/poetry.lock" ] || _init_py_has 'tool\.poetry'; then pm="poetry"; extra_pkgs="$extra_pkgs poetry"
+    fi
+
+    local entry="" f
+    for f in app.py main.py server.py wsgi.py asgi.py run.py __main__.py; do
+      [ -f "$dir/$f" ] && { entry="$f"; break; }
+    done
+    local mod="${entry%.py}"; [ -z "$mod" ] && mod="app"
+
+    local fw="" fwcmd=""
+    if   [ -f "$dir/manage.py" ] || _init_py_has 'django'; then fw="django"; fwcmd="python manage.py runserver 0.0.0.0:8000"; ports="8000"
+    elif _init_py_has 'fastapi' || _init_py_has 'uvicorn';  then fw="fastapi"; fwcmd="uvicorn $mod:app --host 0.0.0.0 --port 8000"; ports="8000"
+    elif _init_py_has 'flask';     then fw="flask";     fwcmd="flask --app $mod run --host 0.0.0.0 --port 5000"; ports="5000"
+    elif _init_py_has 'streamlit'; then fw="streamlit"; fwcmd="streamlit run ${entry:-app.py} --server.address 0.0.0.0 --server.port 8501"; ports="8501"
+    elif _init_py_has 'gradio';    then fw="gradio";    fwcmd="python ${entry:-app.py}"; ports="7860"; note="gradio must bind 0.0.0.0: launch(server_name='0.0.0.0', server_port=7860)."
+    else fwcmd="python ${entry:-app.py}"; ports=""; note="SET YOUR ENTRY COMMAND - 'python ${entry:-app.py}' is a guess."
+    fi
+
+    local inst_target=""
+    if   [ -f "$dir/requirements.txt" ]; then inst_target="-r requirements.txt"
+    elif [ -f "$dir/pyproject.toml" ];   then inst_target="."
+    fi
+    case "$pm" in
+      pip)
+        if [ -n "$inst_target" ]; then run_cmd="export PATH=\"\$HOME/.local/bin:\$PATH\"; pip install --user $inst_target && $fwcmd"
+        else                           run_cmd="export PATH=\"\$HOME/.local/bin:\$PATH\"; $fwcmd"; fi ;;
+      poetry) run_cmd="poetry install && poetry run $fwcmd" ;;
+      uv)     run_cmd="uv sync && uv run $fwcmd" ;;
+    esac
+    detected="python-$pyver/$pm${fw:+ ($fw)}"
+
+  elif [ -f "$dir/deno.json" ] || [ -f "$dir/deno.jsonc" ]; then
+    # ---------------- deno ----------------
+    stack="deno"; extra_pkgs="deno"
+    allow="deno.land jsr.io registry.npmjs.org esm.sh cdn.jsdelivr.net"
+    local dj="$dir/deno.json"; [ -f "$dj" ] || dj="$dir/deno.jsonc"
+    if   _init_has_script "$dj" 'dev';   then run_cmd="deno task dev"
+    elif _init_has_script "$dj" 'start'; then run_cmd="deno task start"
+    else run_cmd="deno run -A main.ts"; fi
+    ports=""; note="set SLUICE_PORTS to the port your server binds (Fresh defaults to 8000)."
+    detected="deno"
+
+  elif [ -f "$dir/Gemfile" ]; then
+    # ---------------- ruby (best-effort) ----------------
+    stack="ruby"; extra_pkgs="ruby-3.3"; allow="rubygems.org index.rubygems.org"
+    setup="gem install --no-document --bindir \"\$HOME/.local/bin\" --install-dir \"\$HOME/.gem/ruby\" bundler"
+    local rb="export GEM_HOME=\"\$HOME/.gem/ruby\"; export PATH=\"\$HOME/.local/bin:\$PATH\""
+    if grep -qE "gem ['\"]rails['\"]" "$dir/Gemfile" 2>/dev/null || [ -f "$dir/config/application.rb" ]; then
+      ports="3000"; run_cmd="$rb; bundle install && bundle exec rails server -b 0.0.0.0 -p 3000"
+    else
+      local rbentry="app.rb"; [ -f "$dir/main.rb" ] && rbentry="main.rb"
+      run_cmd="$rb; bundle install && ruby $rbentry"
+      note="ruby is best-effort - set SLUICE_RUN_CMD/SLUICE_PORTS for your app."
+    fi
+    detected="ruby-3.3"
+
+  elif [ -f "$dir/Cargo.toml" ]; then
+    stack="rust"; detected="rust"; extra_pkgs="rust"; allow="static.crates.io index.crates.io"; run_cmd="cargo run"
+  elif [ -f "$dir/go.mod" ]; then
+    stack="go"; detected="go"; extra_pkgs="go"; allow="proxy.golang.org sum.golang.org"; run_cmd="go run ."
+  fi
+
+  # secondary manifests (polyglot / monorepo): flag them, don't try to merge stacks
+  local others=""
+  [ "$stack" != node ]   && [ -f "$pj" ]             && others="$others node"
+  [ "$stack" != python ] && { [ -f "$dir/requirements.txt" ] || [ -f "$dir/pyproject.toml" ] || [ -f "$dir/Pipfile" ]; } && others="$others python"
+  [ "$stack" != ruby ]   && [ -f "$dir/Gemfile" ]    && others="$others ruby"
+  [ "$stack" != go ]     && [ -f "$dir/go.mod" ]     && others="$others go"
+  [ "$stack" != rust ]   && [ -f "$dir/Cargo.toml" ] && others="$others rust"
+  [ -n "$others" ] && note2="also saw manifests for:$others - this config targets '$stack'; init each service in its own dir."
+
   {
-    echo "# sluice config - scaffolded by 'sluice init' (detected: $stack)."
-    echo "# Review the values, then 'sluice' (or 'sluice learn' to discover the egress allowlist)."
-    [ -n "$note" ] && echo "# NOTE: $note"
+    echo "# sluice config - scaffolded by 'sluice init' (detected: $detected)."
+    echo "# Review the values, then run 'sluice' (or 'sluice learn' to discover the egress allowlist)."
+    [ -n "$note" ]  && echo "# NOTE: $note"
+    [ -n "$note2" ] && echo "# ALSO: $note2"
     echo ""
-    [ -n "$extra_pkgs" ] && echo "SLUICE_EXTRA_PKGS=\"$extra_pkgs\""
-    [ -n "$extra_npm" ]  && echo "SLUICE_EXTRA_NPM=\"$extra_npm\""
-    echo "SLUICE_PORTS=\"$ports\"            # ports to publish (the app MUST bind 0.0.0.0)"
-    echo "SLUICE_RUN_CMD=\"$run_cmd\""
-    echo "SLUICE_ALLOW_DOMAINS=\"$allow\"    # runtime egress hosts (or run 'sluice learn')"
+    [ -n "$extra_pkgs" ] && echo "SLUICE_EXTRA_PKGS=$(_init_q "$extra_pkgs")"
+    [ -n "$extra_npm" ]  && echo "SLUICE_EXTRA_NPM=$(_init_q "$extra_npm")"
+    [ -n "$setup" ]      && echo "SLUICE_SETUP_CMDS=$(_init_q "$setup")   # build-time, free egress, before the firewall"
+    echo "SLUICE_PORTS=$(_init_q "$ports")            # ports to publish (the app MUST bind 0.0.0.0)"
+    echo "SLUICE_RUN_CMD=$(_init_q "$run_cmd")"
+    echo "SLUICE_ALLOW_DOMAINS=$(_init_q "$allow")    # runtime egress hosts (or run 'sluice learn')"
   } > "$cfg"
 
-  echo "[sluice] detected stack: $stack"
+  echo "[sluice] detected: $detected"
   echo "[sluice] wrote $cfg"
+  [ -n "$note2" ] && echo "[sluice] note: $note2"
   echo "[sluice] next: review it, then 'sluice'  (or 'sluice learn' to fill the allowlist)."
 }
 if [ "${1:-}" = init ]; then shift; cmd_init "$@"; exit 0; fi
