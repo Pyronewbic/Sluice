@@ -7,7 +7,11 @@ name: nightly runtime smoke
 on:
   schedule:
     - cron: "0 7 * * *"   # 07:00 UTC daily
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      runtimes:
+        description: "space-separated runtimes to smoke (empty = all)"
+        default: ""
 
 jobs:
   runtimes:
@@ -17,4 +21,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Verify runtime examples
+        env:
+          RUNTIMES: ${{ github.event.inputs.runtimes }}   # empty on schedule -> all
         run: ./test/verify-runtimes.sh   # docker is preinstalled on GH runners

@@ -34,6 +34,24 @@ for name in $EXAMPLES; do
     else
       code=build
     fi
+    # On the final failed serve, dump squid's own view before teardown: a terminated TLS
+    # request shows the client only an opaque error, so the SNI/status + DNS live in the box.
+    if [ "$code" != 200 ] && [ "$code" != build ] && [ "$attempt" = 2 ]; then
+      eng="${SLUICE_ENGINE:-docker}"; c="sluice-$name"
+      echo "----- DEBUG squid access.log ($name) -----"
+      "$eng" exec "$c" sh -c 'tail -50 /var/log/squid/access.log' 2>&1 | tail -50
+      echo "----- DEBUG squid cache.log ($name) -----"
+      "$eng" exec "$c" sh -c 'tail -30 /var/log/squid/cache.log' 2>&1 | tail -30
+      echo "----- DEBUG dns A/AAAA + base-allowed splice control ($name) -----"
+      "$eng" exec "$c" sh -c '
+        for h in index.crates.io static.crates.io proxy.golang.org jsr.io registry.npmjs.org; do
+          printf "  %-22s A:%s AAAA:%s\n" "$h" "$(dig +short A "$h" 2>/dev/null | tr "\n" ",")" "$(dig +short AAAA "$h" 2>/dev/null | tr "\n" ",")"
+        done
+        echo "  -- curl -v https://registry.npmjs.org/ (base-allowed; does splice work at all?) --"
+        curl -sv --max-time 8 -o /dev/null https://registry.npmjs.org/ 2>&1 | grep -iE "trying|connected|alpn|HTTP/|wrong version|refused|timed out|unable" | head -12
+      ' 2>&1 | head -60
+      echo "-------------------------------------------"
+    fi
     ( cd "$work" && "$SLUICE" stop ) >/dev/null 2>&1
     rm -rf "$(dirname "$work")"
     [ "$code" = 200 ] && break
