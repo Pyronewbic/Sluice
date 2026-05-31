@@ -24,10 +24,10 @@ SLUICE_EXTRA_PKGS=""
 # Space-separated. e.g. "pnpm @some/mcp-server@1.2.3"
 SLUICE_EXTRA_NPM=""
 
-# Build-time setup: clones, dependency installs, codegen. Runs as the non-root node
-# user in /home/node, on the host BEFORE the firewall - so egress is unrestricted here
+# Build-time setup: clones, dependency installs, codegen. Runs as the non-root sluice
+# user in /home/sluice, on the host BEFORE the firewall - so egress is unrestricted here
 # (the *running* container is still locked to the allowlist). One shell string; chain
-# with && or newlines. Whatever it writes is node-owned and writable at runtime.
+# with && or newlines. Whatever it writes is sluice-owned and writable at runtime.
 # e.g. "git clone --depth 1 https://example.com/app && cd app && npm ci"
 SLUICE_SETUP_CMDS=""
 
@@ -65,8 +65,8 @@ SLUICE_RUN_CMD="bash"
 SLUICE_ENV=""
 
 # Extra bind mounts, newline-separated "host:container[:ro]". e.g.
-#   SLUICE_MOUNTS="$HOME/.config/gh:/home/node/.config/gh:ro
-#   $HOME/.cache/app:/home/node/.cache/app"
+#   SLUICE_MOUNTS="$HOME/.config/gh:/home/sluice/.config/gh:ro
+#   $HOME/.cache/app:/home/sluice/.cache/app"
 SLUICE_MOUNTS=""
 
 # Name of a shell function defined in THIS file, run on the host before launch - use

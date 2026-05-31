@@ -55,7 +55,7 @@ sluice init [--force]  # scaffold a sluice.config.sh by detecting the repo's sta
 sluice agent <name>    # run a coding agent (run `sluice agent` with no name to list them)
 sluice learn           # propose the egress allowlist from the hosts the proxy blocked
 sluice                 # build (if needed) + run SLUICE_RUN_CMD in the sandbox
-sluice shell           # a bash shell in the sandbox (as the non-root node user)
+sluice shell           # a bash shell in the sandbox (as the non-root sluice user)
 sluice run <cmd...>    # an ad-hoc command instead of SLUICE_RUN_CMD
 sluice build           # (re)build the project's image
 sluice rebuild         # rebuild + recreate the container
@@ -102,7 +102,7 @@ Everything is driven by `sluice.config.sh`. Copy [`sluice.config.example.sh`](sl
 | `SLUICE_NAME` | image/container name `sluice-<name>` (default: the project dir's name) |
 | `SLUICE_EXTRA_PKGS` | extra apk packages (build time) |
 | `SLUICE_EXTRA_NPM` | extra global npm packages, pinned (build time) |
-| `SLUICE_SETUP_CMDS` | build-time setup (clones, dep installs) - runs as node, before the firewall |
+| `SLUICE_SETUP_CMDS` | build-time setup (clones, dep installs) - runs as the sluice user, before the firewall |
 | `SLUICE_ALLOW_DOMAINS` | runtime egress domains, on top of the base |
 | `SLUICE_ALLOW_IPS` | runtime egress IPs/CIDRs |
 | `SLUICE_PORTS` | TCP ports to publish (firewall opens a matching inbound rule) |

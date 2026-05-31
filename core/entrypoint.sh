@@ -1,6 +1,6 @@
 #!/bin/bash
 # Runs as root on container start: bring up the egress filter (squid), lock down the
-# network (init-firewall.sh), then idle so sessions can be exec'd in as the node user.
+# network (init-firewall.sh), then idle so sessions can be exec'd in as the sluice user.
 set -e
 
 # --- squid allowlist: base hosts (registries + GitHub) + SLUICE_ALLOW_DOMAINS ---
@@ -32,18 +32,18 @@ fi
 
 /usr/local/bin/init-firewall.sh
 
-# User-writable npm prefix (NPM_CONFIG_PREFIX=/home/node/.npm-global) for runtime installs.
-mkdir -p /home/node/.npm-global
-chown node:node /home/node/.npm-global 2>/dev/null || true
+# User-writable npm prefix (NPM_CONFIG_PREFIX=/home/sluice/.npm-global) for runtime installs.
+mkdir -p /home/sluice/.npm-global
+chown sluice:sluice /home/sluice/.npm-global 2>/dev/null || true
 
-# chown the mounted repo to node when it isn't already (Linux bind mounts keep the host uid).
+# chown the mounted repo to sluice when it isn't already (Linux bind mounts keep the host uid).
 for d in "${SLUICE_WORKDIR:-}" "${SLUICE_GITDIR:-}"; do
   if [ -n "$d" ] && [ -d "$d" ]; then
     if [ "$(stat -c %u "$d" 2>/dev/null || echo 0)" != 1000 ]; then
-      chown -R node:node "$d" 2>/dev/null || true
+      chown -R sluice:sluice "$d" 2>/dev/null || true
     fi
   fi
 done
 
-echo "[sluice] ready. exec sessions as the node user."
+echo "[sluice] ready. exec sessions as the sluice user."
 exec sleep infinity

@@ -29,9 +29,9 @@ check dig      dig -v
 echo "[smoke] session user:"
 uid="$(id -u)"
 if [ "$uid" = "1000" ]; then
-  printf '  ✅ %-12s uid=%s (node, non-root)\n' "non-root" "$uid"
+  printf '  ✅ %-12s uid=%s (sluice, non-root)\n' "non-root" "$uid"
 else
-  printf '  ❌ %-12s uid=%s (expected 1000/node)\n' "non-root" "$uid"
+  printf '  ❌ %-12s uid=%s (expected 1000/sluice)\n' "non-root" "$uid"
   fail=1
 fi
 

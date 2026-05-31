@@ -529,7 +529,7 @@ start() {
     --sysctl net.ipv6.conf.all.disable_ipv6=1
     --sysctl net.ipv6.conf.default.disable_ipv6=1)
 
-  # Mount the project dir rw; SLUICE_WORKDIR tells the entrypoint to chown it to node (Linux uid).
+  # Mount the project dir rw; SLUICE_WORKDIR tells the entrypoint to chown it to sluice (Linux uid).
   run_args+=(-v "$PROJECT_DIR":"$PROJECT_DIR" -e "SLUICE_WORKDIR=$PROJECT_DIR")
 
   # git worktree: also mount the common dir (when outside the project) so refs resolve + write.
@@ -569,7 +569,7 @@ ensure_up() { maybe_build; running || start; }
 
 # Build the `<engine> exec` arg vector (node user, SLUICE_ENV forwarded, TTY only when attached).
 _exec_args() {
-  _EXEC_ARGS=(-i --user node -w "$PROJECT_DIR")
+  _EXEC_ARGS=(-i --user sluice -w "$PROJECT_DIR")
   [ -t 0 ] && [ -t 1 ] && _EXEC_ARGS+=(-t)
   for v in ${SLUICE_ENV:-}; do
     _EXEC_ARGS+=(-e "$v")
@@ -631,7 +631,7 @@ case "${1:-run-default}" in
   logs)    "$ENGINE" logs -f "$container" ;;
   smoke)
     maybe_build
-    "$ENGINE" run --rm --user node --entrypoint bash "$tag" /usr/local/bin/smoke-test.sh
+    "$ENGINE" run --rm --user sluice --entrypoint bash "$tag" /usr/local/bin/smoke-test.sh
     exit $?
     ;;
   learn)   cmd_learn; exit 0 ;;
