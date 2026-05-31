@@ -1,4 +1,4 @@
-# aider — open-source terminal pair-programmer — inside a sluice.
+# aider - open-source terminal pair-programmer - inside a sluice.
 #
 #   sluice agent aider
 #

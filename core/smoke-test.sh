@@ -40,6 +40,6 @@ fi
 if [ "$fail" = 0 ]; then
   echo "[smoke] PASS"
 else
-  echo "[smoke] FAIL — see ❌ above" >&2
+  echo "[smoke] FAIL - see ❌ above" >&2
   exit 1
 fi

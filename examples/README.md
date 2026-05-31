@@ -1,6 +1,6 @@
 # Gallery
 
-Drop-in `sluice.config.sh` presets. Copy one into a project, run `sluice` — and it's
+Drop-in `sluice.config.sh` presets. Copy one into a project, run `sluice` - and it's
 non-root, sees only that directory, and can only reach the hosts the preset allows.
 
 ## Self-contained demos (a real app, no repo of your own needed)
@@ -23,5 +23,5 @@ Don't see your stack? `sluice init` scaffolds a config by detecting your manifes
 
 ## Coding agents
 
-See [`../agents/`](../agents/) — `sluice agent <name>` for
-**claude · codex · gemini · aider · cursor · opencode · amp**.
+See [`../agents/`](../agents/) - `sluice agent <name>` for
+**claude, codex, gemini, aider, cursor, opencode, amp**.

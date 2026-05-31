@@ -11,7 +11,7 @@ class Sluice < Formula
   sha256 "0000000000000000000000000000000000000000000000000000000000000000" # TODO: fill at release
   license "Apache-2.0"
 
-  # Runtime needs docker or podman, which Homebrew shouldn't manage — documented, not a dep.
+  # Runtime needs docker or podman, which Homebrew shouldn't manage - documented, not a dep.
 
   def install
     libexec.install Dir["*"]

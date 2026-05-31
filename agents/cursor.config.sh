@@ -1,4 +1,4 @@
-# Cursor CLI (cursor-agent) — inside a sluice.   [best-effort: confirm run cmd + hosts]
+# Cursor CLI (cursor-agent) - inside a sluice.   [best-effort: confirm run cmd + hosts]
 #
 #   sluice agent cursor
 #

@@ -31,7 +31,7 @@ for _ in $(seq 1 40); do
   sleep 0.25
 done
 if [ "$ok" != 1 ]; then
-  echo "[sluice] FATAL: squid did not come up on :3130 — egress filter unavailable" >&2
+  echo "[sluice] FATAL: squid did not come up on :3130 - egress filter unavailable" >&2
   tail -n 20 /var/log/squid/cache.log 2>/dev/null || true
   exit 1
 fi

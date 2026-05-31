@@ -1,4 +1,4 @@
-# Google Gemini CLI — inside a sluice.
+# Google Gemini CLI - inside a sluice.
 #
 #   sluice agent gemini
 #
