@@ -52,8 +52,13 @@ for name in $EXAMPLES; do
       ' 2>&1 | head -60
       echo "-------------------------------------------"
     fi
+    # The entrypoint chowns the mounted copy to the sandbox uid (1000); chown it back to the
+    # host uid (while the container is still up) so this harness can remove its own temp copy
+    # without the "rm: Permission denied" noise on Linux (no-op on Docker Desktop's uid mapping).
+    "${SLUICE_ENGINE:-docker}" exec --user root "sluice-$name" \
+      chown -R "$(id -u):$(id -g)" "$work" >/dev/null 2>&1 || true
     ( cd "$work" && "$SLUICE" stop ) >/dev/null 2>&1
-    rm -rf "$(dirname "$work")"
+    rm -rf "$(dirname "$work")" 2>/dev/null || true
     [ "$code" = 200 ] && break
     [ "$attempt" = 1 ] && echo "  ... $name failed (got $code) - retrying once"
   done
