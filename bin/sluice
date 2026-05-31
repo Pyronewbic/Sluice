@@ -3,6 +3,7 @@
 #
 # Drop a sluice.config.sh in a project directory, then from anywhere inside it:
 #   sluice init         scaffold a sluice.config.sh by detecting the project's stack
+#   sluice agent <name> run a coding agent (claude/codex/aider/cursor) sandboxed + firewalled
 #   sluice learn        propose the egress allowlist from the hosts the proxy has blocked
 #   sluice              build (if needed) + run SLUICE_RUN_CMD in the sandbox
 #   sluice shell        drop into a bash shell in the sandbox (as the node user)
@@ -106,6 +107,31 @@ find_config() {
   done
   return 1
 }
+
+# --- `sluice agent [name]`: run a coding agent, sandboxed + firewalled --------------
+# Agent specifics live in agents/<name>.config.sh preset files — never in core/. With no
+# name, list them. `sluice agent claude` writes the preset (if there's no config yet) and
+# falls through to the normal build+run, dropping you into the agent.
+if [ "${1:-}" = agent ]; then
+  shift
+  agents_dir="$ROOT/agents"
+  if [ -z "${1:-}" ]; then
+    echo "[sluice] available agents (use: sluice agent <name>):"
+    for f in "$agents_dir"/*.config.sh; do [ -f "$f" ] && echo "  $(basename "$f" .config.sh)"; done
+    exit 0
+  fi
+  preset="$agents_dir/$1.config.sh"
+  [ -f "$preset" ] || die "unknown agent '$1' — run 'sluice agent' to list available presets."
+  if cfg="$(find_config)"; then
+    echo "[sluice] using existing config: $cfg"
+  else
+    cp "$preset" "$PWD/sluice.config.sh"
+    echo "[sluice] wrote $PWD/sluice.config.sh from the '$1' agent preset."
+    echo "[sluice] export the agent's auth env var on your host first (see the file's header)."
+  fi
+  set -- run-default     # continue into the normal build + run flow below
+fi
+
 PROJECT_CONFIG="$(find_config)" || die "no sluice.config.sh found in $PWD or any parent.
 Create one (see sluice.config.example.sh) — it declares this project's tooling, egress
 allowlist, ports, and run command."
@@ -305,8 +331,15 @@ case "${1:-run-default}" in
     ;;
   run-default)
     ensure_up
+    # If the config forwards auth env vars (SLUICE_ENV) but none are set on the host, warn
+    # — agents otherwise fail to authenticate (and fall back to a browser login that can't
+    # work headless).
+    if [ -n "${SLUICE_ENV:-}" ]; then
+      _any=0; for _v in $SLUICE_ENV; do [ -n "${!_v:-}" ] && _any=1; done
+      [ "$_any" = 1 ] || echo "[sluice] note: none of [$SLUICE_ENV] is set on the host — auth may fail; export it and re-run." >&2
+    fi
     # Default action: run SLUICE_RUN_CMD (a single shell string). Falls back to a shell.
     exec_in sh -lc "${SLUICE_RUN_CMD:-bash}"
     ;;
-  *) die "unknown command: $1 (try: sluice init, sluice learn, sluice, sluice shell, sluice run <cmd>, sluice build, sluice rebuild, sluice smoke, sluice logs, sluice stop)" ;;
+  *) die "unknown command: $1 (try: sluice init, sluice agent <name>, sluice learn, sluice, sluice shell, sluice run <cmd>, sluice build, sluice rebuild, sluice smoke, sluice logs, sluice stop)" ;;
 esac

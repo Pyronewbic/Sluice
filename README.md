@@ -22,6 +22,7 @@ git finds `.git`):
 
 ```bash
 sluice init         # scaffold a sluice.config.sh by detecting the repo's stack
+sluice agent <name> # run a coding agent (claude/codex/aider/cursor) sandboxed + firewalled
 sluice learn        # propose the egress allowlist from the hosts the proxy blocked
 sluice              # build (if needed) + run SLUICE_RUN_CMD in the sandbox
 sluice shell        # a bash shell in the sandbox (as the non-root node user)
@@ -49,6 +50,23 @@ sluice rebuild   # apply the allowlist — now sandboxed + firewalled, and worki
 
 `init` infers the stack, run command, and ports; `learn` fills the one thing you can't
 guess statically — the egress allowlist — by observing what the app actually reached.
+
+### Run a coding agent
+
+`sluice agent <name>` drops you into a coding agent that's non-root, sees only this repo,
+and can only reach its own model API — so running it in YOLO mode is defensible:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...     # forwarded into the box, never baked into the image
+cd my-repo
+sluice agent claude                     # Claude Code, --dangerously-skip-permissions, sandboxed
+```
+
+Presets ship for **claude**, **codex**, **aider**, and **cursor** (see
+[`agents/`](agents/)); each is a normal `sluice.config.sh` declaring the tool, its API
+hosts, and which auth env var to forward — so adding an agent is just adding a file. Run
+`sluice agent` with no name to list them. If the agent hits a blocked host, `sluice learn`
+surfaces it.
 
 ## Configure
 
@@ -133,6 +151,7 @@ core/entrypoint.sh       starts squid, runs the firewall, then idles
 core/smoke-test.sh       image smoke test (base tooling + non-root)
 sluice.config.example.sh    documented config template
 examples/                ready-to-use project configs
+agents/                  coding-agent presets (claude, codex, aider, cursor)
 test/acceptance.sh       automated pass/fail harness (egress matrix + serve); run by CI
 install.sh               symlink bin/sluice onto PATH
 ```
