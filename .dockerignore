@@ -1,0 +1,21 @@
+# sluice builds its images from an assembled context (core/ + the project's
+# sluice.config.sh) with selective COPYs, so nothing here ships in the image regardless.
+# This keeps any build context lean and prevents stray files from leaking in.
+.git
+.gitignore
+.github
+test
+bin
+install.sh
+
+# Docs: leave out all markdown except README.
+*.md
+!README.md
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*~
+*.swp
+.idea/
+.vscode/
