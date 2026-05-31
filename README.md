@@ -93,6 +93,11 @@ hosts, and which auth env var to forward - so adding an agent is just adding a f
 `sluice agent` with no name to list them. If the agent hits a blocked host, `sluice learn`
 surfaces it.
 
+Sessions persist across runs: each preset declares the home dir it keeps history/auth in
+(`SLUICE_STATE_DIRS`), bind-mounted to a per-project host store under `~/.local/state/sluice/`,
+so `sluice agent claude` resumes where you left off and survives a rebuild, `sluice stop`, or
+reboot. `sluice doctor` shows what's persisted; wipe it with `rm -rf ~/.local/state/sluice/<name>`.
+
 Each preset runs the agent in **YOLO mode by default** (its skip-approvals flag), since the
 sluice is the point of the per-action gate being unnecessary. Honest caveat: the sandbox
 bounds the blast radius but does not zero it - a YOLO agent can still rewrite the mounted
@@ -117,6 +122,7 @@ Everything is driven by `sluice.config.sh`. Copy [`sluice.config.example.sh`](sl
 | `SLUICE_RUN_CMD` | the command a bare `sluice` runs (default: a shell) |
 | `SLUICE_ENV` | host env var names to forward into the session |
 | `SLUICE_MOUNTS` | extra bind mounts (`host:container[:ro]`) |
+| `SLUICE_STATE_DIRS` | home-relative dirs to persist across runs (agent sessions/history/auth); host-side, per project |
 | `SLUICE_PRELAUNCH` | a function (defined in the config) run on the host before launch, to stage credentials |
 
 `sluice.config.sh` is sourced by `/bin/sh` (Docker build), `bash` (firewall, host), so keep

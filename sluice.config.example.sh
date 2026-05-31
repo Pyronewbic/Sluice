@@ -77,6 +77,14 @@ SLUICE_ENV=""
 #   $HOME/.cache/app:/home/sluice/.cache/app"
 SLUICE_MOUNTS=""
 
+# Home-relative dirs to PERSIST across container recreation (rebuild, `sluice stop`, reboot).
+# Each is bind-mounted from a per-project host store ($XDG_STATE_HOME/sluice/<name>, default
+# ~/.local/state/sluice/<name>) into /home/sluice - so a coding agent's sessions/history/auth
+# survive runs (the agents/ presets set this). Dirs only; relative paths (no leading / or ..);
+# never list a dir holding baked binaries/config (.npm-global, or .local for some agents).
+# Space/newline-separated. e.g. ".claude"  or  ".myagent .config/myagent"
+SLUICE_STATE_DIRS=""
+
 # Name of a shell function defined in THIS file, run on the host before launch - use
 # it to mint/stage short-lived credentials (write a token file, then expose its path
 # via SLUICE_MOUNTS, or export an env var named in SLUICE_ENV). Keeps cred plumbing in the

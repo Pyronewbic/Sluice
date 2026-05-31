@@ -11,5 +11,8 @@ SLUICE_SETUP_CMDS='curl https://cursor.com/install -fsS | bash && mkdir -p "$HOM
 # Cursor proxies models through its own backend; downloads.cursor.com is the binary self-update.
 SLUICE_ALLOW_DOMAINS="cursor.com api2.cursor.sh api.cursor.com downloads.cursor.com"
 SLUICE_ENV="CURSOR_API_KEY"
+# Persist cursor-agent's config/auth across runs (.cursor holds cli-config.json). NOT .local -
+# that's where the installed binary lives, and a mount would shadow it.
+SLUICE_STATE_DIRS=".cursor"
 # --force enables auto-run (no per-command confirmation). Drop it for interactive.
 SLUICE_RUN_CMD="cursor-agent --force"

@@ -76,6 +76,10 @@ file or tool result steering an agent, or simply buggy agent code - any of which
 6. **Whatever `SLUICE_PRELAUNCH` does.** It runs on the **host** and is fully trusted - a
    malicious config is out of scope (you author it).
 7. **Host-side Claude/editor hooks, side channels, timing.** Not addressed.
+8. **Persisted state on the host.** `SLUICE_STATE_DIRS` (the agent presets use it) bind-mounts
+   the agent's home subdirs to `~/.local/state/sluice/<project>/` - outside the project tree and
+   kept across runs. The sandboxed agent reads/writes it (its own config/sessions and any tokens
+   it caches there); treat that dir as sensitive, host-side state.
 
 ## Residual risk, one line
 

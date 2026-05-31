@@ -13,4 +13,7 @@ SLUICE_SETUP_CMDS='mkdir -p /home/node/.config/opencode && printf "{\"permission
 # model catalog. If you use another provider, add its host (or run `sluice learn`).
 SLUICE_ALLOW_DOMAINS="api.anthropic.com api.openai.com models.dev"
 SLUICE_ENV="ANTHROPIC_API_KEY OPENAI_API_KEY"
+# Persist opencode's auth + sessions (its data dir) across runs. NOT .config/opencode - that
+# holds the baked allow-all config above, and a mount would shadow it.
+SLUICE_STATE_DIRS=".local/share/opencode"
 SLUICE_RUN_CMD="opencode"

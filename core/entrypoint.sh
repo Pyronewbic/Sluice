@@ -74,8 +74,9 @@ fi
 mkdir -p /home/sluice/.npm-global
 chown sluice:sluice /home/sluice/.npm-global 2>/dev/null || true
 
-# chown the mounted repo to sluice when it isn't already (Linux bind mounts keep the host uid).
-for d in "${SLUICE_WORKDIR:-}" "${SLUICE_GITDIR:-}"; do
+# chown the mounted repo (and any persisted SLUICE_STATE_DIRS) to sluice when not already
+# (Linux bind mounts keep the host uid; no-op at uid 1000 / Docker Desktop).
+for d in "${SLUICE_WORKDIR:-}" "${SLUICE_GITDIR:-}" ${SLUICE_STATE_PATHS:-}; do
   if [ -n "$d" ] && [ -d "$d" ]; then
     if [ "$(stat -c %u "$d" 2>/dev/null || echo 0)" != 1000 ]; then
       chown -R sluice:sluice "$d" 2>/dev/null || true

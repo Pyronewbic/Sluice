@@ -216,6 +216,12 @@ cmd_doctor() {
     _doc lock "none - run 'sluice lock' to record installed versions"
   fi
 
+  if [ -n "${SLUICE_STATE_DIRS:-}" ]; then
+    local nsd=0 _sd
+    for _sd in ${SLUICE_STATE_DIRS}; do nsd=$((nsd+1)); done
+    _doc state "$nsd dir(s) persisted at ${XDG_STATE_HOME:-$HOME/.local/state}/sluice/$slug"
+  fi
+
   _doc allowlist "${SLUICE_ALLOW_DOMAINS:-(none beyond base)}"
   _doc "" "base: $(base_domains)"
   [ -n "${SLUICE_ALLOW_IPS:-}" ] && _doc "" "ips:  $SLUICE_ALLOW_IPS"
@@ -629,6 +635,23 @@ start() {
     done <<EOF
 $SLUICE_MOUNTS
 EOF
+  fi
+
+  # SLUICE_STATE_DIRS: persist these home-relative dirs across container recreation. Each is
+  # bind-mounted from a per-project host store ($XDG_STATE_HOME/sluice/<slug>) into /home/sluice,
+  # so an agent's sessions/history/auth-cache survive rebuilds, `sluice stop`, and reboots (the
+  # writable layer is otherwise wiped on recreation). Dirs only; the entrypoint chowns them to the
+  # sluice uid. Relative paths only - never let an entry escape the home dir or shadow a baked
+  # install path (e.g. .npm-global, cursor's .local/bin).
+  if [ -n "${SLUICE_STATE_DIRS:-}" ]; then
+    local state_base="${XDG_STATE_HOME:-$HOME/.local/state}/sluice/$slug" sd state_paths=""
+    for sd in ${SLUICE_STATE_DIRS}; do
+      case "$sd" in /*|*..*) die "SLUICE_STATE_DIRS entry must be a relative path under the home dir: $sd";; esac
+      mkdir -p "$state_base/$sd"
+      run_args+=(-v "$state_base/$sd":"/home/sluice/$sd")
+      state_paths="$state_paths /home/sluice/$sd"
+    done
+    run_args+=(-e "SLUICE_STATE_PATHS=$state_paths")
   fi
 
   # Publish declared ports on host loopback only; init-firewall.sh opens the inbound ACCEPT.

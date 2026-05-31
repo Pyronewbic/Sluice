@@ -9,5 +9,7 @@ SLUICE_EXTRA_NPM="@sourcegraph/amp"
 # Amp proxies models through ampcode.com; static.ampcode.com is the update/version check.
 SLUICE_ALLOW_DOMAINS="ampcode.com static.ampcode.com"
 SLUICE_ENV="AMP_API_KEY"
+# Persist amp's settings/auth across runs (host-side, per project).
+SLUICE_STATE_DIRS=".config/amp"
 # --dangerously-allow-all bypasses Amp's command allowlist (the sluice is the sandbox).
 SLUICE_RUN_CMD="amp --dangerously-allow-all"
