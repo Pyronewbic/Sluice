@@ -10,10 +10,12 @@ to run — sluice builds the image and runs it.
 ## Install
 
 ```bash
-./install.sh          # symlinks bin/sluice → ~/.local/bin/sluice
+curl -fsSL https://raw.githubusercontent.com/Pyronewbic/Sluice/main/install.sh | sh
+# or, from a checkout:  ./install.sh
 ```
 
-Ensure `~/.local/bin` is on `PATH` (install.sh tells you if it isn't).
+Symlinks `bin/sluice` into `~/.local/bin` (ensure it's on `PATH`). Needs **docker** or
+**podman**. (A Homebrew tap is coming — see [`packaging/`](packaging/).)
 
 ## Use
 
@@ -153,9 +155,16 @@ sluice.config.example.sh    documented config template
 examples/                ready-to-use project configs
 agents/                  coding-agent presets (claude, codex, aider, cursor)
 test/acceptance.sh       automated pass/fail harness (egress matrix + serve); run by CI
-install.sh               symlink bin/sluice onto PATH
+install.sh               curl|sh + local installer (symlinks bin/sluice onto PATH)
+packaging/               Homebrew formula (for a tap)
+LICENSE  SECURITY.md     Apache-2.0; how to report a vulnerability
 ```
 
 Runs on **docker** or **podman** (auto-detected; override with `SLUICE_ENGINE`). CI
 ([`.github/workflows/acceptance.yml`](.github/workflows/acceptance.yml)) runs the harness
 on Linux Docker; the Linux/Podman legs are validated there rather than on macOS.
+
+## License
+
+[Apache-2.0](LICENSE) — permissive, use it however you like. Found a sandbox escape or
+egress bypass? See [SECURITY.md](SECURITY.md).
