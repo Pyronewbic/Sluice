@@ -13,6 +13,7 @@ to run - sluice builds the image and runs it.
 
 ```bash
 brew install Pyronewbic/tap/sluice
+# dev stream (latest main commit):  brew install --HEAD Pyronewbic/tap/sluice
 # or:  curl -fsSL https://raw.githubusercontent.com/Pyronewbic/Sluice/main/install.sh | sh
 # or, from a checkout:  ./install.sh
 ```
@@ -32,6 +33,11 @@ sluice           # no config -> scaffold from detection, then (on [Y/n]) build +
 sluice learn     # proposes the hosts to allow (harvested from what the proxy blocked)
 sluice rebuild   # apply the allowlist - now sandboxed + firewalled, and working
 ```
+
+When a run exits, sluice prints a one-line hint of any hosts it blocked, so a failed fetch
+points you straight at `sluice learn`. For a fuller picture, `sluice doctor` reports the
+engine, image freshness, the effective allowlist, auth env, and the hosts blocked this run -
+and works even before anything is built.
 
 `sluice init` does just the scaffold step (no prompt, no run) if you'd rather review the
 config first; in CI, a bare `sluice` scaffolds and stops unless `SLUICE_YES=1`. `init` infers
@@ -145,8 +151,9 @@ cd strudel && sluice            # build + serve; then open http://localhost:4321
 
 The full **[gallery](examples/)** has more drop-in configs (Jupyter, Vite, Next.js, FastAPI).
 It shows the one runtime gotcha: a host the app needs at runtime must be in
-`SLUICE_ALLOW_DOMAINS` (or `sluice learn` it), or the firewall blocks it silently. For any
-other stack, `sluice init` scaffolds the config.
+`SLUICE_ALLOW_DOMAINS` (or `sluice learn` it), or the firewall blocks it - sluice flags which
+host at exit (and in `sluice doctor`) so you can allow it. For any other stack, `sluice init`
+scaffolds the config.
 
 ## Layout
 

@@ -38,7 +38,7 @@ SLUICE_SETUP_CMDS=""
 # Host/TLS-SNI through an in-sluice proxy (by name, not IP - survives IP rotation); a leading
 # dot matches subdomains (".example.com"). This is usually the one thing you must get
 # right: anything the app fetches at runtime (CDNs, sample/asset hosts, APIs) must be
-# listed or the proxy silently blocks it.
+# listed or the proxy blocks it (sluice flags the host at exit; 'sluice learn' to allow).
 SLUICE_ALLOW_DOMAINS=""
 
 # Fixed IPs/CIDRs for NON-HTTP services (e.g. a database) - direct egress on any port,
