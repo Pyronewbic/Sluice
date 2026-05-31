@@ -24,8 +24,11 @@ bad()  { FAIL=$((FAIL+1)); printf '  FAIL %s\n' "$1"; }
 # assert_block "label" <cmd...>: PASS if the command FAILS (egress blocked).
 # assert_pass  "label" <cmd...>: PASS if the command SUCCEEDS.
 bxrun() { ( cd "$1" && shift && "$SLUICE" run "$@" ) >/dev/null 2>&1; }
-# Allow-checks hit the live internet; retry so a single transient blip isn't a failure.
-# (Deny-checks are not retried — they pass when the command fails, which a blip only helps.)
+# Allow-checks: success = the connection REACHED the host (the proxy allowed it), not 2xx —
+# so they use plain `curl -sS` (no -f). A 4xx like github.com rate-limiting CI runner IPs
+# (429) still means "allowed". They also retry, so a single transient blip isn't a failure.
+# (Deny-checks keep -f — squid's 403 page for a blocked HTTP host must read as failure — and
+# aren't retried, since they pass when curl fails, which a blip only helps.)
 retry() { local n=1; until "$@"; do [ "$n" -ge 3 ] && return 1; n=$((n+1)); sleep 2; done; }
 
 echo "== sluice acceptance (engine: ${SLUICE_ENGINE:-docker}) =="
@@ -36,9 +39,9 @@ mkdir -p "$WORK/empty"; printf 'SLUICE_RUN_CMD="bash"\n' > "$WORK/empty/sluice.c
 if ( cd "$WORK/empty" && "$SLUICE" build ) >/dev/null 2>&1; then ok "builds"; else bad "builds"; fi
 ( cd "$WORK/empty" && "$SLUICE" run true ) >/dev/null 2>&1   # bring the container up
 
-retry bxrun "$WORK/empty" curl -fsS --max-time 15 -o /dev/null https://registry.npmjs.org/ \
+retry bxrun "$WORK/empty" curl -sS --max-time 15 -o /dev/null https://registry.npmjs.org/ \
   && ok "allow: registry.npmjs.org reachable (spliced by SNI)" || bad "allow: registry.npmjs.org reachable"
-retry bxrun "$WORK/empty" curl -fsS --max-time 15 -o /dev/null https://github.com/ \
+retry bxrun "$WORK/empty" curl -sS --max-time 15 -o /dev/null https://github.com/ \
   && ok "allow: github.com reachable" || bad "allow: github.com reachable"
 bxrun "$WORK/empty" curl -fsS --max-time 8 -o /dev/null https://example.com/ \
   && bad "deny: example.com (was reachable!)" || ok "deny: example.com blocked"
@@ -69,7 +72,7 @@ else
   done
   [ "$code" = 200 ] && ok "serves on localhost:4321 (port published + firewall-opened)" || bad "serves on localhost:4321 (got $code)"
 
-  retry bxrun "$WORK/strudel" curl -fsS --max-time 15 -o /dev/null \
+  retry bxrun "$WORK/strudel" curl -sS --max-time 15 -o /dev/null \
     https://raw.githubusercontent.com/tidalcycles/dirt-samples/master/bd/BT0A0D0.wav \
     && ok "runtime: sample host raw.githubusercontent.com reachable (sound loads)" \
     || bad "runtime: sample host raw.githubusercontent.com reachable"
