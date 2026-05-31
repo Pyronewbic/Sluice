@@ -1,9 +1,7 @@
 # syntax=docker/dockerfile:1
-# sluice sandbox image. Two stages: `base` is the generic sandbox core (Wolfi + a shell,
-# iptables + squid/dnsmasq egress firewall, the non-root user) - published + cosign-signed to
-# GHCR; `project` layers each project's declared tooling on top. A local build runs both from
-# scratch (default); `--build-arg BASE_IMAGE=ghcr.io/.../sluice-base:<ver>` (set via
-# SLUICE_BASE_IMAGE) builds the project layer FROM the signed base instead of rebuilding it.
+# sluice sandbox image, two stages: `base` (generic core - Wolfi + shell + squid/dnsmasq firewall +
+# non-root user; published + cosign-signed to GHCR) and `project` (per-project tooling on top). Local
+# build does both from scratch; SLUICE_BASE_IMAGE -> --build-arg BASE_IMAGE builds FROM the signed base.
 
 # BASE_IMAGE (global, used in the project FROM) defaults to the local `base` stage; override it
 # with a published ghcr.io/.../sluice-base:<ver> ref (via SLUICE_BASE_IMAGE) to skip rebuilding.
@@ -35,9 +33,8 @@ ENV NPM_CONFIG_PREFIX=/home/sluice/.npm-global
 ENV PATH=/home/sluice/.npm-global/bin:${PATH}
 
 # --- squid: its own uid (the only one with direct egress) + its dirs --------------------
-# The splice cert is generated at RUNTIME (entrypoint.sh), so the published base carries no
-# key. (We SPLICE, never forge, so the cert is never presented - it only lets squid bind the
-# ssl-bump port.)
+# The splice cert is generated at RUNTIME (entrypoint.sh) so the base carries no key; we splice
+# (never forge), so it is never presented - it only lets squid bind the ssl-bump port.
 RUN { getent group squid  >/dev/null 2>&1 || groupadd -r squid; } \
     && { getent passwd squid >/dev/null 2>&1 || useradd -r -g squid -d /var/cache/squid -s /bin/false squid; } \
     && mkdir -p /etc/squid/ssl /var/log/squid /var/cache/squid /run/squid \

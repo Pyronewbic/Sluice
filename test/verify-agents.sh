@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
-# Verify each coding-agent preset as far as possible WITHOUT credentials, so the only thing
-# left is "one credential away": the live authenticated API round-trip. For each agent it
-# builds the preset's image and checks (all cred-free): the CLI binary actually installs from
-# the preset's npm package and runs, every declared API host is reachable through the proxy, a
-# non-allowlisted host is blocked, and the auth env var is forwarded into the box. If a real
-# auth var is set on the host, it also runs a bounded live probe and checks the proxy log for a
-# tunnel to the API host. Heavy (builds real agent CLIs) - runs nightly/manual, not the PR gate.
+# Verify each coding-agent preset as far as possible WITHOUT credentials (the live API round-trip is
+# the only cred-gated step). Per preset, cred-free: the CLI binary installs from its npm package and
+# runs, every declared API host is reachable through the proxy, a non-allowlisted host is blocked,
+# the auth env var is forwarded. With a real key set, also probes a live call + greps the proxy log
+# for the API tunnel. Heavy (real agent CLIs) - nightly/manual, not the PR gate.
 #
 #   ./test/verify-agents.sh                                     # all presets (cred-free)
 #   AGENTS=claude CURSOR_API_KEY=... ./test/verify-agents.sh    # one preset + a live round-trip

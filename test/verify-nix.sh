@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
-# Verify the Nix example (examples/nix.config.sh): Nix composed inside a sluice. Builds the example
-# - which installs single-user Nix and bakes a pinned tool, ~1.5GB - then checks the baked tool
-# runs, the box is non-root, Nix itself works offline against the baked store, and runtime egress is
-# still locked. Heavy (downloads Nix + the closure) - runs nightly/manual, not the PR gate.
-#
-#   ./test/verify-nix.sh
+# Verify examples/nix.config.sh (Nix composed inside a sluice): builds it (~1.5GB), then checks the
+# baked tool runs, the box is non-root, Nix works offline in-box, and runtime egress is still locked.
+# Heavy - runs nightly/manual, not the PR gate.   Usage: ./test/verify-nix.sh
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
