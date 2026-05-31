@@ -25,6 +25,26 @@ sluice_version() {       # git tag if $ROOT is our own checkout, else the baked 
     printf '%s' "$SLUICE_VERSION"
   fi
 }
+# Passive "you're behind" notice for `sluice version` (like `terraform version`). Best-effort: a 2s
+# GitHub check, silent on any failure/offline/opt-out (SLUICE_NO_UPDATE_CHECK=1). Never aborts the
+# caller. Version compare is field-numeric (portable: BSD sort has no -V); a dev build ahead of its
+# tag (X.Y.Z-N-g...) compares by its X.Y.Z base, so it won't nag.
+check_update_notice() {
+  [ -z "${SLUICE_NO_UPDATE_CHECK:-}" ] || return 0
+  command -v curl >/dev/null 2>&1 || return 0
+  local cur_base latest newest
+  cur_base="$(sluice_version | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' || true)"
+  [ -n "$cur_base" ] || return 0
+  latest="$(curl -fsS --max-time 2 https://api.github.com/repos/Pyronewbic/Sluice/releases/latest 2>/dev/null \
+            | grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 \
+            | sed -E 's/.*"([^"]*)"$/\1/' 2>/dev/null || true)"
+  latest="${latest#v}"
+  [ -n "$latest" ] || return 0
+  newest="$(printf '%s\n%s\n' "$cur_base" "$latest" | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)"
+  [ "$newest" = "$latest" ] && [ "$latest" != "$cur_base" ] \
+    && printf '  update   v%s available (you have v%s) - update sluice: brew upgrade sluice (see README)\n' "$latest" "$cur_base"
+  return 0
+}
 usage() {
   cat <<EOF
 sluice $(sluice_version) - run any project in a sandboxed, egress-firewalled container.
@@ -56,7 +76,7 @@ Meta:
   version          show version + host runtime (engine, OS)
   help             show this help
 
-Env: SLUICE_ENGINE  SLUICE_NO_BANNER  SLUICE_YES  NO_COLOR
+Env: SLUICE_ENGINE  SLUICE_NO_BANNER  SLUICE_YES  SLUICE_NO_UPDATE_CHECK  NO_COLOR
 Docs: https://github.com/Pyronewbic/Sluice
 EOF
 }
@@ -73,6 +93,7 @@ cmd_version() {
   fi
   printf '  os       %s %s\n' "$(uname -s)" "$(uname -m)"
   printf '  install  %s\n' "$ROOT"
+  check_update_notice
 }
 
 # --- naming + diagnostics helpers (shared by run, learn, doctor) -----------------
