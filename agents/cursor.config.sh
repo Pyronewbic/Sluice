@@ -6,8 +6,8 @@
 # still rewrite this dir and use any forwarded creds, so commit your work first.
 # Auth: export CURSOR_API_KEY on the HOST before running (forwarded, never baked).
 SLUICE_EXTRA_NPM="@cursor/cli"
-# Cursor proxies models through its own backend; if a request is blocked, run `sluice learn`.
-SLUICE_ALLOW_DOMAINS="cursor.com api2.cursor.sh api.cursor.com"
+# Cursor proxies models through its own backend; downloads.cursor.com is the binary self-update.
+SLUICE_ALLOW_DOMAINS="cursor.com api2.cursor.sh api.cursor.com downloads.cursor.com"
 SLUICE_ENV="CURSOR_API_KEY"
 # --force enables auto-run (no per-command confirmation). Drop it for interactive.
 SLUICE_RUN_CMD="cursor-agent --force"
