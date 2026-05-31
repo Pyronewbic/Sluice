@@ -11,6 +11,15 @@ set -e
   for d in ${SLUICE_ALLOW_DOMAINS:-}; do printf '%s\n' "$d"; done
 } > /etc/squid/allowlist.txt
 
+# Audit mode (learn --audit): open egress to ALL HTTP/HTTPS hosts so one run logs every host the
+# app reaches. Runtime-only - edits this container's own /etc/squid.conf, never the image; the
+# container is ephemeral + credential-stripped. iptables still drops non-HTTP ports + IPv6.
+if [ "${SLUICE_AUDIT:-}" = 1 ]; then
+  echo "[sluice] AUDIT MODE: egress OPEN to all HTTP/HTTPS hosts (logging every SNI). Trusted code, no creds." >&2
+  sed -i -e 's/^ssl_bump splice allowed_sni$/ssl_bump splice all/' \
+         -e 's/^http_access allow allowed_host$/http_access allow all/' /etc/squid.conf
+fi
+
 # (IPv6-off + route_localnet are set via --sysctl at docker run; /proc/sys is ro here.)
 
 # --- caching DNS resolver (dnsmasq) ---------------------------------------------

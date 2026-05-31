@@ -35,8 +35,13 @@ sluice rebuild    # apply the new allowlist - the app works, still sandboxed
 ```
 
 Shortcuts: **`sluice learn --apply`** writes the allowlist and rebuilds in one step (the loop above,
-collapsed); **`sluice learn --print`** just emits the proposed list to stdout, for review or CI
-(`sluice learn --print`).
+collapsed); **`sluice learn --print`** just emits the proposed list to stdout, for review or CI.
+
+The loop above relies on the app *continuing* past a block so the proxy logs every host it wants.
+If instead your command is a trusted fetcher that **aborts on the first blocked host**, one enforce
+run only reveals one host. For that, **`sluice learn --audit`** runs it once with egress open (in a
+throwaway, credential-stripped container) and proposes the full list from everything it reached - a
+loudly-warned, trusted-code-only escape hatch (see [`THREAT_MODEL.md`](../THREAT_MODEL.md)).
 
 `sluice learn` proposes only the real hosts your app reached - the firewall's own self-test
 canaries and raw IPs are filtered out:

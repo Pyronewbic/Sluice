@@ -57,6 +57,7 @@ Common:
   init [--force]   scaffold a sluice.config.sh by detecting the project's stack
   learn            propose the egress allowlist from the hosts the proxy blocked
                    --print emits it to stdout; --apply writes it + rebuilds
+                   --audit opens egress for one trusted run to discover every reached host
   shell            a bash shell in the sandbox (as the non-root sluice user)
   run <cmd...>     an ad-hoc command instead of SLUICE_RUN_CMD
 
@@ -130,6 +131,22 @@ blocked_hosts() {
     }' | sort -u
 }
 
+# Hostnames the proxy ALLOWED (reached) - the complement of blocked_hosts, for `learn --audit`
+# (which opens egress, so every reached host logs as a success). Optional $1 = container.
+reached_hosts() {
+  "$ENGINE" exec "${1:-$container}" cat /var/log/squid/access.log 2>/dev/null | awk '
+    { sni="";
+      for (i=1;i<=NF;i++) if ($i ~ /^ssl_sni=/) sni=substr($i,9);
+      status=$3; url=$5;
+      if (status ~ /NONE_NONE/ || status ~ /TCP_DENIED/ || status ~ /\/000/) next;
+      host="";
+      if (sni != "" && sni != "-") host=sni;
+      else if (url ~ /^http:\/\//) { h=url; sub(/^http:\/\//,"",h); sub(/\/.*/,"",h); sub(/:.*/,"",h); host=h }
+      if (host == "" || host ~ /^[0-9.]+$/) next;
+      print host
+    }' | sort -u
+}
+
 # This project's effective egress allowlist: config domains + the always-on base.
 allowed_domains() { printf '%s %s' "${SLUICE_ALLOW_DOMAINS:-}" "$(base_domains)"; }
 
@@ -139,6 +156,16 @@ blocked_new() {
   local cur h
   cur=" $(allowed_domains) "
   blocked_hosts 2>/dev/null | while IFS= read -r h; do
+    [ -n "$h" ] || continue
+    case "$cur" in *" $h "*) ;; *) printf '%s\n' "$h";; esac
+  done
+}
+
+# Like blocked_new but for the hosts the audit run REACHED (learn --audit). $1 = audit container.
+reached_new() {
+  local cur h
+  cur=" $(allowed_domains) "
+  reached_hosts "$1" 2>/dev/null | while IFS= read -r h; do
     [ -n "$h" ] || continue
     case "$cur" in *" $h "*) ;; *) printf '%s\n' "$h";; esac
   done
@@ -797,6 +824,90 @@ cmd_learn() {
   esac
 }
 
+# --- `sluice learn --audit`: one-shot OPEN-egress discovery (the warned escape hatch) ----
+# Runs SLUICE_RUN_CMD once in an ephemeral, credential-stripped container with egress opened to ALL
+# HTTP/HTTPS hosts (non-HTTP ports + IPv6 stay blocked), then proposes the allowlist from every host
+# it reached. For trusted code whose fetcher aborts on the first block, so enforce-mode learn can't
+# see past it. No SLUICE_ENV/SLUICE_PRELAUNCH/state dirs are forwarded - nothing to exfiltrate.
+cmd_learn_audit() {
+  cat >&2 <<'EOF'
+[sluice] WARNING: 'learn --audit' opens egress to ALL HTTP/HTTPS hosts for one run.
+         It runs SLUICE_RUN_CMD with NO forwarded credentials (SLUICE_ENV, prelaunch, and
+         persisted auth are stripped) in a throwaway container, then tears it down - but while
+         it runs, this project's code can reach any host. Use it only on code you trust.
+EOF
+  if [ -t 0 ] && [ -t 1 ]; then
+    printf '[sluice] open egress and run SLUICE_RUN_CMD once to discover reached hosts? [y/N] '
+    local a; read -r a 2>/dev/null || a=""
+    case "$a" in y|Y|yes|YES) ;; *) echo "[sluice] aborted - egress not opened."; return 0 ;; esac
+  elif [ "${SLUICE_YES:-}" != 1 ]; then
+    echo "[sluice] non-interactive: re-run with SLUICE_YES=1 to confirm opening egress for the audit pass."
+    return 0
+  fi
+
+  maybe_build
+  local audit_container="$container-audit"
+  "$ENGINE" rm -f "$audit_container" >/dev/null 2>&1 || true
+  # Bake the names into the trap now (the local is gone by the time EXIT fires) so the ephemeral
+  # container is always torn down - normal exit, die, or Ctrl-C. It never leaves audit mode.
+  trap "'$ENGINE' rm -f '$audit_container' >/dev/null 2>&1 || true" EXIT
+
+  # Credential-stripped run args: project mount + git common dir + the proxy sysctls + SLUICE_AUDIT.
+  # Deliberately NO prelaunch, state-dir mounts, SLUICE_ENV, or published ports (see start()).
+  local run_args=(--cap-add NET_ADMIN --cap-add NET_RAW
+    --sysctl net.ipv4.conf.all.route_localnet=1
+    --sysctl net.ipv6.conf.all.disable_ipv6=1
+    --sysctl net.ipv6.conf.default.disable_ipv6=1
+    -e SLUICE_AUDIT=1
+    -v "$PROJECT_DIR":"$PROJECT_DIR" -e "SLUICE_WORKDIR=$PROJECT_DIR")
+  if git -C "$PROJECT_DIR" rev-parse --git-common-dir >/dev/null 2>&1; then
+    local common; common="$(git -C "$PROJECT_DIR" rev-parse --git-common-dir)"
+    case "$common" in /*) ;; *) common="$PROJECT_DIR/$common";; esac
+    common="$(cd "$common" 2>/dev/null && pwd || true)"
+    if [ -n "$common" ]; then
+      case "$common/" in "$PROJECT_DIR"/*) ;; *) run_args+=(-v "$common":"$common" -e "SLUICE_GITDIR=$common");; esac
+    fi
+  fi
+
+  echo "[sluice] starting ephemeral audit container $audit_container ..."
+  "$ENGINE" run -d --name "$audit_container" "${run_args[@]}" "$tag" >/dev/null
+  local up=""
+  for _ in $(seq 1 60); do
+    "$ENGINE" logs "$audit_container" 2>&1 | grep -q "\[sluice\] ready" && { up=1; break; }
+    sleep 0.5
+  done
+  [ -n "$up" ] || die "audit container failed to come up - see: $ENGINE logs $audit_container"
+
+  # Run the command with NO credential forwarding (no -e for SLUICE_ENV vars).
+  local exec_args=(-i --user sluice -w "$PROJECT_DIR")
+  [ -t 0 ] && [ -t 1 ] && exec_args+=(-t)
+  echo "[sluice] running SLUICE_RUN_CMD with egress open (discovering reached hosts)..."
+  "$ENGINE" exec "${exec_args[@]}" "$audit_container" sh -lc "${SLUICE_RUN_CMD:-true}" || true
+
+  # Propose from the hosts it reached, minus base/allowlist, the example.* canary, and raw IPs.
+  local new proposed
+  # shellcheck disable=SC2086
+  new="$(reached_new "$audit_container" | grep -vxE 'example\.(com|net|org)' | sort -u | tr '\n' ' ' | sed 's/ *$//' || true)"
+  proposed="$(printf '%s %s\n' "${SLUICE_ALLOW_DOMAINS:-}" "$new" | tr ' ' '\n' | sed '/^$/d' | sort -u | tr '\n' ' ' | sed 's/ *$//')"
+
+  echo
+  if [ -z "$new" ]; then
+    echo "[sluice] the audit run reached no new hosts beyond the base/allowlist - nothing to add."
+    return 0
+  fi
+  echo "[sluice] hosts your app reached during the audit run (egress was open):"
+  # shellcheck disable=SC2086
+  printf '    %s\n' $new
+  echo
+  echo "[sluice] suggested:  SLUICE_ALLOW_DOMAINS=\"$proposed\""
+  printf '[sluice] write this into %s? [y/N] ' "$PROJECT_CONFIG"
+  local ans; read -r ans 2>/dev/null || ans=""
+  case "$ans" in
+    y|Y|yes|YES) apply_allowlist "$proposed"; echo "[sluice] updated $PROJECT_CONFIG - run 'sluice rebuild' to apply." ;;
+    *) echo "[sluice] unchanged. Paste the line above into $PROJECT_CONFIG when ready, then 'sluice rebuild'." ;;
+  esac
+}
+
 case "${1:-run-default}" in
   build)   build; exit 0 ;;
   rebuild) build; start; exit 0 ;;
@@ -812,8 +923,9 @@ case "${1:-run-default}" in
     case "${1:-}" in
       --print) cmd_learn --print; exit $? ;;
       --apply) cmd_learn --apply; exit $? ;;
+      --audit) cmd_learn_audit; exit $? ;;
       "")      cmd_learn; exit 0 ;;
-      *)       die "usage: sluice learn [--print | --apply]" ;;
+      *)       die "usage: sluice learn [--print | --apply | --audit]" ;;
     esac
     ;;
   lock)

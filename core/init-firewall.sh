@@ -66,24 +66,31 @@ if command -v ip6tables >/dev/null 2>&1; then
 fi
 
 # --- verify (fail closed on the deny tests) ------------------------------------
-# Deny self-test: a non-allowlisted host must be blocked. Pick a canary not in this allowlist.
-deny_canary=""
-for c in example.com example.net example.org; do
-  grep -qiF "$c" /etc/squid/allowlist.txt 2>/dev/null && continue
-  deny_canary="$c"; break
-done
-if [ -n "$deny_canary" ]; then
-  if curl -sS -o /dev/null --max-time 6 "https://$deny_canary" 2>/dev/null; then
-    echo "[firewall] FAIL: $deny_canary reachable - hostname filtering not enforced" >&2
+# Audit mode (learn --audit) opens all HTTP/HTTPS via squid (splice all / allow all), so the two
+# enforce-mode deny asserts below would fail closed - skip them. Non-HTTP ports + IPv6 stay
+# default-DROP (iptables, above); the audit container is ephemeral + credential-stripped.
+if [ "${SLUICE_AUDIT:-}" = 1 ]; then
+  echo "[firewall] AUDIT MODE: egress OPEN to all HTTP/HTTPS hosts - deny self-tests skipped" >&2
+else
+  # Deny self-test: a non-allowlisted host must be blocked. Pick a canary not in this allowlist.
+  deny_canary=""
+  for c in example.com example.net example.org; do
+    grep -qiF "$c" /etc/squid/allowlist.txt 2>/dev/null && continue
+    deny_canary="$c"; break
+  done
+  if [ -n "$deny_canary" ]; then
+    if curl -sS -o /dev/null --max-time 6 "https://$deny_canary" 2>/dev/null; then
+      echo "[firewall] FAIL: $deny_canary reachable - hostname filtering not enforced" >&2
+      exit 1
+    fi
+  else
+    echo "[firewall] WARN: every deny-canary is allowlisted - skipping the deny self-test" >&2
+  fi
+  # Deny: a direct-IP HTTPS connection carries no SNI -> the proxy must block it.
+  if curl -sS -o /dev/null --max-time 6 https://1.1.1.1 2>/dev/null; then
+    echo "[firewall] FAIL: direct-IP egress reachable - proxy bypassed" >&2
     exit 1
   fi
-else
-  echo "[firewall] WARN: every deny-canary is allowlisted - skipping the deny self-test" >&2
-fi
-# Deny: a direct-IP HTTPS connection carries no SNI -> the proxy must block it.
-if curl -sS -o /dev/null --max-time 6 https://1.1.1.1 2>/dev/null; then
-  echo "[firewall] FAIL: direct-IP egress reachable - proxy bypassed" >&2
-  exit 1
 fi
 # Allow: an always-allowlisted base host must work THROUGH the proxy. Warn-only (transient).
 curl -sS -o /dev/null --max-time 12 https://registry.npmjs.org 2>/dev/null \

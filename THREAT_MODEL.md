@@ -81,6 +81,12 @@ file or tool result steering an agent, or simply buggy agent code - any of which
    the agent's home subdirs to `~/.local/state/sluice/<project>/` - outside the project tree and
    kept across runs. The sandboxed agent reads/writes it (its own config/sessions and any tokens
    it caches there); treat that dir as sensitive, host-side state.
+9. **`learn --audit` opens egress on purpose.** The opt-in discovery pass runs your command once
+   with egress open to **all** HTTP/HTTPS hosts (incl. direct-IP on 80/443), so trusted code could
+   exfiltrate over any host during that one run. It is gated precisely for this: **credential-stripped**
+   (no `SLUICE_ENV`/`SLUICE_PRELAUNCH`/state dirs), **ephemeral** (a throwaway container, torn down
+   after), loudly warned + confirm-gated, and never the default. Non-HTTP ports and IPv6 stay
+   default-DROP. Use it only on code you trust.
 
 ## Residual risk, one line
 

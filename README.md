@@ -52,6 +52,12 @@ points you straight at `sluice learn`. For a fuller picture, `sluice doctor` rep
 engine, image freshness, the effective allowlist, auth env, and the hosts blocked this run -
 and works even before anything is built.
 
+`learn` works in enforce mode (it reads what the proxy blocked, never opening egress). For the
+one case that can't reach - trusted code whose fetcher aborts on the *first* blocked host -
+`sluice learn --audit` runs the command once in a throwaway, **credential-stripped** container with
+egress open to all HTTP/HTTPS hosts, then proposes the full allowlist from everything it reached.
+It's loudly warned and confirm-gated; see [`THREAT_MODEL.md`](THREAT_MODEL.md).
+
 `sluice init` does just the scaffold step (no prompt, no run) if you'd rather review the
 config first; in CI, a bare `sluice` scaffolds and stops unless `SLUICE_YES=1`. `init` infers
 the stack, run command, and ports; `learn` fills the one thing you can't guess statically -
@@ -68,7 +74,7 @@ The full command set:
 sluice                 # build (if needed) + run SLUICE_RUN_CMD in the sandbox
 sluice agent <name>    # run a coding agent (run `sluice agent` with no name to list them)
 sluice init [--force]  # scaffold a sluice.config.sh by detecting the repo's stack
-sluice learn           # propose the egress allowlist from blocked hosts (--print | --apply)
+sluice learn           # propose the egress allowlist from blocked hosts (--print | --apply | --audit)
 sluice shell           # a bash shell in the sandbox (as the non-root sluice user)
 sluice run <cmd...>    # an ad-hoc command instead of SLUICE_RUN_CMD
 
