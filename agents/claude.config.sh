@@ -7,7 +7,7 @@
 # Auth: export ANTHROPIC_API_KEY (or CLAUDE_CODE_OAUTH_TOKEN) on the HOST before running -
 # it's forwarded into the box, never baked. Browser OAuth can't complete headless, use a key.
 SLUICE_EXTRA_NPM="@anthropic-ai/claude-code"
-SLUICE_ALLOW_DOMAINS="api.anthropic.com console.anthropic.com statsig.anthropic.com"
+SLUICE_ALLOW_DOMAINS="api.anthropic.com platform.claude.com claude.ai console.anthropic.com statsig.anthropic.com"
 SLUICE_ENV="ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN"
 # --dangerously-skip-permissions = YOLO. Drop it for interactive approvals.
 SLUICE_RUN_CMD="claude --dangerously-skip-permissions"
