@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # sluice - run any project in a sandboxed, egress-firewalled container.
 #
-# Drop a sluice.config.sh in a project directory, then from anywhere inside it:
+# Drop a sluice.config.sh in a project (or just run `sluice` and it scaffolds one), then:
 #   sluice init [--force]  scaffold a sluice.config.sh by detecting the project's stack
 #   sluice agent <name> run a coding agent (claude/codex/gemini/aider/cursor/opencode/amp)
 #   sluice learn        propose the egress allowlist from the hosts the proxy has blocked
@@ -235,7 +235,7 @@ cmd_init() {
   echo "[sluice] detected: $detected"
   echo "[sluice] wrote $cfg"
   [ -n "$note2" ] && echo "[sluice] note: $note2"
-  echo "[sluice] next: review it, then 'sluice'  (or 'sluice learn' to fill the allowlist)."
+  [ -n "${SLUICE_INIT_QUIET:-}" ] || echo "[sluice] next: review it, then 'sluice'  (or 'sluice learn' to fill the allowlist)."
 }
 if [ "${1:-}" = init ]; then shift; cmd_init "$@"; exit 0; fi
 
@@ -273,9 +273,27 @@ if [ "${1:-}" = agent ]; then
   set -- run-default     # continue into the normal build + run flow below
 fi
 
-PROJECT_CONFIG="$(find_config)" || die "no sluice.config.sh found in $PWD or any parent.
-Create one (see sluice.config.example.sh) - it declares this project's tooling, egress
-allowlist, ports, and run command."
+if ! PROJECT_CONFIG="$(find_config)"; then
+  # `stop`/`logs` act on an existing container; with no config there's nothing to do.
+  case "${1:-}" in
+    stop|logs) die "no sluice.config.sh found in $PWD or any parent - nothing to ${1}." ;;
+  esac
+  # Zero-config: scaffold from the detected stack, show what it'll do, then confirm before
+  # building/running (init's run command + ports are a best-effort guess). Non-interactive
+  # stops for review unless SLUICE_YES=1, so scripts/CI never auto-run a guessed command.
+  echo "[sluice] no sluice.config.sh found - scaffolding one from the detected stack:"
+  SLUICE_INIT_QUIET=1 cmd_init
+  grep -E '^SLUICE_(EXTRA_PKGS|RUN_CMD|PORTS|ALLOW_DOMAINS)=' "$PWD/sluice.config.sh" | sed 's/^/    /' || true
+  if [ -t 0 ] && [ -t 1 ]; then
+    printf '[sluice] build and run it now? [Y/n] '
+    read -r _ans || _ans=n
+    case "$_ans" in [nN]|[nN][oO]) echo "[sluice] kept sluice.config.sh - edit it, then run 'sluice'."; exit 0 ;; esac
+  elif [ "${SLUICE_YES:-}" != 1 ]; then
+    echo "[sluice] non-interactive: review sluice.config.sh, then run 'sluice' (or set SLUICE_YES=1 to auto-run)."
+    exit 0
+  fi
+  PROJECT_CONFIG="$PWD/sluice.config.sh"
+fi
 PROJECT_DIR="$(cd "$(dirname "$PROJECT_CONFIG")" && pwd)"
 
 # Load the config on the host so SLUICE_RUN_CMD/SLUICE_PORTS/SLUICE_ENV/SLUICE_MOUNTS/SLUICE_PRELAUNCH
