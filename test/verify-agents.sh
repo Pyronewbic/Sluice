@@ -7,8 +7,8 @@
 # auth var is set on the host, it also runs a bounded live probe and checks the proxy log for a
 # tunnel to the API host. Heavy (builds real agent CLIs) - runs nightly/manual, not the PR gate.
 #
-#   AGENTS="cursor amp opencode" ./test/verify-agents.sh        # default set (the unverified 3)
-#   AGENTS=claude CURSOR_API_KEY=... ./test/verify-agents.sh    # add a live round-trip
+#   ./test/verify-agents.sh                                     # all presets (cred-free)
+#   AGENTS=claude CURSOR_API_KEY=... ./test/verify-agents.sh    # one preset + a live round-trip
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -28,12 +28,14 @@ probe_cmd() {
     amp)      echo 'echo "reply with the single word OK" | amp -x' ;;
     opencode) echo 'opencode run "reply with the single word OK"' ;;
     claude)   echo 'claude --dangerously-skip-permissions -p "reply with the single word OK"' ;;
+    codex)    echo 'codex exec "reply with the single word OK"' ;;
+    gemini)   echo 'gemini -p "reply with the single word OK"' ;;
     aider)    echo 'aider --yes-always --no-auto-commits --message "reply with OK"' ;;
     *)        echo '' ;;
   esac
 }
 
-AGENTS="${AGENTS:-cursor amp opencode}"
+AGENTS="${AGENTS:-claude codex gemini aider cursor opencode amp}"
 
 echo "== sluice agent preset verification (cred-free + optional live probe) =="
 for name in $AGENTS; do

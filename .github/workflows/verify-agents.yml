@@ -10,7 +10,7 @@ on:
     inputs:
       agents:
         description: "space-separated agents to verify"
-        default: "cursor amp opencode"
+        default: "claude codex gemini aider cursor opencode amp"
 
 jobs:
   verify:
@@ -27,4 +27,5 @@ jobs:
           AMP_API_KEY: ${{ secrets.AMP_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: ./test/verify-agents.sh   # docker is preinstalled on GH runners
