@@ -31,6 +31,12 @@ SLUICE_EXTRA_NPM=""
 # e.g. "git clone --depth 1 https://example.com/app && cd app && npm ci"
 SLUICE_SETUP_CMDS=""
 
+# Build the project layer FROM a prebuilt, cosign-signed base instead of rebuilding the core
+# locally (faster; auditable). Opt-in: set to a published ref, e.g.
+# "ghcr.io/pyronewbic/sluice-base:0.2.1". sluice cosign-verifies it if cosign is installed
+# (SLUICE_REQUIRE_SIGNED=1 makes a missing/failed signature fatal). Unset = build from core/.
+SLUICE_BASE_IMAGE=""
+
 # --- egress allowlist (runtime; default-DROP otherwise) -------------------------
 
 # HTTP/HTTPS hosts the running container may reach, ON TOP of the base (npm/yarn

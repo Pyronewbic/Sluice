@@ -100,6 +100,7 @@ Everything is driven by `sluice.config.sh`. Copy [`sluice.config.example.sh`](sl
 | knob | purpose |
 |------|---------|
 | `SLUICE_NAME` | image/container name `sluice-<name>` (default: the project dir's name) |
+| `SLUICE_BASE_IMAGE` | opt-in: build FROM a cosign-signed base image (`ghcr.io/.../sluice-base`) instead of from `core/` |
 | `SLUICE_EXTRA_PKGS` | extra apk packages (build time) |
 | `SLUICE_EXTRA_NPM` | extra global npm packages, pinned (build time) |
 | `SLUICE_SETUP_CMDS` | build-time setup (clones, dep installs) - runs as the sluice user, before the firewall |
@@ -132,6 +133,9 @@ The guardrail that makes running untrusted code defensible:
   when it's a worktree). The sluice can't see the rest of your machine.
 - The allowlist is **host-granular** (not per-URL); keep it tight, and avoid allowing
   shared cloud hosts that could double as an exfil path.
+- **Signed core (opt-in).** Build FROM a cosign-signed base image (`SLUICE_BASE_IMAGE`)
+  instead of rebuilding `core/` locally; sluice verifies the signature first. The image
+  carries no key (the splice cert is generated per-container).
 
 Build-time setup (`SLUICE_SETUP_CMDS`) runs on the host *before* the firewall, so clones
 and dependency downloads have free egress; the *running* container is locked down.

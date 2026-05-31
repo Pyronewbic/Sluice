@@ -3,8 +3,8 @@ name: release
 # Tag a version (git tag v0.1.0 && git push --tags) -> a DRAFT GitHub release. The auto notes
 # are only a scaffold (they miss commits pushed straight to main); edit them, then publish.
 # GitHub attaches the source tarball automatically; the Homebrew formula + curl|sh installer
-# pin to that tag. (Publishing a *signed* base image to GHCR - cosign + a shared base-image
-# target - is a follow-up; see ROADMAP #5.)
+# pin to that tag. (The same tag also triggers publish-base.yml, which builds + cosign-signs
+# the multi-arch GHCR base image.)
 on:
   push:
     tags: ["v*"]

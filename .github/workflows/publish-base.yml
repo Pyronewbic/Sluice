@@ -1,0 +1,76 @@
+name: publish base image
+
+# Tag a version (git tag v0.2.1 && git push --tags) -> build the generic `base` stage of
+# core/Dockerfile for linux/amd64 + arm64, push it to ghcr.io/<owner>/sluice-base, and
+# cosign-sign it (keyless, via GitHub OIDC - no key secrets to manage). bin/sluice can then
+# build a project layer FROM the signed base (SLUICE_BASE_IMAGE) instead of rebuilding the core.
+# See ROADMAP #5. NOTE: after the first publish, set the GHCR package to Public (one-time, in the
+# package settings) so users can pull without auth.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write       # push to GHCR
+  id-token: write       # cosign keyless signing (Sigstore OIDC)
+
+env:
+  IMAGE: ghcr.io/pyronewbic/sluice-base
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3        # arm64 emulation for the multi-arch build
+      - uses: docker/setup-buildx-action@v3
+      - uses: sigstore/cosign-installer@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # --- gate: build amd64 and assert the base has its tooling, the non-root user, and NO
+      #     baked key (the splice cert is generated at runtime) before publishing anything. ---
+      - name: Smoke the base (amd64)
+        uses: docker/build-push-action@v6
+        with:
+          context: core
+          target: base
+          load: true
+          tags: sluice-base:smoke
+      - name: Assert base invariants
+        run: |
+          docker run --rm --entrypoint sh sluice-base:smoke -c '
+            set -e
+            for b in bash squid dnsmasq node npm iptables openssl git gh dig; do
+              command -v "$b" >/dev/null || { echo "missing: $b"; exit 1; }
+            done
+            id sluice >/dev/null
+            test ! -f /etc/squid/ssl/squid-key.pem   # keyless base: no private key in the image
+            echo "base invariants OK"'
+
+      # --- build + push the multi-arch base, then cosign-sign the pushed digest ---
+      - name: Build + push (amd64 + arm64)
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: core
+          target: base
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ github.ref_name }}
+            ${{ env.IMAGE }}:latest
+      - name: cosign sign (keyless)
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+      - name: cosign verify (sanity)
+        run: |
+          cosign verify "${IMAGE}:${GITHUB_REF_NAME}" \
+            --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+            --certificate-identity-regexp='^https://github.com/Pyronewbic/Sluice/'

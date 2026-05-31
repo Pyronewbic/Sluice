@@ -88,9 +88,10 @@ derive_names() {
 # Always-on egress hosts (registries + GitHub); core/entrypoint.sh keeps its own in-container copy.
 base_domains() { printf '%s' "github.com api.github.com codeload.github.com objects.githubusercontent.com registry.npmjs.org registry.yarnpkg.com"; }
 
-# Hash of config + core, baked as an image label; rebuild when it changes.
+# Hash of config + core (+ the base image ref), baked as an image label; rebuild when it changes.
 config_hash() {
-  { cat "$PROJECT_CONFIG"; find "$CORE" -type f | LC_ALL=C sort | while read -r f; do cat "$f"; done; } \
+  { printf 'base=%s\n' "${SLUICE_BASE_IMAGE:-}"; cat "$PROJECT_CONFIG"; \
+    find "$CORE" -type f | LC_ALL=C sort | while read -r f; do cat "$f"; done; } \
     | shasum | awk '{print $1}' | cut -c1-12
 }
 
@@ -490,12 +491,36 @@ PROJECT_DIR="$(cd "$(dirname "$PROJECT_CONFIG")" && pwd)"
 derive_names
 
 # --- build: assemble a temp context (core + this project's config) and build ----
+# Verify a published base image's cosign signature (keyless/OIDC). Soft by default: warn if
+# cosign is absent or the image is unsigned; SLUICE_REQUIRE_SIGNED=1 makes either case fatal.
+verify_base() {
+  local img="$1"
+  case "$img" in ghcr.io/*sluice-base*) ;; *) return 0 ;; esac   # only auto-verify our own base
+  if ! command -v cosign >/dev/null 2>&1; then
+    [ "${SLUICE_REQUIRE_SIGNED:-}" = 1 ] && die "SLUICE_REQUIRE_SIGNED=1 but cosign is not installed"
+    echo "[sluice] note: cosign not installed - skipping base signature check ($img)" >&2; return 0
+  fi
+  if cosign verify "$img" \
+       --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+       --certificate-identity-regexp='^https://github.com/Pyronewbic/Sluice/' >/dev/null 2>&1; then
+    echo "[sluice] cosign-verified base image: $img" >&2
+  else
+    [ "${SLUICE_REQUIRE_SIGNED:-}" = 1 ] && die "cosign verification failed for $img"
+    echo "[sluice] WARNING: could not verify $img (continuing; SLUICE_REQUIRE_SIGNED=1 to enforce)" >&2
+  fi
+}
+
 build() {
   local tmp; tmp="$(mktemp -d)"
   cp -R "$CORE"/. "$tmp"/
   cp "$PROJECT_CONFIG" "$tmp/sluice.config.sh"
+  local args=(--label "sluice.confighash=$(config_hash)")
+  if [ -n "${SLUICE_BASE_IMAGE:-}" ]; then
+    verify_base "$SLUICE_BASE_IMAGE"
+    args+=(--build-arg "BASE_IMAGE=$SLUICE_BASE_IMAGE")     # project layer FROM the signed base
+  fi
   echo "[sluice] building $tag ..."
-  if "$ENGINE" build --label "sluice.confighash=$(config_hash)" -t "$tag" "$tmp"; then
+  if "$ENGINE" build "${args[@]}" -t "$tag" "$tmp"; then
     rm -rf "$tmp"
   else
     rm -rf "$tmp"; die "image build failed"

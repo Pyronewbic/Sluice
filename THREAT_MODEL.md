@@ -47,6 +47,11 @@ file or tool result steering an agent, or simply buggy agent code - any of which
   no Docker socket, no Docker-in-Docker.
 - **Supply-chain fetch vs. runtime** -> deps are pulled at build (pre-firewall); the
   *running* container is locked to the allowlist.
+- **Tampered sandbox core** -> the generic core (proxy, firewall, entrypoint, non-root user)
+  can be pulled as a **cosign-signed base image** from GHCR (opt-in via `SLUICE_BASE_IMAGE`);
+  `sluice` verifies the keyless signature before building on it (`SLUICE_REQUIRE_SIGNED=1` to
+  enforce). The image carries no private key (the splice cert is generated per-container).
+  Your declared `SLUICE_EXTRA_PKGS` are your own layer on top - audit them as any dependency.
 
 ## What it does NOT defend against (be explicit)
 

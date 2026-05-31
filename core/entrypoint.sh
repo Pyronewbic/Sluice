@@ -45,8 +45,16 @@ fi
 
 # --- start the egress filter BEFORE the firewall --------------------------------
 # (init-firewall.sh's self-test makes a real request through the proxy.)
-mkdir -p /var/log/squid /var/cache/squid /run/squid
-chown -R squid:squid /var/log/squid /var/cache/squid /run/squid 2>/dev/null || true
+mkdir -p /etc/squid/ssl /var/log/squid /var/cache/squid /run/squid
+# Throwaway splice cert, generated per-container (so the published base image carries no key).
+# We splice (never forge), so it is never presented - it only lets squid bind the ssl-bump port.
+if [ ! -f /etc/squid/ssl/squid-cert.pem ]; then
+  openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+    -keyout /etc/squid/ssl/squid-key.pem -out /etc/squid/ssl/squid-cert.pem \
+    -subj "/CN=sluice-egress-filter" 2>/dev/null
+  chmod 600 /etc/squid/ssl/squid-key.pem
+fi
+chown -R squid:squid /etc/squid/ssl /var/log/squid /var/cache/squid /run/squid 2>/dev/null || true
 # -N (single process) avoids flaky SMP/shm startup; squid drops to its own uid after binding.
 squid -N &
 ok=0
