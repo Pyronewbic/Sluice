@@ -3,8 +3,8 @@
 Drop-in `sluice.config.sh` presets. Copy one into a project, run `sluice` - and it's
 non-root, sees only that directory, and can only reach the hosts the preset allows.
 
-Supported runtimes (Node, Python, Deno, Ruby, Rust, Go) are listed in the
-[main README](../README.md#use). Below: copy-paste presets, plus one runnable project per runtime.
+Supported runtimes are listed in the [main README](../README.md#use). Below: copy-paste
+presets, plus one runnable project per runtime.
 
 ## Self-contained demos (a real app, no repo of your own needed)
 
