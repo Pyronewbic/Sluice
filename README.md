@@ -70,6 +70,12 @@ hosts, and which auth env var to forward - so adding an agent is just adding a f
 `sluice agent` with no name to list them. If the agent hits a blocked host, `sluice learn`
 surfaces it.
 
+Each preset runs the agent in **YOLO mode by default** (its skip-approvals flag), since the
+sluice is the point of the per-action gate being unnecessary. Honest caveat: the sandbox
+bounds the blast radius but does not zero it - a YOLO agent can still rewrite the mounted
+repo and use any creds you forward, and the allowlist is host-granular. Work on a committed
+branch, and see [`THREAT_MODEL.md`](THREAT_MODEL.md) for exactly what is and isn't contained.
+
 ## Configure
 
 Everything is driven by `sluice.config.sh`. Copy [`sluice.config.example.sh`](sluice.config.example.sh)
