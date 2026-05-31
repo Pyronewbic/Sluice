@@ -24,7 +24,7 @@ git finds `.git`):
 
 ```bash
 sluice init         # scaffold a sluice.config.sh by detecting the repo's stack
-sluice agent <name> # run a coding agent (claude/codex/aider/cursor) sandboxed + firewalled
+sluice agent <name> # run a coding agent (claude/codex/gemini/aider/cursor/opencode/amp)
 sluice learn        # propose the egress allowlist from the hosts the proxy blocked
 sluice              # build (if needed) + run SLUICE_RUN_CMD in the sandbox
 sluice shell        # a bash shell in the sandbox (as the non-root node user)
@@ -64,7 +64,7 @@ cd my-repo
 sluice agent claude                     # Claude Code, --dangerously-skip-permissions, sandboxed
 ```
 
-Presets ship for **claude**, **codex**, **aider**, and **cursor** (see
+Presets ship for **claude**, **codex**, **gemini**, **aider**, **cursor**, **opencode**, and **amp** (see
 [`agents/`](agents/)); each is a normal `sluice.config.sh` declaring the tool, its API
 hosts, and which auth env var to forward — so adding an agent is just adding a file. Run
 `sluice agent` with no name to list them. If the agent hits a blocked host, `sluice learn`
@@ -142,6 +142,9 @@ and dependency downloads have free egress; the *running* container is locked dow
 - Minimal sandboxed shell — a two-line config (`SLUICE_RUN_CMD="bash"`) drops you into a
   firewalled shell where `curl https://example.com` hangs but the npm registry works.
 
+More in the **[gallery](examples/)** — stack starters for Vite, Next.js, and FastAPI, with
+a one-line copy command each.
+
 ## Layout
 
 ```
@@ -152,8 +155,8 @@ core/init-firewall.sh    iptables: redirect HTTP/HTTPS to squid, default-DROP re
 core/entrypoint.sh       starts squid, runs the firewall, then idles
 core/smoke-test.sh       image smoke test (base tooling + non-root)
 sluice.config.example.sh    documented config template
-examples/                ready-to-use project configs
-agents/                  coding-agent presets (claude, codex, aider, cursor)
+examples/                gallery of drop-in configs (strudel, jupyter, vite, nextjs, fastapi)
+agents/                  coding-agent presets (claude, codex, gemini, aider, cursor, opencode, amp)
 test/acceptance.sh       automated pass/fail harness (egress matrix + serve); run by CI
 install.sh               curl|sh + local installer (symlinks bin/sluice onto PATH)
 packaging/               Homebrew formula (for a tap)

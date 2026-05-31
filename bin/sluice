@@ -3,7 +3,7 @@
 #
 # Drop a sluice.config.sh in a project directory, then from anywhere inside it:
 #   sluice init         scaffold a sluice.config.sh by detecting the project's stack
-#   sluice agent <name> run a coding agent (claude/codex/aider/cursor) sandboxed + firewalled
+#   sluice agent <name> run a coding agent (claude/codex/gemini/aider/cursor/opencode/amp)
 #   sluice learn        propose the egress allowlist from the hosts the proxy has blocked
 #   sluice              build (if needed) + run SLUICE_RUN_CMD in the sandbox
 #   sluice shell        drop into a bash shell in the sandbox (as the node user)
