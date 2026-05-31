@@ -23,4 +23,5 @@ jobs:
       - name: Verify runtime examples
         env:
           RUNTIMES: ${{ github.event.inputs.runtimes }}   # empty on schedule -> all
+          VERIFY_JOBS: 2   # conservative on the shared runner (script defaults to 3 for local dev)
         run: ./test/verify-runtimes.sh   # docker is preinstalled on GH runners
