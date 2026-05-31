@@ -21,21 +21,22 @@ Symlinks `bin/sluice` into `~/.local/bin` (ensure it's on `PATH`). Needs **docke
 ## Use
 
 From anywhere inside a project with a `sluice.config.sh` (found by walking up, like git
-finds `.git`), `sluice` builds and runs it sandboxed. Starting from scratch, the
-drag-and-drop path:
+finds `.git`), `sluice` builds and runs it sandboxed. No config yet? Just run `sluice`: it
+detects the stack, scaffolds one, shows what it'll do, and on confirm builds and runs it.
 
 ```bash
 cd any-repo
-sluice init      # detects the stack -> writes a starter sluice.config.sh
-sluice           # runs it (some runtime egress may be blocked -> the app misbehaves)
+sluice           # no config -> scaffold from detection, then (on [Y/n]) build + run
 sluice learn     # proposes the hosts to allow (harvested from what the proxy blocked)
 sluice rebuild   # apply the allowlist - now sandboxed + firewalled, and working
 ```
 
-`init` infers the stack, run command, and ports; `learn` fills the one thing you can't
-guess statically - the egress allowlist - by observing what the app actually reached. It
-covers **Node** (npm/pnpm/yarn/bun + framework port), **Python** (pip/poetry/uv + framework),
-**Deno**, **Ruby/Rails**, **Rust**, and **Go**.
+`sluice init` does just the scaffold step (no prompt, no run) if you'd rather review the
+config first; in CI, a bare `sluice` scaffolds and stops unless `SLUICE_YES=1`. `init` infers
+the stack, run command, and ports; `learn` fills the one thing you can't guess statically -
+the egress allowlist - by observing what the app reached. It covers **Node**
+(npm/pnpm/yarn/bun + framework port), **Python** (pip/poetry/uv + framework), **Deno**,
+**Ruby/Rails**, **Rust**, and **Go**.
 
 The full command set:
 
