@@ -12,6 +12,7 @@
 #   sluice rebuild      rebuild the image and recreate the container
 #   sluice smoke        build (if needed) + run the image smoke test
 #   sluice logs         follow the container logs (firewall + readiness)
+#   sluice doctor       health check: engine, image, allowlist, blocked egress
 #   sluice stop         remove the project's container
 #   sluice version|help show version + host runtime / usage
 #
@@ -54,6 +55,7 @@ Usage: sluice [command]
   rebuild          rebuild the image + recreate the container
   smoke            build (if needed) + run the image smoke test
   logs             follow firewall + readiness logs
+  doctor           health check: engine, image, allowlist, blocked egress
   stop             remove the project's container
   version          show version + host runtime (engine, OS)
   help             show this help
@@ -75,6 +77,111 @@ cmd_version() {
   fi
   printf '  os       %s %s\n' "$(uname -s)" "$(uname -m)"
   printf '  install  %s\n' "$ROOT"
+}
+
+# --- naming + diagnostics helpers (shared by run, learn, doctor) -----------------
+derive_names() {
+  slug="$(printf '%s' "${SLUICE_NAME:-$(basename "$PROJECT_DIR")}" | tr '[:upper:]' '[:lower:]' | tr -C 'a-z0-9' '-')"
+  tag="sluice-$slug"; container="$tag"
+}
+
+# Always-on egress hosts (registries + GitHub); core/entrypoint.sh keeps its own in-container copy.
+base_domains() { printf '%s' "github.com api.github.com codeload.github.com objects.githubusercontent.com registry.npmjs.org registry.yarnpkg.com"; }
+
+# Hash of config + core, baked as an image label; rebuild when it changes.
+config_hash() {
+  { cat "$PROJECT_CONFIG"; find "$CORE" -type f | LC_ALL=C sort | while read -r f; do cat "$f"; done; } \
+    | shasum | awk '{print $1}' | cut -c1-12
+}
+
+running() { [ "$("$ENGINE" inspect -f '{{.State.Running}}' "$container" 2>/dev/null || true)" = "true" ]; }
+
+# Hostnames the proxy BLOCKED (SNI for HTTPS, Host for HTTP), from the running container's log.
+blocked_hosts() {
+  "$ENGINE" exec "$container" cat /var/log/squid/access.log 2>/dev/null | awk '
+    { sni="";
+      for (i=1;i<=NF;i++) if ($i ~ /^ssl_sni=/) sni=substr($i,9);
+      status=$3; url=$5;
+      if (status !~ /NONE_NONE/ && status !~ /TCP_DENIED/ && status !~ /\/000/) next;
+      host="";
+      if (sni != "" && sni != "-") host=sni;
+      else if (url ~ /^http:\/\//) { h=url; sub(/^http:\/\//,"",h); sub(/\/.*/,"",h); sub(/:.*/,"",h); host=h }
+      if (host == "" || host ~ /^[0-9.]+$/) next;
+      print host
+    }' | sort -u
+}
+
+# This project's effective egress allowlist: config domains + the always-on base.
+allowed_domains() { printf '%s %s' "${SLUICE_ALLOW_DOMAINS:-}" "$(base_domains)"; }
+
+# Blocked hosts NOT already allowed - the genuinely-missing ones. Drops the transient
+# startup-race /000 on allowlisted hosts (e.g. registry.npmjs.org), so it never proposes them.
+blocked_new() {
+  local cur h
+  cur=" $(allowed_domains) "
+  blocked_hosts 2>/dev/null | while IFS= read -r h; do
+    [ -n "$h" ] || continue
+    case "$cur" in *" $h "*) ;; *) printf '%s\n' "$h";; esac
+  done
+}
+
+# --- `sluice doctor`: one-shot health + why-egress-is-blocked report ------------
+_doc() { printf '  %-10s %s\n' "$1" "$2"; }
+cmd_doctor() {
+  local eng="" v blocked
+  printf 'sluice doctor\n'
+  if   [ -n "${SLUICE_ENGINE:-}" ]; then eng="$SLUICE_ENGINE"
+  elif command -v docker >/dev/null 2>&1; then eng=docker
+  elif command -v podman >/dev/null 2>&1; then eng=podman; fi
+  if [ -n "$eng" ] && command -v "$eng" >/dev/null 2>&1; then
+    ENGINE="$eng"; _doc engine "$("$eng" --version 2>/dev/null | head -1)"
+  else
+    eng=""; _doc engine "none - install docker or podman"
+  fi
+
+  if ! PROJECT_CONFIG="$(find_config)"; then
+    _doc config "none - run 'sluice init' to scaffold one"; return 0
+  fi
+  _doc config "$PROJECT_CONFIG"
+  PROJECT_DIR="$(cd "$(dirname "$PROJECT_CONFIG")" && pwd)"
+  # shellcheck disable=SC1090
+  . "$PROJECT_CONFIG"
+  derive_names
+
+  if [ -n "$eng" ]; then
+    if "$eng" image inspect "$tag" >/dev/null 2>&1; then
+      if [ "$("$eng" image inspect -f '{{ index .Config.Labels "sluice.confighash" }}' "$tag" 2>/dev/null || true)" = "$(config_hash)" ]; then
+        _doc image "$tag built (config current)"
+      else
+        _doc image "$tag built (config stale - run 'sluice rebuild')"
+      fi
+    else
+      _doc image "$tag not built - run 'sluice build'"
+    fi
+  fi
+
+  _doc allowlist "${SLUICE_ALLOW_DOMAINS:-(none beyond base)}"
+  _doc "" "base: $(base_domains)"
+  [ -n "${SLUICE_ALLOW_IPS:-}" ] && _doc "" "ips:  $SLUICE_ALLOW_IPS"
+
+  if [ -n "${SLUICE_ENV:-}" ]; then
+    for v in $SLUICE_ENV; do
+      if [ -n "${!v:-}" ]; then _doc auth "$v set"; else _doc auth "$v unset - export it on the host"; fi
+    done
+  fi
+
+  if [ -n "$eng" ] && running; then
+    blocked="$(blocked_new 2>/dev/null || true)"
+    if [ -n "$blocked" ]; then
+      _doc egress "$(printf '%s\n' "$blocked" | grep -c .) host(s) blocked - run 'sluice learn' to allow:"
+      # shellcheck disable=SC2086
+      printf '             %s\n' $blocked
+    else
+      _doc egress "no blocked egress needs allowing"
+    fi
+  else
+    _doc egress "sandbox not running - start it, exercise the app, re-run 'sluice doctor'"
+  fi
 }
 
 # sluice-gate mark on human entries; stderr + TTY-only + SLUICE_NO_BANNER-suppressible.
@@ -111,7 +218,7 @@ ART
 # --- container engine (docker, else podman; override SLUICE_ENGINE) -------------
 # init + info commands need no engine; resolve one only for the rest.
 case "${1:-}" in
-  init|help|-h|--help|version|-v|--version) ;;
+  init|help|-h|--help|version|-v|--version|doctor) ;;
   *)
     ENGINE="${SLUICE_ENGINE:-}"
     if [ -z "$ENGINE" ]; then
@@ -326,6 +433,9 @@ find_config() {
   return 1
 }
 
+# `sluice doctor`: self-contained health report (resolves its own engine/config), runs anywhere.
+if [ "${1:-}" = doctor ]; then cmd_doctor; exit 0; fi
+
 # --- `sluice agent [name]`: write the agents/<name>.config.sh preset, then build+run ----
 if [ "${1:-}" = agent ]; then
   banner
@@ -377,17 +487,7 @@ PROJECT_DIR="$(cd "$(dirname "$PROJECT_CONFIG")" && pwd)"
 . "$PROJECT_CONFIG"
 
 # --- per-project image + container names (SLUICE_NAME overrides the dir-name default) ----
-slug="$(printf '%s' "${SLUICE_NAME:-$(basename "$PROJECT_DIR")}" | tr '[:upper:]' '[:lower:]' | tr -C 'a-z0-9' '-')"
-tag="sluice-$slug"
-container="$tag"
-
-# Hash of config + core, baked as an image label; rebuild when it changes.
-config_hash() {
-  { cat "$PROJECT_CONFIG"; find "$CORE" -type f | LC_ALL=C sort | while read -r f; do cat "$f"; done; } \
-    | shasum | awk '{print $1}' | cut -c1-12
-}
-
-running() { [ "$("$ENGINE" inspect -f '{{.State.Running}}' "$container" 2>/dev/null || true)" = "true" ]; }
+derive_names
 
 # --- build: assemble a temp context (core + this project's config) and build ----
 build() {
@@ -467,48 +567,37 @@ EOF
 
 ensure_up() { maybe_build; running || start; }
 
-# Exec in the running container as node, forwarding SLUICE_ENV; TTY only when attached.
-exec_in() {
-  local exec_args=(-i --user node -w "$PROJECT_DIR")
-  [ -t 0 ] && [ -t 1 ] && exec_args+=(-t)
+# Build the `<engine> exec` arg vector (node user, SLUICE_ENV forwarded, TTY only when attached).
+_exec_args() {
+  _EXEC_ARGS=(-i --user node -w "$PROJECT_DIR")
+  [ -t 0 ] && [ -t 1 ] && _EXEC_ARGS+=(-t)
   for v in ${SLUICE_ENV:-}; do
-    exec_args+=(-e "$v")
+    _EXEC_ARGS+=(-e "$v")
   done
-  exec "$ENGINE" exec "${exec_args[@]}" "$container" "$@"
+}
+# exec_in replaces this process (shell/run); run_in waits so an EXIT trap can fire after (run-default).
+exec_in() { _exec_args; exec "$ENGINE" exec "${_EXEC_ARGS[@]}" "$container" "$@"; }
+run_in()  { _exec_args; "$ENGINE" exec "${_EXEC_ARGS[@]}" "$container" "$@"; }
+
+# After a run-default session, surface any not-yet-allowed hosts the proxy blocked (silent if none).
+show_denials_hint() {
+  local blocked
+  blocked="$(blocked_new 2>/dev/null | tr '\n' ' ' || true)"
+  [ -n "$blocked" ] || return 0
+  echo "[sluice] egress blocked during this run: ${blocked}(run 'sluice learn' to allow)" >&2
 }
 
 # --- `sluice learn`: read the squid log, propose the hosts it BLOCKED -------------------
 cmd_learn() {
   running || die "no running sandbox. Start your app first ('sluice'), exercise it so it makes its network calls, then run 'sluice learn'."
   echo "[sluice] reading blocked egress from the proxy log..."
-  local log found base cur new proposed
-  log="$("$ENGINE" exec "$container" cat /var/log/squid/access.log 2>/dev/null || true)"
-  # Pull the hostname out of each DENIED line (SNI for HTTPS, Host for HTTP); skip raw IPs.
-  found="$(printf '%s\n' "$log" | awk '
-    { sni="";
-      for (i=1;i<=NF;i++) if ($i ~ /^ssl_sni=/) sni=substr($i,9);
-      status=$3; url=$5;
-      if (status !~ /NONE_NONE/ && status !~ /TCP_DENIED/ && status !~ /\/000/) next;
-      host="";
-      if (sni != "" && sni != "-") host=sni;
-      else if (url ~ /^http:\/\//) { h=url; sub(/^http:\/\//,"",h); sub(/\/.*/,"",h); sub(/:.*/,"",h); host=h }
-      if (host == "" || host ~ /^[0-9.]+$/) next;
-      print host
-    }' | sort -u)"
+  local found new proposed
+  found="$(blocked_hosts 2>/dev/null || true)"
   [ -n "$found" ] || { echo "[sluice] no blocked hosts seen yet - exercise the app more (load it, click around), then re-run 'sluice learn'."; return 0; }
 
-  # Drop hosts already allowed (this config + the always-on base).
-  base="github.com api.github.com codeload.github.com objects.githubusercontent.com registry.npmjs.org registry.yarnpkg.com"
-  cur="${SLUICE_ALLOW_DOMAINS:-} $base"
-  new=""
-  while IFS= read -r h; do
-    [ -n "$h" ] || continue
-    case " $cur " in *" $h "*) ;; *) new="$new $h";; esac
-  done <<EOF
-$found
-EOF
+  # Keep only hosts not already allowed (config + the always-on base), collapsed to one line.
   # shellcheck disable=SC2086
-  new="$(printf '%s\n' $new | sed '/^$/d' | sort -u | tr '\n' ' ' | sed 's/^ *//; s/ *$//')"
+  new="$(blocked_new 2>/dev/null | sort -u | tr '\n' ' ' | sed 's/ *$//')"
   [ -n "$new" ] || { echo "[sluice] every blocked host is already in your allowlist - nothing to add."; return 0; }
 
   echo "[sluice] hosts your app reached that the firewall BLOCKED:"
@@ -560,8 +649,10 @@ case "${1:-run-default}" in
       _any=0; for _v in $SLUICE_ENV; do [ -n "${!_v:-}" ] && _any=1; done
       [ "$_any" = 1 ] || echo "[sluice] note: none of [$SLUICE_ENV] is set on the host - auth may fail; export it and re-run." >&2
     fi
-    # Default action: run SLUICE_RUN_CMD (a single shell string). Falls back to a shell.
-    exec_in sh -lc "${SLUICE_RUN_CMD:-bash}"
+    # Run SLUICE_RUN_CMD (one shell string), then flag any egress the proxy blocked.
+    # run_in (not exec_in) so the EXIT trap fires after the session, even on Ctrl-C.
+    trap show_denials_hint EXIT
+    run_in sh -lc "${SLUICE_RUN_CMD:-bash}"
     ;;
   *) die "unknown command: $1 - run 'sluice help' for usage." ;;
 esac

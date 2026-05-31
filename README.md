@@ -53,6 +53,7 @@ sluice build           # (re)build the project's image
 sluice rebuild         # rebuild + recreate the container
 sluice smoke           # build (if needed) + run the image smoke test
 sluice logs            # follow firewall/readiness logs
+sluice doctor          # health check: engine, image, allowlist, blocked egress
 sluice stop            # remove the project's container
 ```
 
