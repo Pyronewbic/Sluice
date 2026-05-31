@@ -51,7 +51,9 @@ sluice rebuild   # apply the allowlist - now sandboxed + firewalled, and working
 ```
 
 `init` infers the stack, run command, and ports; `learn` fills the one thing you can't
-guess statically - the egress allowlist - by observing what the app actually reached.
+guess statically - the egress allowlist - by observing what the app actually reached. It
+covers **Node** (npm/pnpm/yarn/bun + framework port), **Python** (pip/poetry/uv + framework),
+**Deno**, **Ruby/Rails**, **Rust**, and **Go**.
 
 ### Run a coding agent
 
@@ -164,6 +166,7 @@ sluice.config.example.sh    documented config template
 examples/                gallery of drop-in configs (strudel, jupyter, vite, nextjs, fastapi)
 agents/                  coding-agent presets (claude, codex, gemini, aider, cursor, opencode, amp)
 test/acceptance.sh       automated pass/fail harness (egress matrix + serve); run by CI
+test/init-detection.sh   unit tests for `sluice init` stack detection (no Docker); run by CI
 install.sh               curl|sh + local installer (symlinks bin/sluice onto PATH)
 packaging/               Homebrew formula (for a tap)
 LICENSE  SECURITY.md     Apache-2.0; how to report a vulnerability

@@ -36,13 +36,17 @@ die() { echo "[sluice] $*" >&2; exit 1; }
 # docker and podman share the same CLI surface for everything used here. Prefer docker;
 # fall back to podman; override with SLUICE_ENGINE. (Podman needs the route_localnet /
 # disable_ipv6 sysctls below, which rootless podman may restrict - use rootful there.)
-ENGINE="${SLUICE_ENGINE:-}"
-if [ -z "$ENGINE" ]; then
-  if command -v docker >/dev/null 2>&1; then ENGINE=docker
-  elif command -v podman >/dev/null 2>&1; then ENGINE=podman
-  else die "no container engine found - install docker or podman, or set SLUICE_ENGINE"; fi
+# `sluice init` is pure scaffolding and uses no engine, so only resolve one for other commands
+# (this also lets you `sluice init` a repo before docker/podman is installed).
+if [ "${1:-}" != init ]; then
+  ENGINE="${SLUICE_ENGINE:-}"
+  if [ -z "$ENGINE" ]; then
+    if command -v docker >/dev/null 2>&1; then ENGINE=docker
+    elif command -v podman >/dev/null 2>&1; then ENGINE=podman
+    else die "no container engine found - install docker or podman, or set SLUICE_ENGINE"; fi
+  fi
+  command -v "$ENGINE" >/dev/null 2>&1 || die "SLUICE_ENGINE=$ENGINE not found on PATH"
 fi
-command -v "$ENGINE" >/dev/null 2>&1 || die "SLUICE_ENGINE=$ENGINE not found on PATH"
 
 # --- `sluice init` helpers (best-effort manifest parsing, no jq dependency) -----------
 # Each returns 0 even when nothing matches, so they're safe under `set -e`.
@@ -184,8 +188,10 @@ cmd_init() {
 
   elif [ -f "$dir/Gemfile" ]; then
     # ---------------- ruby (best-effort) ----------------
-    stack="ruby"; extra_pkgs="ruby-3.3"; allow="rubygems.org index.rubygems.org"
-    setup="gem install --no-document --bindir \"\$HOME/.local/bin\" --install-dir \"\$HOME/.gem/ruby\" bundler"
+    # ruby-3.3-dev + build-base + linux-headers so gems with native extensions (puma/nokogiri
+    # /pg/...) compile; the build happens at runtime behind the firewall, needing no egress.
+    stack="ruby"; extra_pkgs="ruby-3.3 ruby-3.3-dev build-base linux-headers"; allow="rubygems.org index.rubygems.org"
+    setup="mkdir -p \"\$HOME/.local/bin\" \"\$HOME/.gem/ruby\" && gem install --no-document --bindir \"\$HOME/.local/bin\" --install-dir \"\$HOME/.gem/ruby\" bundler"
     local rb="export GEM_HOME=\"\$HOME/.gem/ruby\"; export PATH=\"\$HOME/.local/bin:\$PATH\""
     if grep -qE "gem ['\"]rails['\"]" "$dir/Gemfile" 2>/dev/null || [ -f "$dir/config/application.rb" ]; then
       ports="3000"; run_cmd="$rb; bundle install && bundle exec rails server -b 0.0.0.0 -p 3000"
@@ -197,7 +203,8 @@ cmd_init() {
     detected="ruby-3.3"
 
   elif [ -f "$dir/Cargo.toml" ]; then
-    stack="rust"; detected="rust"; extra_pkgs="rust"; allow="static.crates.io index.crates.io"; run_cmd="cargo run"
+    # build-base provides the C linker (cc/ld) that rustc needs to link any binary.
+    stack="rust"; detected="rust"; extra_pkgs="rust build-base"; allow="static.crates.io index.crates.io"; run_cmd="cargo run"
   elif [ -f "$dir/go.mod" ]; then
     stack="go"; detected="go"; extra_pkgs="go"; allow="proxy.golang.org sum.golang.org"; run_cmd="go run ."
   fi
