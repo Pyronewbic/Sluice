@@ -56,9 +56,9 @@ sluice logs            # follow firewall/readiness logs
 sluice stop            # remove the project's container
 ```
 
-Image and container are named per project (`sluice-<dir>`), so projects never collide. The
-image auto-rebuilds when `sluice.config.sh` or the core changes (a config hash is baked as
-an image label and compared each run).
+Image and container are named per project (`sluice-<dir>`, or `SLUICE_NAME` to override), so
+projects never collide. The image auto-rebuilds when `sluice.config.sh` or the core changes
+(a config hash is baked as an image label and compared each run).
 
 ### Run a coding agent
 
@@ -90,6 +90,7 @@ Everything is driven by `sluice.config.sh`. Copy [`sluice.config.example.sh`](sl
 
 | knob | purpose |
 |------|---------|
+| `SLUICE_NAME` | image/container name `sluice-<name>` (default: the project dir's name) |
 | `SLUICE_EXTRA_PKGS` | extra apk packages (build time) |
 | `SLUICE_EXTRA_NPM` | extra global npm packages, pinned (build time) |
 | `SLUICE_SETUP_CMDS` | build-time setup (clones, dep installs) - runs as node, before the firewall |

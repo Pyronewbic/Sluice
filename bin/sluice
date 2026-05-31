@@ -376,8 +376,8 @@ PROJECT_DIR="$(cd "$(dirname "$PROJECT_CONFIG")" && pwd)"
 # shellcheck disable=SC1090
 . "$PROJECT_CONFIG"
 
-# --- per-project image + container names (no cross-project collisions) ----------
-slug="$(printf '%s' "$(basename "$PROJECT_DIR")" | tr '[:upper:]' '[:lower:]' | tr -C 'a-z0-9' '-')"
+# --- per-project image + container names (SLUICE_NAME overrides the dir-name default) ----
+slug="$(printf '%s' "${SLUICE_NAME:-$(basename "$PROJECT_DIR")}" | tr '[:upper:]' '[:lower:]' | tr -C 'a-z0-9' '-')"
 tag="sluice-$slug"
 container="$tag"
 

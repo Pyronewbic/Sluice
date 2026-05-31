@@ -8,6 +8,12 @@
 #
 # Every knob is optional. A minimal config is just a SLUICE_RUN_CMD.
 
+# --- identity -------------------------------------------------------------------
+
+# Image/container name (sluice-<name>). Defaults to the project directory's name.
+# Set it when two checkouts share a basename, or to pin a stable name across worktrees.
+SLUICE_NAME=""
+
 # --- software (baked into the image at build time) ------------------------------
 
 # Extra apk packages on top of the base (node/npm/git/gh/curl/jq + firewall tools).
