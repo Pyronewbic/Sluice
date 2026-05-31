@@ -205,26 +205,14 @@ scaffolds the config.
 ## Layout
 
 ```
-bin/sluice                  the global CLI (launcher)
-core/Dockerfile          Wolfi base + base tooling (incl. squid) + the SLUICE_* build hooks
-core/squid.conf          the egress proxy: allow by Host/SNI, splice (never decrypt)
-core/init-firewall.sh    iptables: redirect HTTP/HTTPS to squid, default-DROP rest, IPv6 off
-core/entrypoint.sh       starts squid, runs the firewall, then idles
-core/smoke-test.sh       image smoke test (base tooling + non-root)
-sluice.config.example.sh    documented config template
-examples/                self-contained demos (firewall, strudel, jupyter, nix, database)
-agents/                  coding-agent presets (run sluice agent to list them)
-test/acceptance.sh       automated pass/fail harness (egress matrix + serve); run by CI
-test/init-detection.sh   unit tests for `sluice init` stack detection (no Docker); run by CI
-test/verify-runtimes.sh  build-smoke of the runtime fixtures (build + serve); nightly + manual
-test/verify-agents.sh    verify agent presets (binary + API hosts + auth) through the proxy; manual
-test/verify-nix.sh       verify the Nix example (build-time Nix, contained at runtime); nightly + manual
-test/fixtures/           one runnable app per runtime (deno/ruby/rust/go/bun/poetry/uv) for the above
-install.sh               curl|sh + local installer (symlinks bin/sluice onto PATH)
-packaging/               Homebrew formula (for a tap)
-SECURITY.md              how to report a vulnerability
-THREAT_MODEL.md          trust boundaries + known weaknesses
-LICENSE                  Apache-2.0 (permissive)
+bin/sluice                the CLI (a single bash script)
+core/                     the sandbox image: Dockerfile + squid / firewall / entrypoint
+agents/                   coding-agent presets (run `sluice agent` to list)
+examples/                 self-contained gallery demos
+test/                     acceptance + init-detection (the CI gate) and per-feature verify harnesses
+packaging/                Homebrew formula
+install.sh                curl|sh + local installer
+sluice.config.example.sh  documented config template (every knob)
 ```
 
 Runs on **docker** or **podman** (auto-detected; override with `SLUICE_ENGINE`). CI
