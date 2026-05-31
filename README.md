@@ -59,11 +59,18 @@ sluice shell           # a bash shell in the sandbox (as the non-root sluice use
 sluice run <cmd...>    # an ad-hoc command instead of SLUICE_RUN_CMD
 sluice build           # (re)build the project's image
 sluice rebuild         # rebuild + recreate the container
+sluice lock            # record installed apk+npm versions to sluice.lock (supply-chain audit)
+sluice update          # rebuild from scratch (re-resolve packages) + refresh sluice.lock
 sluice smoke           # build (if needed) + run the image smoke test
 sluice logs            # follow firewall/readiness logs
 sluice doctor          # health check: engine, image, allowlist, blocked egress
 sluice stop            # remove the project's container
 ```
+
+`sluice lock` writes a committable `sluice.lock` — a full inventory of the image (every apk +
+global npm package with its version and digest) so what's in your sandbox is reviewable in a
+diff, and `sluice doctor` flags drift. It's an audit artifact, not a reproducibility guarantee:
+Wolfi's apk repo is rolling, so `sluice update` re-resolves to current versions on demand.
 
 Image and container are named per project (`sluice-<dir>`, or `SLUICE_NAME` to override), so
 projects never collide. The image auto-rebuilds when `sluice.config.sh` or the core changes
