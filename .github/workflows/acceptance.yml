@@ -5,6 +5,7 @@ name: acceptance
 # route_localnet / disable_ipv6 sysctls the egress proxy needs (hence rootful here).
 on:
   push:
+    branches: [main]   # branch pushes run via pull_request below; this avoids double runs
   pull_request:
 
 jobs:
