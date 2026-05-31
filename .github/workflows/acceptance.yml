@@ -9,6 +9,15 @@ on:
   pull_request:
 
 jobs:
+  detection:
+    name: init detection (unit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit tests (sluice init stack detection, no Docker)
+        run: ./test/init-detection.sh
+
   docker:
     name: Linux, Docker
     runs-on: ubuntu-latest
