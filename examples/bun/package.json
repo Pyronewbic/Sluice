@@ -1,0 +1,5 @@
+{
+  "packageManager": "bun@1.1.30",
+  "scripts": { "dev": "bun run server.ts" },
+  "dependencies": { "nanoid": "^5" }
+}

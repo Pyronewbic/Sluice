@@ -163,10 +163,11 @@ core/init-firewall.sh    iptables: redirect HTTP/HTTPS to squid, default-DROP re
 core/entrypoint.sh       starts squid, runs the firewall, then idles
 core/smoke-test.sh       image smoke test (base tooling + non-root)
 sluice.config.example.sh    documented config template
-examples/                gallery of drop-in configs (strudel, jupyter, vite, nextjs, fastapi)
+examples/                gallery: drop-in configs + one runnable project per runtime (deno/ruby/rust/go/bun/poetry/uv)
 agents/                  coding-agent presets (claude, codex, gemini, aider, cursor, opencode, amp)
 test/acceptance.sh       automated pass/fail harness (egress matrix + serve); run by CI
 test/init-detection.sh   unit tests for `sluice init` stack detection (no Docker); run by CI
+test/verify-runtimes.sh  build-smoke of the runtime examples (build + serve); nightly + manual
 install.sh               curl|sh + local installer (symlinks bin/sluice onto PATH)
 packaging/               Homebrew formula (for a tap)
 LICENSE  SECURITY.md     Apache-2.0; how to report a vulnerability

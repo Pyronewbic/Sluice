@@ -1,0 +1,20 @@
+name: nightly runtime smoke
+
+# Build-smoke each runtime example end-to-end (build -> serve -> curl through the sandbox,
+# deps pulled through the egress proxy). Heavy - real toolchains + network - so it runs
+# nightly and on demand, NOT on every PR. The PR gate stays the fast egress acceptance +
+# the init-detection unit tests (see acceptance.yml).
+on:
+  schedule:
+    - cron: "0 7 * * *"   # 07:00 UTC daily
+  workflow_dispatch: {}
+
+jobs:
+  runtimes:
+    name: runtime build-smoke (Docker)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify runtime examples
+        run: ./test/verify-runtimes.sh   # docker is preinstalled on GH runners
