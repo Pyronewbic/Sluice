@@ -116,6 +116,7 @@ Everything is driven by `sluice.config.sh`. Copy [`sluice.config.example.sh`](sl
 | `SLUICE_EXTRA_PKGS` | extra apk packages (build time) |
 | `SLUICE_EXTRA_NPM` | extra global npm packages, pinned (build time) |
 | `SLUICE_SETUP_CMDS` | build-time setup (clones, dep installs) - runs as the sluice user, before the firewall |
+| `SLUICE_SETUP_ROOT_CMDS` | build-time setup as root (free egress) - provision outside `$HOME`, e.g. a `/nix` store |
 | `SLUICE_ALLOW_DOMAINS` | runtime egress domains, on top of the base |
 | `SLUICE_ALLOW_IPS` | runtime egress IPs/CIDRs |
 | `SLUICE_PORTS` | TCP ports to publish (firewall opens a matching inbound rule) |
@@ -183,7 +184,7 @@ core/init-firewall.sh    iptables: redirect HTTP/HTTPS to squid, default-DROP re
 core/entrypoint.sh       starts squid, runs the firewall, then idles
 core/smoke-test.sh       image smoke test (base tooling + non-root)
 sluice.config.example.sh    documented config template
-examples/                self-contained demos (firewall, strudel, jupyter)
+examples/                self-contained demos (firewall, strudel, jupyter, nix)
 agents/                  coding-agent presets (run sluice agent to list them)
 test/acceptance.sh       automated pass/fail harness (egress matrix + serve); run by CI
 test/init-detection.sh   unit tests for `sluice init` stack detection (no Docker); run by CI

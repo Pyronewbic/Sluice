@@ -33,6 +33,12 @@ SLUICE_EXTRA_NPM=""
 # e.g. "git clone --depth 1 https://example.com/app && cd app && npm ci"
 SLUICE_SETUP_CMDS=""
 
+# Like SLUICE_SETUP_CMDS but run as ROOT at build (free egress, same trust as SLUICE_EXTRA_PKGS).
+# For provisioning OUTSIDE the home dir - creating dirs the sluice user then owns, /opt, etc.
+# Runs before SLUICE_SETUP_CMDS. One shell string. e.g. (single-user Nix store):
+#   SLUICE_SETUP_ROOT_CMDS='mkdir -p /nix && chown sluice:sluice /nix'
+SLUICE_SETUP_ROOT_CMDS=""
+
 # Build the project layer FROM a prebuilt, cosign-signed base instead of rebuilding the core
 # locally (faster; auditable). Opt-in: set to a published ref, e.g.
 # "ghcr.io/pyronewbic/sluice-base:0.2.1". sluice cosign-verifies it if cosign is installed

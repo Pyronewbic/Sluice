@@ -73,6 +73,11 @@ RUN . /usr/local/share/sluice.config.sh \
 RUN . /usr/local/share/sluice.config.sh \
     && if [ -n "${SLUICE_EXTRA_NPM:-}" ]; then npm install -g ${SLUICE_EXTRA_NPM}; fi
 
+# --- SLUICE_SETUP_ROOT_CMDS: build-time setup as ROOT (free egress; same trust as SLUICE_EXTRA_PKGS).
+#     For provisioning outside $HOME - e.g. a /nix store the sluice user can then own. ----------
+RUN . /usr/local/share/sluice.config.sh \
+    && if [ -n "${SLUICE_SETUP_ROOT_CMDS:-}" ]; then sh -eux -c "$SLUICE_SETUP_ROOT_CMDS"; fi
+
 # --- SLUICE_SETUP_CMDS: build-time setup as sluice (free egress; the running container is locked) ---
 USER sluice
 WORKDIR /home/sluice
