@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Build-smoke each runtime example (build -> serve -> curl, deps through the proxy). Slow
-# integration layer; runs nightly/on-demand, not the PR gate. Each example is copied to a
-# temp dir first so build artifacts never touch the repo.
+# Build-smoke each runtime fixture (build -> serve -> curl, deps through the proxy). Slow
+# integration layer; runs nightly/on-demand, not the PR gate. Each fixture (test/fixtures/<rt>)
+# is copied to a temp dir first so build artifacts never touch the repo.
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -14,8 +14,8 @@ EXAMPLES="${RUNTIMES:-deno ruby rust go bun poetry uv}"
 
 echo "== sluice runtime build-smoke =="
 for name in $EXAMPLES; do
-  src="$ROOT/examples/$name"
-  [ -f "$src/sluice.config.sh" ] || { bad "$name: missing example"; continue; }
+  src="$ROOT/test/fixtures/$name"
+  [ -f "$src/sluice.config.sh" ] || { bad "$name: missing fixture"; continue; }
   port="$(grep -E '^SLUICE_PORTS=' "$src/sluice.config.sh" | sed -E 's/[^0-9]*([0-9]+).*/\1/')"
   [ -n "$port" ] || { bad "$name: no SLUICE_PORTS in config"; continue; }
 

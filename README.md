@@ -139,10 +139,10 @@ mkdir strudel && cp examples/strudel.config.sh strudel/sluice.config.sh
 cd strudel && sluice            # build + serve; then open http://localhost:4321
 ```
 
-The full **[gallery](examples/)** has more drop-in configs (Jupyter, Vite, Next.js, FastAPI)
-plus one runnable project per runtime (Deno, Ruby, Rust, Go, Bun, Poetry, uv) you can `cd`
-into and run. It also shows the one runtime gotcha: a host the app needs at runtime must be
-in `SLUICE_ALLOW_DOMAINS` (or `sluice learn` it), or the firewall blocks it silently.
+The full **[gallery](examples/)** has more drop-in configs (Jupyter, Vite, Next.js, FastAPI).
+It shows the one runtime gotcha: a host the app needs at runtime must be in
+`SLUICE_ALLOW_DOMAINS` (or `sluice learn` it), or the firewall blocks it silently. For any
+other stack, `sluice init` scaffolds the config.
 
 ## Layout
 
@@ -154,11 +154,12 @@ core/init-firewall.sh    iptables: redirect HTTP/HTTPS to squid, default-DROP re
 core/entrypoint.sh       starts squid, runs the firewall, then idles
 core/smoke-test.sh       image smoke test (base tooling + non-root)
 sluice.config.example.sh    documented config template
-examples/                gallery: drop-in configs + one runnable project per runtime (deno/ruby/rust/go/bun/poetry/uv)
+examples/                gallery of drop-in configs (strudel, jupyter, vite, nextjs, fastapi)
 agents/                  coding-agent presets (run sluice agent to list them)
 test/acceptance.sh       automated pass/fail harness (egress matrix + serve); run by CI
 test/init-detection.sh   unit tests for `sluice init` stack detection (no Docker); run by CI
-test/verify-runtimes.sh  build-smoke of the runtime examples (build + serve); nightly + manual
+test/verify-runtimes.sh  build-smoke of the runtime fixtures (build + serve); nightly + manual
+test/fixtures/           one runnable app per runtime (deno/ruby/rust/go/bun/poetry/uv) for the above
 install.sh               curl|sh + local installer (symlinks bin/sluice onto PATH)
 packaging/               Homebrew formula (for a tap)
 SECURITY.md              how to report a vulnerability
