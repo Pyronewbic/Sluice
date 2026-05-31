@@ -42,5 +42,17 @@ fi
 mkdir -p /home/node/.npm-global
 chown node:node /home/node/.npm-global 2>/dev/null || true
 
+# Make the bind-mounted repo writable by the node user. On Linux a bind mount keeps the
+# host uid; if that isn't node's (1000), the sandboxed user (and any agent it runs) can't
+# write to the repo. chown the mounted paths to node when they aren't already node-owned.
+# (No-op when the host uid is already 1000, and on Docker Desktop, which remaps mount perms.)
+for d in "${SLUICE_WORKDIR:-}" "${SLUICE_GITDIR:-}"; do
+  if [ -n "$d" ] && [ -d "$d" ]; then
+    if [ "$(stat -c %u "$d" 2>/dev/null || echo 0)" != 1000 ]; then
+      chown -R node:node "$d" 2>/dev/null || true
+    fi
+  fi
+done
+
 echo "[sluice] ready. exec sessions as the node user."
 exec sleep infinity

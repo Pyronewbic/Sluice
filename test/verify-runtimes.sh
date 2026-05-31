@@ -14,7 +14,7 @@ PASS=0 FAIL=0
 ok()  { PASS=$((PASS+1)); printf '  ok   %s\n' "$1"; }
 bad() { FAIL=$((FAIL+1)); printf '  FAIL %s\n' "$1"; }
 
-EXAMPLES="deno ruby rust go bun poetry uv"
+EXAMPLES="${RUNTIMES:-deno ruby rust go bun poetry uv}"
 
 echo "== sluice runtime build-smoke =="
 for name in $EXAMPLES; do
@@ -35,8 +35,15 @@ for name in $EXAMPLES; do
     code="$(curl -fsS -o /dev/null -w '%{http_code}' --max-time 3 "http://localhost:$port/" 2>/dev/null || echo 000)"
     [ "$code" = 200 ] && break; sleep 1
   done
-  [ "$code" = 200 ] && ok "$name: serves 200 (deps fetched through the proxy)" \
-                    || bad "$name: serve (got $code, see /tmp/verify-$name.log)"
+  if [ "$code" = 200 ]; then
+    ok "$name: serves 200 (deps fetched through the proxy)"
+  else
+    bad "$name: serve (got $code)"
+    echo "----- build+serve log ($name) -----"; tail -60 "/tmp/verify-$name.log" 2>/dev/null
+    echo "----- container state -----"; "${SLUICE_ENGINE:-docker}" ps -a --filter "name=sluice-$name" 2>/dev/null
+    echo "----- port map -----"; "${SLUICE_ENGINE:-docker}" port "sluice-$name" 2>/dev/null || true
+    echo "-----------------------------------"
+  fi
   ( cd "$work" && "$SLUICE" stop ) >/dev/null 2>&1
   rm -rf "$(dirname "$work")"
 done

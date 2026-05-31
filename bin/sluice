@@ -341,8 +341,10 @@ start() {
     --sysctl net.ipv6.conf.all.disable_ipv6=1
     --sysctl net.ipv6.conf.default.disable_ipv6=1)
 
-  # Mount the project dir rw at the same absolute path.
-  run_args+=(-v "$PROJECT_DIR":"$PROJECT_DIR")
+  # Mount the project dir rw at the same absolute path. Tell the entrypoint to chown it to
+  # node, so the sandboxed user can write to the repo even when the host uid isn't 1000
+  # (Linux bind mounts keep the host uid; an agent's whole job is editing your repo).
+  run_args+=(-v "$PROJECT_DIR":"$PROJECT_DIR" -e "SLUICE_WORKDIR=$PROJECT_DIR")
 
   # If the project is a git worktree, also mount the git common dir so the worktree's
   # gitdir pointer resolves and refs/logs are writable (only when it's outside the
@@ -352,7 +354,7 @@ start() {
     case "$common" in /*) ;; *) common="$PROJECT_DIR/$common";; esac
     common="$(cd "$common" 2>/dev/null && pwd || true)"
     if [ -n "$common" ]; then
-      case "$common/" in "$PROJECT_DIR"/*) ;; *) run_args+=(-v "$common":"$common");; esac
+      case "$common/" in "$PROJECT_DIR"/*) ;; *) run_args+=(-v "$common":"$common" -e "SLUICE_GITDIR=$common");; esac
     fi
   fi
 
