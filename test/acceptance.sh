@@ -9,8 +9,14 @@ WORK="$(mktemp -d)"
 PASS=0 FAIL=0
 
 cleanup() {
-  for d in empty strudel; do ( cd "$WORK/$d" 2>/dev/null && "$SLUICE" stop ) >/dev/null 2>&1 || true; done
-  rm -rf "$WORK"
+  # The entrypoint chowns each mount to the sandbox uid (1000); chown it back to the host uid
+  # (while the container is still up) so the host can remove $WORK without "Permission denied".
+  for d in empty strudel; do
+    "${SLUICE_ENGINE:-docker}" exec --user root "sluice-$d" \
+      chown -R "$(id -u):$(id -g)" "$WORK/$d" >/dev/null 2>&1 || true
+    ( cd "$WORK/$d" 2>/dev/null && "$SLUICE" stop ) >/dev/null 2>&1 || true
+  done
+  rm -rf "$WORK" 2>/dev/null || true
 }
 trap cleanup EXIT
 
