@@ -3,28 +3,33 @@
 Drop-in `sluice.config.sh` presets. Copy one into a project, run `sluice` - and it's
 non-root, sees only that directory, and can only reach the hosts the preset allows.
 
-Supported runtimes are listed in the [main README](../README.md#use); for those, `sluice init`
-scaffolds the config. Below: the curated copy-paste presets.
+Each demo below is self-contained (no repo of your own needed) and shows a **different**
+slice of what sluice does - read the "shows" column to pick one.
 
-## Self-contained demos (a real app, no repo of your own needed)
-
-| preset | what it shows | copy & run |
+| preset | shows | copy & run |
 |---|---|---|
-| [strudel](strudel.config.sh) | a live-coding music REPL served on `:4321`; the sample-host egress gotcha | `mkdir d && cp examples/strudel.config.sh d/sluice.config.sh && cd d && sluice` |
-| [jupyter](jupyter.config.sh) | JupyterLab (Python) on `:8888`; a stack that needs **no** runtime egress | `mkdir d && cp examples/jupyter.config.sh d/sluice.config.sh && cd d && sluice` |
+| [firewall](firewall.config.sh) | the **egress firewall as a security control** - a fetch to an allowlisted host succeeds, an exfil attempt to a non-allowlisted host (and a raw IP) is **blocked**; surfaced by `sluice doctor`. Runs to completion, no server. | `mkdir d && cp examples/firewall.config.sh d/sluice.config.sh && cd d && sluice` |
+| [strudel](strudel.config.sh) | **serving a web app** (a live-coding music REPL on `:4321`) + the runtime egress allow-gotcha: a host the app needs at play time must be on the allowlist. | `mkdir d && cp examples/strudel.config.sh d/sluice.config.sh && cd d && sluice` |
+| [jupyter](jupyter.config.sh) | a **different stack** (Python/pip, JupyterLab on `:8888`) that needs **no** runtime egress at all - the contrast to strudel. | `mkdir d && cp examples/jupyter.config.sh d/sluice.config.sh && cd d && sluice` |
 
-## Stack starters (drop into YOUR repo)
+## Your own stack
 
-| preset | for | copy |
-|---|---|---|
-| [vite](vite.config.sh) | a Vite app (React/Vue/Svelte) dev server on `:5173` | `cp examples/vite.config.sh sluice.config.sh` |
-| [nextjs](nextjs.config.sh) | a Next.js app on `:3000` | `cp examples/nextjs.config.sh sluice.config.sh` |
-| [fastapi](fastapi.config.sh) | a FastAPI/uvicorn Python API on `:8000` | `cp examples/fastapi.config.sh sluice.config.sh` |
+No preset needed: run **`sluice init`** in your repo - it detects the stack (Node/Vite/Next,
+Python/FastAPI, Deno, Ruby/Rails, Rust, Go) and scaffolds the config, then **`sluice learn`**
+fills the egress allowlist from what the app actually tried to reach. Any other language runs
+too via `SLUICE_EXTRA_PKGS` + `SLUICE_RUN_CMD` (see the [main README](../README.md#use)).
 
-Don't see your stack? `sluice init` scaffolds a config by detecting your manifests, and
-`sluice learn` fills the egress allowlist from what the app actually tried to reach.
+## Coding agents - run any agent YOLO, safely
 
-## Coding agents
+The wedge: one command drops you into a coding agent that's non-root, sees only this repo, and
+can reach only its own model API - so running it with approvals off is defensible.
 
-See [`../agents/`](../agents/) - `sluice agent <name>` for
-**claude, codex, gemini, aider, cursor, opencode, amp**.
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...   # forwarded into the box, never baked
+cd my-repo && sluice agent claude     # Claude Code, --dangerously-skip-permissions, sandboxed
+```
+
+Presets ([`../agents/`](../agents/), run `sluice agent` to list): **claude, codex, gemini,
+aider, cursor, opencode, amp** - each declares its tool, API hosts, and the auth env var to
+forward. Verified end-to-end via [`../test/verify-agents.sh`](../test/verify-agents.sh)
+(binary installs + runs, API hosts reachable, non-allowlisted hosts blocked, auth forwarded).

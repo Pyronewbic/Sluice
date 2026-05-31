@@ -12,14 +12,14 @@
 # No credentials, no SLUICE_PRELAUNCH.
 
 # --- build-time: bake the REPL bundle + the page + a tiny static server ----------
-# Runs as the node user before the firewall (free egress), so the curl below works.
+# Runs as the sluice user before the firewall (free egress), so the curl below works.
 # The @strudel/repl bundle (a self-contained 2.2 MB IIFE that registers the
 # <strudel-editor> web component) is downloaded ONCE here and served locally - so at
 # RUNTIME the only egress the app needs is the sample host (see SLUICE_ALLOW_DOMAINS).
 SLUICE_SETUP_CMDS='
-mkdir -p /home/node/strudel-app
-curl -fsSL https://unpkg.com/@strudel/repl@1.3.0 -o /home/node/strudel-app/strudel-repl.js
-cat > /home/node/strudel-app/index.html <<"HTML"
+mkdir -p /home/sluice/strudel-app
+curl -fsSL https://unpkg.com/@strudel/repl@1.3.0 -o /home/sluice/strudel-app/strudel-repl.js
+cat > /home/sluice/strudel-app/index.html <<"HTML"
 <!doctype html>
 <html>
 <head>
@@ -46,11 +46,11 @@ stack(
 </body>
 </html>
 HTML
-cat > /home/node/strudel-app/server.mjs <<"JS"
+cat > /home/sluice/strudel-app/server.mjs <<"JS"
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
-const ROOT = "/home/node/strudel-app";
+const ROOT = "/home/sluice/strudel-app";
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8", ".css": "text/css", ".json": "application/json", ".wav": "audio/wav", ".mp3": "audio/mpeg", ".ogg": "audio/ogg" };
 const PORT = 4321;
 createServer(async (req, res) => {
@@ -81,4 +81,4 @@ SLUICE_ALLOW_DOMAINS="raw.githubusercontent.com cdn.jsdelivr.net"
 # Publish 4321 to the host (the firewall opens the matching inbound rule). The server
 # binds 0.0.0.0 (NOT 127.0.0.1) so the docker-forwarded traffic actually reaches it.
 SLUICE_PORTS="4321"
-SLUICE_RUN_CMD="node /home/node/strudel-app/server.mjs"
+SLUICE_RUN_CMD="node /home/sluice/strudel-app/server.mjs"

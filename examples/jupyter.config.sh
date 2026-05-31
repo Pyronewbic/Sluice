@@ -16,7 +16,7 @@
 # compiler needed for jupyterlab/ipykernel/pyzmq.)
 SLUICE_EXTRA_PKGS="python-3.12 py3.12-pip"
 
-# Install JupyterLab + a Python kernel as the node user (--user -> ~/.local), and
+# Install JupyterLab + a Python kernel as the sluice user (--user -> ~/.local), and
 # register the kernel. Runs before the firewall, so pip reaches PyPI freely.
 SLUICE_SETUP_CMDS='
 pip install --user --no-input jupyterlab ipykernel
