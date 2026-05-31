@@ -37,9 +37,13 @@ iptables -t nat -A OUTPUT -p tcp --dport 443 -m owner ! --uid-owner "$SQUID_UID"
 iptables -A OUTPUT -o lo -j ACCEPT                                     # loopback
 iptables -A OUTPUT -d 127.0.0.0/8 -j ACCEPT                            # REDIRECT'd pkts (dst rewritten to localhost -> squid)
 iptables -A OUTPUT -m owner --uid-owner "$SQUID_UID" -j ACCEPT         # squid's own egress (enforces the allowlist)
-# DNS only to the resolvers in resolv.conf (blocks DNS tunneling to an arbitrary nameserver).
-for ns in $(awk '/^nameserver/ { print $2 }' /etc/resolv.conf 2>/dev/null); do
-  case "$ns" in *:*) continue;; esac                                  # skip IPv6 resolvers
+# DNS only to the cache's upstreams (blocks DNS tunneling to an arbitrary nameserver). The
+# entrypoint points resolv.conf at the local dnsmasq (loopback, allowed above) and saves the
+# real upstreams here; fall back to resolv.conf if the cache wasn't started. Match IPv4 tokens
+# only (skips the 'nameserver'/'search' keywords and IPv6 resolvers).
+dns_src=/run/sluice-dns-upstream
+[ -f "$dns_src" ] || dns_src=/etc/resolv.conf
+for ns in $(awk '{ for (i=1;i<=NF;i++) if ($i ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/) print $i }' "$dns_src" 2>/dev/null); do
   iptables -A OUTPUT -d "$ns" -p udp --dport 53 -j ACCEPT
   iptables -A OUTPUT -d "$ns" -p tcp --dport 53 -j ACCEPT
 done

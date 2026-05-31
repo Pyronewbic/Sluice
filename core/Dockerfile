@@ -14,7 +14,7 @@ COPY --chmod=0644 sluice.config.sh /usr/local/share/sluice.config.sh
 # --- Base tooling: node/git/gh + the firewall (iptables, squid, openssl); + SLUICE_EXTRA_PKGS ---
 RUN . /usr/local/share/sluice.config.sh && apk add --no-cache \
       bash coreutils ca-certificates-bundle curl git less vim procps sudo shadow \
-      iptables bind-tools jq gh squid openssl \
+      iptables bind-tools jq gh squid dnsmasq openssl \
       nodejs-24 npm \
       ${SLUICE_EXTRA_PKGS}
 

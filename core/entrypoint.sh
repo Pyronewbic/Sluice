@@ -13,6 +13,36 @@ set -e
 
 # (IPv6-off + route_localnet are set via --sysctl at docker run; /proc/sys is ro here.)
 
+# --- caching DNS resolver (dnsmasq) ---------------------------------------------
+# squid's transparent-intercept Host-forgery check compares the client's connected IP
+# against squid's own DNS of the SNI. For rotating-CDN hosts (Google/Akamai) the two
+# lookups land on different pool IPs, so squid 409s a legitimate allowlisted host. A
+# shared cache makes the client and squid see the same IP set, so the check passes.
+dns_up="$(awk '/^nameserver/ { print $2 }' /etc/resolv.conf 2>/dev/null | grep -v ':' | tr '\n' ' ')"
+[ -n "$dns_up" ] || dns_up="127.0.0.11"     # docker embedded DNS
+printf '%s\n' $dns_up > /run/sluice-dns-upstream   # init-firewall allows these for dnsmasq
+{
+  echo "no-resolv"                 # never read /etc/resolv.conf (we point it back at us -> loop)
+  echo "no-hosts"
+  echo "listen-address=127.0.0.1"
+  echo "bind-interfaces"
+  echo "user=root"                 # wolfi-base has no dnsmasq/nobody user to drop to
+  echo "cache-size=2000"
+  echo "min-cache-ttl=3600"        # pin pool IPs long enough that client + squid agree
+  for u in $dns_up; do echo "server=$u"; done
+} > /etc/dnsmasq-sluice.conf
+dnsmasq --conf-file=/etc/dnsmasq-sluice.conf
+printf 'nameserver 127.0.0.1\n' > /etc/resolv.conf  # client + squid resolve via the cache
+ok=0
+for _ in $(seq 1 20); do
+  if [ -n "$(dig +short +time=1 +tries=1 @127.0.0.1 registry.npmjs.org 2>/dev/null)" ]; then ok=1; break; fi
+  sleep 0.25
+done
+if [ "$ok" != 1 ]; then
+  echo "[sluice] FATAL: dnsmasq did not come up on 127.0.0.1:53 - DNS cache unavailable" >&2
+  exit 1
+fi
+
 # --- start the egress filter BEFORE the firewall --------------------------------
 # (init-firewall.sh's self-test makes a real request through the proxy.)
 mkdir -p /var/log/squid /var/cache/squid /run/squid
