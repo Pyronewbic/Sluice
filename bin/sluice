@@ -49,6 +49,7 @@ Inspect:
   doctor           health check: engine, image, allowlist, blocked egress
   logs             follow firewall + readiness logs
   lock             record installed apk+npm versions to sluice.lock (supply-chain audit)
+                   --check fails on drift (CI gate); --sbom emits a CycloneDX SBOM
   smoke            build (if needed) + run the image smoke test
 
 Meta:
@@ -152,6 +153,48 @@ write_lock() {
   echo "[sluice] wrote $lock ($na apk + $nn npm packages)"
 }
 
+# Drifted lines between ./sluice.lock and the live image inventory ("< lock / > current"); empty =
+# in sync. Optional $1 = a pre-computed inventory (so doctor doesn't introspect the image twice).
+lock_drift() {
+  local inv="${1:-$(current_inventory 2>/dev/null || true)}"
+  diff <(grep -vE '^#' "$PROJECT_DIR/sluice.lock" 2>/dev/null || true) \
+       <(printf '%s\n' "$inv") 2>/dev/null | grep -E '^[<>]' || true
+}
+
+# `sluice lock --check`: fail (exit 1) if the built image drifted from the committed sluice.lock.
+cmd_lock_check() {
+  [ -f "$PROJECT_DIR/sluice.lock" ] || die "no sluice.lock to check against - run 'sluice lock' first"
+  maybe_build
+  local drift; drift="$(lock_drift)"
+  [ -z "$drift" ] && { echo "[sluice] lock in sync"; return 0; }
+  echo "[sluice] DRIFT: the built image differs from sluice.lock (< lock, > current):" >&2
+  printf '%s\n' "$drift" >&2
+  return 1
+}
+
+# `sluice lock --sbom`: a deterministic CycloneDX 1.5 SBOM (apk + npm purls) to stdout. Assembled
+# in-image (jq lives there, not necessarily on the host); no timestamp/serial + purl-sorted so the
+# output is byte-stable and diffable. The base image ref is passed in as $SBOM_BASE.
+cmd_sbom() {
+  maybe_build
+  local baseref bdig
+  baseref="${SLUICE_BASE_IMAGE:-cgr.dev/chainguard/wolfi-base}"
+  bdig="$("$ENGINE" image inspect "$baseref" --format '{{ if .RepoDigests }}{{ index .RepoDigests 0 }}{{ end }}' 2>/dev/null || true)"
+  "$ENGINE" run --rm -i -e "SBOM_BASE=${bdig:-$baseref}" --entrypoint sh "$tag" 2>/dev/null <<'SBOM'
+{
+  awk 'BEGIN{RS="";FS="\n"}{p=v="";for(i=1;i<=NF;i++){t=substr($i,1,2);if(t=="P:")p=substr($i,3);else if(t=="V:")v=substr($i,3)}if(p!="")printf "apk\t%s\t%s\n",p,v}' /lib/apk/db/installed
+  npm ls -g --depth=0 --json 2>/dev/null | jq -r '(.dependencies // {})|to_entries[]|"npm\t\(.key)\t\(.value.version)"' 2>/dev/null
+} | jq -R -s '
+  [ split("\n")[] | select(length>0) | split("\t")
+    | { type:"library", name:.[1], version:.[2],
+        purl:( if .[0]=="apk" then "pkg:apk/wolfi/"+.[1]+"@"+.[2] else "pkg:npm/"+.[1]+"@"+.[2] end) } ]
+  | sort_by(.purl)
+  | { bomFormat:"CycloneDX", specVersion:"1.5", version:1,
+      metadata:{ component:{ type:"container", name:env.SBOM_BASE } },
+      components: . }'
+SBOM
+}
+
 # --- `sluice doctor`: one-shot health + why-egress-is-blocked report ------------
 _doc() { printf '  %-10s %s\n' "$1" "$2"; }
 cmd_doctor() {
@@ -189,15 +232,14 @@ cmd_doctor() {
 
   if [ -f "$PROJECT_DIR/sluice.lock" ]; then
     if [ -n "$eng" ] && "$eng" image inspect "$tag" >/dev/null 2>&1; then
-      local lkpkgs curinv dcount npkgs
-      lkpkgs="$(grep -vE '^#' "$PROJECT_DIR/sluice.lock" || true)"
+      local curinv drift npkgs
       curinv="$(current_inventory 2>/dev/null || true)"
-      dcount="$(diff <(printf '%s\n' "$lkpkgs") <(printf '%s\n' "$curinv") 2>/dev/null | grep -c '^[<>]' || true)"
+      drift="$(lock_drift "$curinv")"
       npkgs="$(printf '%s\n' "$curinv" | grep -cE '^(apk|npm) ' || true)"
-      if [ "${dcount:-0}" -eq 0 ]; then
+      if [ -z "$drift" ]; then
         _doc lock "in sync ($npkgs pkgs)"
       else
-        _doc lock "drifted - $dcount line(s) changed since sluice.lock (run 'sluice update')"
+        _doc lock "drifted - $(printf '%s\n' "$drift" | grep -c .) line(s) changed since sluice.lock (run 'sluice update')"
       fi
     else
       _doc lock "sluice.lock present - build to compare"
@@ -725,7 +767,15 @@ case "${1:-run-default}" in
     exit $?
     ;;
   learn)   cmd_learn; exit 0 ;;
-  lock)    write_lock; exit 0 ;;
+  lock)
+    shift
+    case "${1:-}" in
+      --check) cmd_lock_check; exit $? ;;
+      --sbom)  cmd_sbom; exit $? ;;
+      "")      write_lock; exit 0 ;;
+      *)       die "usage: sluice lock [--check | --sbom]" ;;
+    esac
+    ;;
   update)  build --no-cache; write_lock; exit 0 ;;
   shell)   banner; ensure_up; exec_in bash ;;
   run)

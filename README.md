@@ -78,6 +78,14 @@ sluice smoke           # build (if needed) + run the image smoke test
 global npm package with its version and digest) so what's in your sandbox is reviewable in a
 diff, and `sluice doctor` flags drift. It's an audit artifact, not a reproducibility guarantee:
 Wolfi's apk repo is rolling, so `sluice update` re-resolves to current versions on demand.
+`sluice lock --check` turns drift into a **CI gate** (exits non-zero if the built image differs
+from `sluice.lock`), and `sluice lock --sbom` emits a deterministic **CycloneDX** SBOM for
+scanners (Grype/Trivy/Dependency-Track):
+
+```bash
+sluice lock --check              # fail the build if the sandbox drifted from sluice.lock
+sluice lock --sbom > sbom.cdx.json   # CycloneDX inventory (apk + npm purls), byte-stable
+```
 
 Image and container are named per project (`sluice-<dir>`, or `SLUICE_NAME` to override), so
 projects never collide. The image auto-rebuilds when `sluice.config.sh` or the core changes

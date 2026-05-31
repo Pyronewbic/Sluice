@@ -53,8 +53,9 @@ file or tool result steering an agent, or simply buggy agent code - any of which
   enforce). The image carries no private key (the splice cert is generated per-container).
   Your declared `SLUICE_EXTRA_PKGS` are your own layer on top - `sluice lock` records a
   committable inventory (every apk + npm package with its version + digest) so you can review
-  and drift-detect exactly what's installed (`sluice doctor` flags drift). It's an audit/drift
-  aid, not a reproducibility guarantee (Wolfi apk is a rolling repo).
+  and drift-detect exactly what's installed (`sluice doctor` flags drift; `sluice lock --check`
+  *enforces* it as a CI gate, and `sluice lock --sbom` emits a CycloneDX SBOM for scanners). It's
+  an audit/drift aid, not a reproducibility guarantee (Wolfi apk is a rolling repo).
 
 ## What it does NOT defend against (be explicit)
 
