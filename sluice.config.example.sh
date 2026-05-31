@@ -18,6 +18,8 @@ SLUICE_NAME=""
 
 # Extra apk packages on top of the base (node/npm/git/gh/curl/jq + firewall tools).
 # Space-separated. e.g. "terraform postgresql-16-client python-3.12"
+# Installed unpinned (Wolfi is a rolling repo); run `sluice lock` to record the exact resolved
+# versions + digests to a committable sluice.lock (audit/drift; `sluice doctor` flags drift).
 SLUICE_EXTRA_PKGS=""
 
 # Extra global npm packages, pinned for supply-chain hygiene (baked, not npx'd).

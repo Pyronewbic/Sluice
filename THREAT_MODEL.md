@@ -51,7 +51,10 @@ file or tool result steering an agent, or simply buggy agent code - any of which
   can be pulled as a **cosign-signed base image** from GHCR (opt-in via `SLUICE_BASE_IMAGE`);
   `sluice` verifies the keyless signature before building on it (`SLUICE_REQUIRE_SIGNED=1` to
   enforce). The image carries no private key (the splice cert is generated per-container).
-  Your declared `SLUICE_EXTRA_PKGS` are your own layer on top - audit them as any dependency.
+  Your declared `SLUICE_EXTRA_PKGS` are your own layer on top - `sluice lock` records a
+  committable inventory (every apk + npm package with its version + digest) so you can review
+  and drift-detect exactly what's installed (`sluice doctor` flags drift). It's an audit/drift
+  aid, not a reproducibility guarantee (Wolfi apk is a rolling repo).
 
 ## What it does NOT defend against (be explicit)
 
