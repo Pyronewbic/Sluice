@@ -56,6 +56,7 @@ Common:
   agent [name]     run a coding agent (claude/codex/gemini/aider/cursor/opencode/amp)
   init [--force]   scaffold a sluice.config.sh by detecting the project's stack
   learn            propose the egress allowlist from the hosts the proxy blocked
+                   --print emits it to stdout; --apply writes it + rebuilds
   shell            a bash shell in the sandbox (as the non-root sluice user)
   run <cmd...>     an ad-hoc command instead of SLUICE_RUN_CMD
 
@@ -740,41 +741,58 @@ show_denials_hint() {
   echo "[sluice] egress blocked during this run: ${blocked}(run 'sluice learn' to allow)" >&2
 }
 
-# --- `sluice learn`: read the squid log, propose the hosts it BLOCKED -------------------
-cmd_learn() {
-  running || die "no running sandbox. Start your app first ('sluice'), exercise it so it makes its network calls, then run 'sluice learn'."
-  echo "[sluice] reading blocked egress from the proxy log..."
-  local found new proposed
-  found="$(blocked_hosts 2>/dev/null || true)"
-  [ -n "$found" ] || { echo "[sluice] no blocked hosts seen yet - exercise the app more (load it, click around), then re-run 'sluice learn'."; return 0; }
+# Write/replace the SLUICE_ALLOW_DOMAINS line in the project config (interactive + --apply share this).
+apply_allowlist() {
+  local val="$1" tmp
+  if grep -q '^SLUICE_ALLOW_DOMAINS=' "$PROJECT_CONFIG"; then
+    tmp="$(mktemp)"
+    awk -v v="$val" '/^SLUICE_ALLOW_DOMAINS=/ && !seen {print "SLUICE_ALLOW_DOMAINS=\"" v "\""; seen=1; next} {print}' \
+      "$PROJECT_CONFIG" > "$tmp" && mv "$tmp" "$PROJECT_CONFIG"
+  else
+    printf 'SLUICE_ALLOW_DOMAINS="%s"\n' "$val" >> "$PROJECT_CONFIG"
+  fi
+  chmod 0644 "$PROJECT_CONFIG" 2>/dev/null || true   # mktemp is 0600; the build sources it as the sluice user
+}
 
-  # Keep only hosts not already allowed (config + the always-on base), minus the reserved example.*
-  # domains the firewall's own boot deny-canary hits (RFC2606 - never a real dependency to allow).
-  # Collapsed to one line.
+# --- `sluice learn [--print|--apply]`: propose the egress allowlist from the hosts squid BLOCKED ----
+# Reserved example.* (the firewall's boot deny-canary) and raw IPs are filtered out. --print emits
+# the merged list to stdout (review/CI); --apply writes it + rebuilds; bare learn prompts.
+cmd_learn() {
+  local mode="${1:-}"
+  running || die "no running sandbox. Start your app first ('sluice'), exercise it so it makes its network calls, then run 'sluice learn'."
+  local new proposed
   # shellcheck disable=SC2086
   new="$(blocked_new 2>/dev/null | grep -vxE 'example\.(com|net|org)' | sort -u | tr '\n' ' ' | sed 's/ *$//' || true)"
-  [ -n "$new" ] || { echo "[sluice] every blocked host is already in your allowlist - nothing to add."; return 0; }
+  proposed="$(printf '%s %s\n' "${SLUICE_ALLOW_DOMAINS:-}" "$new" | tr ' ' '\n' | sed '/^$/d' | sort -u | tr '\n' ' ' | sed 's/ *$//')"
 
+  if [ "$mode" = --print ]; then
+    printf '%s\n' "$proposed"   # merged allowlist (existing + newly blocked) - for review / CI / scripting
+    return 0
+  fi
+
+  echo "[sluice] reading blocked egress from the proxy log..."
+  if [ -z "$new" ]; then
+    echo "[sluice] no new hosts to add - every blocked host is already allowed (or nothing was blocked yet; exercise the app, then re-run)."
+    return 0
+  fi
   echo "[sluice] hosts your app reached that the firewall BLOCKED:"
   # shellcheck disable=SC2086
   printf '    %s\n' $new
-  proposed="$(printf '%s %s\n' "${SLUICE_ALLOW_DOMAINS:-}" "$new" | tr ' ' '\n' | sed '/^$/d' | sort -u | tr '\n' ' ' | sed 's/ *$//')"
   echo
   echo "[sluice] suggested:  SLUICE_ALLOW_DOMAINS=\"$proposed\""
+
+  if [ "$mode" = --apply ]; then
+    apply_allowlist "$proposed"
+    echo "[sluice] wrote $PROJECT_CONFIG - rebuilding to apply..."
+    build; start
+    echo "[sluice] applied - the new allowlist is live."
+    return 0
+  fi
+
   printf '[sluice] write this into %s? [y/N] ' "$PROJECT_CONFIG"
   local ans; read -r ans 2>/dev/null || ans=""
   case "$ans" in
-    y|Y|yes|YES)
-      if grep -q '^SLUICE_ALLOW_DOMAINS=' "$PROJECT_CONFIG"; then
-        local tmp; tmp="$(mktemp)"
-        awk -v val="$proposed" '/^SLUICE_ALLOW_DOMAINS=/ && !seen {print "SLUICE_ALLOW_DOMAINS=\"" val "\""; seen=1; next} {print}' \
-          "$PROJECT_CONFIG" > "$tmp" && mv "$tmp" "$PROJECT_CONFIG"
-      else
-        printf 'SLUICE_ALLOW_DOMAINS="%s"\n' "$proposed" >> "$PROJECT_CONFIG"
-      fi
-      chmod 0644 "$PROJECT_CONFIG" 2>/dev/null || true   # mktemp is 0600; the build sources it as the sluice user
-      echo "[sluice] updated $PROJECT_CONFIG - run 'sluice rebuild' to apply."
-      ;;
+    y|Y|yes|YES) apply_allowlist "$proposed"; echo "[sluice] updated $PROJECT_CONFIG - run 'sluice rebuild' to apply." ;;
     *) echo "[sluice] unchanged. Paste the line above into $PROJECT_CONFIG when ready, then 'sluice rebuild'." ;;
   esac
 }
@@ -789,7 +807,15 @@ case "${1:-run-default}" in
     "$ENGINE" run --rm --user sluice --entrypoint bash "$tag" /usr/local/bin/smoke-test.sh
     exit $?
     ;;
-  learn)   cmd_learn; exit 0 ;;
+  learn)
+    shift
+    case "${1:-}" in
+      --print) cmd_learn --print; exit $? ;;
+      --apply) cmd_learn --apply; exit $? ;;
+      "")      cmd_learn; exit 0 ;;
+      *)       die "usage: sluice learn [--print | --apply]" ;;
+    esac
+    ;;
   lock)
     shift
     case "${1:-}" in

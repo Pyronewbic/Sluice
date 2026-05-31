@@ -68,7 +68,7 @@ The full command set:
 sluice                 # build (if needed) + run SLUICE_RUN_CMD in the sandbox
 sluice agent <name>    # run a coding agent (run `sluice agent` with no name to list them)
 sluice init [--force]  # scaffold a sluice.config.sh by detecting the repo's stack
-sluice learn           # propose the egress allowlist from the hosts the proxy blocked
+sluice learn           # propose the egress allowlist from blocked hosts (--print | --apply)
 sluice shell           # a bash shell in the sandbox (as the non-root sluice user)
 sluice run <cmd...>    # an ad-hoc command instead of SLUICE_RUN_CMD
 

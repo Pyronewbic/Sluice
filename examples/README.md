@@ -34,6 +34,10 @@ sluice learn      # reads the proxy log, lists the blocked hosts, proposes + wri
 sluice rebuild    # apply the new allowlist - the app works, still sandboxed
 ```
 
+Shortcuts: **`sluice learn --apply`** writes the allowlist and rebuilds in one step (the loop above,
+collapsed); **`sluice learn --print`** just emits the proposed list to stdout, for review or CI
+(`sluice learn --print`).
+
 `sluice learn` proposes only the real hosts your app reached - the firewall's own self-test
 canaries and raw IPs are filtered out:
 
