@@ -1,4 +1,4 @@
-# Amp (Sourcegraph) - run YOLO inside a sluice.   [best-effort: confirm host(s)]
+# Amp (Sourcegraph) - run YOLO inside a sluice.
 #
 #   sluice agent amp
 #

@@ -1,0 +1,30 @@
+name: verify agents
+
+# Builds each coding-agent preset and verifies it as far as possible WITHOUT credentials: the
+# CLI binary installs from its npm package and runs, every declared API host is reachable
+# through the egress proxy, a non-allowlisted host is blocked, and the auth env var is
+# forwarded. If a matching repo secret exists, it also runs the live authenticated round-trip
+# (it's "one credential away"). Heavy (real agent CLIs) + manual - not a PR gate.
+on:
+  workflow_dispatch:
+    inputs:
+      agents:
+        description: "space-separated agents to verify"
+        default: "cursor amp opencode"
+
+jobs:
+  verify:
+    name: agent presets (Docker)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify agent presets
+        env:
+          AGENTS: ${{ github.event.inputs.agents }}
+          # Add any of these as repo secrets to also run that agent's live round-trip.
+          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+          AMP_API_KEY: ${{ secrets.AMP_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: ./test/verify-agents.sh   # docker is preinstalled on GH runners

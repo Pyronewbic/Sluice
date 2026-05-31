@@ -174,6 +174,7 @@ agents/                  coding-agent presets (run sluice agent to list them)
 test/acceptance.sh       automated pass/fail harness (egress matrix + serve); run by CI
 test/init-detection.sh   unit tests for `sluice init` stack detection (no Docker); run by CI
 test/verify-runtimes.sh  build-smoke of the runtime fixtures (build + serve); nightly + manual
+test/verify-agents.sh    verify agent presets (binary + API hosts + auth) through the proxy; manual
 test/fixtures/           one runnable app per runtime (deno/ruby/rust/go/bun/poetry/uv) for the above
 install.sh               curl|sh + local installer (symlinks bin/sluice onto PATH)
 packaging/               Homebrew formula (for a tap)
