@@ -7,8 +7,8 @@
 # Auth: export your provider key (ANTHROPIC_API_KEY / OPENAI_API_KEY / ...) on the HOST.
 SLUICE_EXTRA_NPM="opencode-ai"
 # opencode has no stable --yolo flag yet, so YOLO via a global allow-all permission config
-# (baked at build as the node user). Remove this to get opencode's default prompts.
-SLUICE_SETUP_CMDS='mkdir -p /home/node/.config/opencode && printf "{\"permission\":{\"*\":\"allow\"}}\n" > /home/node/.config/opencode/opencode.json'
+# (baked at build as the sluice user). Remove this to get opencode's default prompts.
+SLUICE_SETUP_CMDS='mkdir -p /home/sluice/.config/opencode && printf "{\"permission\":{\"*\":\"allow\"}}\n" > /home/sluice/.config/opencode/opencode.json'
 # api.anthropic.com / api.openai.com cover the common providers; models.dev is opencode's
 # model catalog. If you use another provider, add its host (or run `sluice learn`).
 SLUICE_ALLOW_DOMAINS="api.anthropic.com api.openai.com models.dev"

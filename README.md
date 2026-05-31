@@ -168,8 +168,8 @@ cd strudel && sluice            # build + serve; then open http://localhost:4321
 ```
 
 The full **[gallery](examples/)** has more self-contained demos - a **firewall/exfil** demo
-(the egress block, made visible) and **Jupyter** (a no-egress Python stack) - plus the
-coding-agent presets. It shows the one runtime gotcha: a host the app needs at runtime must be in
+(the egress block, made visible), **Jupyter** (a no-egress Python stack), and **Nix** (a
+reproducible toolchain baked at build, contained at runtime) - plus the coding-agent presets. It shows the one runtime gotcha: a host the app needs at runtime must be in
 `SLUICE_ALLOW_DOMAINS` (or `sluice learn` it), or the firewall blocks it - sluice flags which
 host at exit (and in `sluice doctor`) so you can allow it. For any other stack, `sluice init`
 scaffolds the config.
@@ -190,6 +190,7 @@ test/acceptance.sh       automated pass/fail harness (egress matrix + serve); ru
 test/init-detection.sh   unit tests for `sluice init` stack detection (no Docker); run by CI
 test/verify-runtimes.sh  build-smoke of the runtime fixtures (build + serve); nightly + manual
 test/verify-agents.sh    verify agent presets (binary + API hosts + auth) through the proxy; manual
+test/verify-nix.sh       verify the Nix example (build-time Nix, contained at runtime); nightly + manual
 test/fixtures/           one runnable app per runtime (deno/ruby/rust/go/bun/poetry/uv) for the above
 install.sh               curl|sh + local installer (symlinks bin/sluice onto PATH)
 packaging/               Homebrew formula (for a tap)
