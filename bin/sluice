@@ -30,10 +30,10 @@ CORE="$ROOT/core"
 die() { echo "[sluice] $*" >&2; exit 1; }
 
 # --- version + help ------------------------------------------------------------
-SLUICE_VERSION="0.1.0"   # fallback when not a git checkout
-sluice_version() {       # git tag if available, else the baked constant
+SLUICE_VERSION="0.1.1"   # fallback when not a git checkout
+sluice_version() {       # git tag if $ROOT is our own checkout, else the baked constant
   local v
-  if v="$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null)" && [ -n "$v" ]; then
+  if [ -e "$ROOT/.git" ] && v="$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null)" && [ -n "$v" ]; then
     printf '%s' "${v#v}"
   else
     printf '%s' "$SLUICE_VERSION"

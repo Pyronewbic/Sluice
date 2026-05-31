@@ -7,8 +7,9 @@
 class Sluice < Formula
   desc "Sandboxed, egress-firewalled container runner for projects and coding agents"
   homepage "https://github.com/Pyronewbic/Sluice"
-  url "https://github.com/Pyronewbic/Sluice/archive/refs/tags/v0.1.0.tar.gz"
-  sha256 "0000000000000000000000000000000000000000000000000000000000000000" # TODO: fill at release
+  # Template; the live, sha-pinned formula is in the tap (github.com/Pyronewbic/homebrew-tap).
+  url "https://github.com/Pyronewbic/Sluice/archive/refs/tags/v0.1.1.tar.gz"
+  sha256 "0000000000000000000000000000000000000000000000000000000000000000" # set in the tap at release
   license "Apache-2.0"
 
   # Runtime needs docker or podman, which Homebrew shouldn't manage - documented, not a dep.

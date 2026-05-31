@@ -12,13 +12,13 @@ to run - sluice builds the image and runs it.
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Pyronewbic/Sluice/main/install.sh | sh
+brew install Pyronewbic/tap/sluice
+# or:  curl -fsSL https://raw.githubusercontent.com/Pyronewbic/Sluice/main/install.sh | sh
 # or, from a checkout:  ./install.sh
 ```
 
-Symlinks `bin/sluice` into `~/.local/bin` (ensure it's on `PATH`). Needs **docker** or
-**podman** to build and run (`sluice init` needs neither). (A Homebrew tap is coming - see
-[`packaging/`](packaging/).)
+The installer symlinks `bin/sluice` into `~/.local/bin` (ensure it's on `PATH`). Needs
+**docker** or **podman** to build and run (`sluice init` needs neither).
 
 ## Use
 
