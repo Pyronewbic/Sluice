@@ -38,7 +38,9 @@ config first; in CI, a bare `sluice` scaffolds and stops unless `SLUICE_YES=1`. 
 the stack, run command, and ports; `learn` fills the one thing you can't guess statically -
 the egress allowlist - by observing what the app reached. It covers **Node**
 (npm/pnpm/yarn/bun + framework port), **Python** (pip/poetry/uv + framework), **Deno**,
-**Ruby/Rails**, **Rust**, and **Go**.
+**Ruby/Rails**, **Rust**, and **Go**. Any other language runs too, just without
+auto-detection: set `SLUICE_EXTRA_PKGS` (the toolchain's Wolfi apk packages) and
+`SLUICE_RUN_CMD`, and the generic base handles the rest.
 
 The full command set:
 
