@@ -15,6 +15,12 @@ CORE="$ROOT/core"
 
 die() { echo "[sluice] $*" >&2; exit 1; }
 
+# --- minimal JSON emit (host jq is not assumed; fields here are short/flat) ------
+# Escape a string for a JSON value: backslash + doublequote, and flatten stray control chars.
+_json_esc() { local s="$1"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; s="${s//$'\t'/ }"; s="${s//$'\n'/ }"; s="${s//$'\r'/}"; printf '%s' "$s"; }
+# Emit a JSON array of strings from newline-separated stdin (blank lines skipped).
+_json_arr() { local first=1 line; printf '['; while IFS= read -r line; do [ -n "$line" ] || continue; [ "$first" = 1 ] && first=0 || printf ','; printf '"%s"' "$(_json_esc "$line")"; done; printf ']'; }
+
 # --- version + help ------------------------------------------------------------
 SLUICE_VERSION="0.5.0"   # fallback when not a git checkout
 sluice_version() {       # git tag if $ROOT is our own checkout, else the baked constant
@@ -68,8 +74,9 @@ Build & lifecycle:
   stop             remove the project's container
 
 Inspect:
-  doctor           health check: engine, image, allowlist, blocked egress
-  ls               list all sluice boxes on this machine (name, status, stack, path)
+  doctor           health check: engine, image, allowlist, blocked egress (--json)
+  ls               list all sluice boxes on this machine (name, status, stack, path; --json)
+  egress           show what this box reached vs. was blocked (--json)
   logs             follow firewall + readiness logs
   lock             record installed apk+npm versions to sluice.lock (supply-chain audit)
                    --check fails on drift (CI gate); --sbom emits a CycloneDX SBOM
@@ -172,6 +179,26 @@ reached_new() {
   done
 }
 
+# --- `sluice egress [--json]`: the box's egress audit record (reached vs. blocked) ----------
+# reached_hosts = what the box actually reached; blocked_new = genuinely-denied hosts (not in the
+# allowlist, and minus the transient startup-race noise doctor also filters). A control-plane feed.
+cmd_egress() {
+  local mode="${1:-}" allowed blocked
+  running || die "no running sandbox. Start it ('sluice'), exercise it, then run 'sluice egress'."
+  allowed="$(reached_hosts 2>/dev/null || true)"
+  blocked="$(blocked_new 2>/dev/null || true)"
+  if [ "$mode" = --json ]; then
+    printf '{"box":"%s","allowed":%s,"blocked":%s}\n' "$(_json_esc "$container")" \
+      "$(printf '%s\n' "$allowed" | _json_arr)" "$(printf '%s\n' "$blocked" | _json_arr)"
+    return 0
+  fi
+  echo "[sluice] egress for $container:"
+  # shellcheck disable=SC2086
+  { [ -n "$allowed" ] && { echo "  reached:"; printf '    %s\n' $allowed; }; } || echo "  reached:  (none yet)"
+  # shellcheck disable=SC2086
+  { [ -n "$blocked" ] && { echo "  blocked:"; printf '    %s\n' $blocked; }; } || echo "  blocked:  (none)"
+}
+
 # --- sluice.lock: a committable inventory of the built image -------------------
 # base ref + every apk (name/version/checksum) + every global npm pkg. Introspects the image
 # without starting the sandbox (awk/jq run in-image via a stdin heredoc); sorted for stable diffs.
@@ -248,6 +275,7 @@ SBOM
 # --- `sluice doctor`: one-shot health + why-egress-is-blocked report ------------
 _doc() { printf '  %-10s %s\n' "$1" "$2"; }
 cmd_doctor() {
+  [ "${1:-}" = --json ] && { cmd_doctor_json; return $?; }
   local eng="" v blocked
   printf 'sluice doctor\n'
   if   [ -n "${SLUICE_ENGINE:-}" ]; then eng="$SLUICE_ENGINE"
@@ -308,6 +336,7 @@ cmd_doctor() {
   _doc allowlist "${SLUICE_ALLOW_DOMAINS:-(none beyond base)}"
   _doc "" "base: $(base_domains)"
   [ -n "${SLUICE_ALLOW_IPS:-}" ] && _doc "" "ips:  $SLUICE_ALLOW_IPS"
+  [ -n "${SLUICE_POLICY_URL:-}" ] && _doc policy "$SLUICE_POLICY_URL"
 
   if [ -n "${SLUICE_ENV:-}" ]; then
     for v in $SLUICE_ENV; do
@@ -329,22 +358,75 @@ cmd_doctor() {
   fi
 }
 
+# `sluice doctor --json`: the machine-readable posture (kept separate so the human path above is
+# untouched; only one branch runs per invocation, so the shared gathering isn't double-work).
+cmd_doctor_json() {
+  local eng="" engine_ver=""
+  if   [ -n "${SLUICE_ENGINE:-}" ]; then eng="$SLUICE_ENGINE"
+  elif command -v docker >/dev/null 2>&1; then eng=docker
+  elif command -v podman >/dev/null 2>&1; then eng=podman; fi
+  if [ -n "$eng" ] && command -v "$eng" >/dev/null 2>&1; then ENGINE="$eng"; engine_ver="$("$eng" --version 2>/dev/null | head -1)"; else eng=""; fi
+
+  if ! PROJECT_CONFIG="$(find_config)"; then
+    printf '{"engine":"%s","config":null}\n' "$(_json_esc "$engine_ver")"; return 0
+  fi
+  PROJECT_DIR="$(cd "$(dirname "$PROJECT_CONFIG")" && pwd)"
+  # shellcheck disable=SC1090
+  . "$PROJECT_CONFIG"
+  derive_names
+
+  local img_built=false img_stale=false
+  if [ -n "$eng" ] && "$eng" image inspect "$tag" >/dev/null 2>&1; then
+    img_built=true
+    [ "$("$eng" image inspect -f '{{ index .Config.Labels "sluice.confighash" }}' "$tag" 2>/dev/null || true)" = "$(config_hash)" ] || img_stale=true
+  fi
+
+  local lock="none"
+  if [ -f "$PROJECT_DIR/sluice.lock" ]; then
+    if [ -n "$eng" ] && "$eng" image inspect "$tag" >/dev/null 2>&1; then
+      [ -z "$(lock_drift 2>/dev/null || true)" ] && lock="in-sync" || lock="drifted"
+    else lock="present-unbuilt"; fi
+  fi
+
+  local running_b=false blocked=""
+  if [ -n "$eng" ] && running; then running_b=true; blocked="$(blocked_new 2>/dev/null || true)"; fi
+
+  local nsd=0 _sd; for _sd in ${SLUICE_STATE_DIRS:-}; do nsd=$((nsd+1)); done
+
+  local auth_json="[" first=1 v setv
+  for v in ${SLUICE_ENV:-}; do
+    [ "$first" = 1 ] && first=0 || auth_json="$auth_json,"
+    setv=false; [ -n "${!v:-}" ] && setv=true
+    auth_json="$auth_json{\"var\":\"$(_json_esc "$v")\",\"set\":$setv}"
+  done
+  auth_json="$auth_json]"
+
+  # shellcheck disable=SC2086
+  printf '{"engine":"%s","config":"%s","name":"%s","desc":"%s","image":{"tag":"%s","built":%s,"stale":%s},"lock":"%s","allowlist":%s,"base":%s,"allow_ips":%s,"base_image":"%s","policy_url":"%s","state_dirs":%s,"auth":%s,"egress":{"running":%s,"blocked":%s}}\n' \
+    "$(_json_esc "$engine_ver")" "$(_json_esc "$PROJECT_CONFIG")" "$(_json_esc "$tag")" "$(_json_esc "${SLUICE_DESC:-}")" \
+    "$(_json_esc "$tag")" "$img_built" "$img_stale" "$lock" \
+    "$(printf '%s\n' ${SLUICE_ALLOW_DOMAINS:-} | _json_arr)" "$(base_domains | tr ' ' '\n' | _json_arr)" \
+    "$(printf '%s\n' ${SLUICE_ALLOW_IPS:-} | _json_arr)" "$(_json_esc "${SLUICE_BASE_IMAGE:-}")" \
+    "$(_json_esc "${SLUICE_POLICY_URL:-}")" "$nsd" "$auth_json" "$running_b" "$(printf '%s\n' $blocked | _json_arr)"
+}
+
 # --- `sluice ls`: a derived, read-only table of every built sluice box on this machine ----
 # Boxes are identified by the sluice.confighash label (baked since early versions); path/stack/desc
 # come from labels baked at build, so nothing is sourced here. The box matching $PWD is marked '*'.
 cmd_ls() {
-  local imgs here=""
+  local mode="${1:-}" imgs here=""
   imgs="$("$ENGINE" image ls --filter label=sluice.confighash --format '{{.Repository}}' 2>/dev/null | grep -v '^<none>$' | sort -u)"
   if [ -z "$imgs" ]; then
+    [ "$mode" = --json ] && { echo '[]'; return 0; }
     echo "[sluice] no sluice boxes built yet - run 'sluice' in a project."
     return 0
   fi
   # Current box = the project dir for $PWD's config (no sourcing), matched on the sluice.project label.
   if here="$(find_config 2>/dev/null)"; then here="$(cd "$(dirname "$here")" && pwd)"; else here=""; fi
 
-  local names=() stats=() stacks=() paths=() descs=() marks=()
-  local wname=4 wstat=6 wstack=5 wpath=4   # column min-widths (header lengths)
-  local name proj stack desc run status dpath mark
+  # Gather raw label values per box; display transforms (~, -, widths) happen at render.
+  local names=() stats=() projs=() stacks=() descs=() curs=()
+  local name proj stack desc run status cur
   while IFS= read -r name; do
     [ -n "$name" ] || continue
     proj="$( "$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.project" }}' "$name" 2>/dev/null || true)"
@@ -354,24 +436,45 @@ cmd_ls() {
     if   [ "$run" = true ]; then status=running
     elif [ -n "$run" ];     then status=stopped
     else                         status=built; fi
-    dpath="$proj"; case "$dpath" in "$HOME"/*) dpath="~${dpath#"$HOME"}";; "$HOME") dpath="~";; esac
-    [ -n "$dpath" ] || dpath="-"; [ -n "$stack" ] || stack="-"; [ -n "$desc" ] || desc="-"
-    mark=" "; [ -n "$here" ] && [ "$proj" = "$here" ] && mark="*"
-    marks+=("$mark"); names+=("$name"); stats+=("$status"); stacks+=("$stack"); paths+=("$dpath"); descs+=("$desc")
-    [ ${#name}   -gt "$wname"  ] && wname=${#name}
-    [ ${#status} -gt "$wstat"  ] && wstat=${#status}
-    [ ${#stack}  -gt "$wstack" ] && wstack=${#stack}
-    [ ${#dpath}  -gt "$wpath"  ] && wpath=${#dpath}
+    cur=false; [ -n "$here" ] && [ "$proj" = "$here" ] && cur=true
+    names+=("$name"); stats+=("$status"); projs+=("$proj"); stacks+=("$stack"); descs+=("$desc"); curs+=("$cur")
   done <<EOF
 $imgs
 EOF
 
+  local i
+  if [ "$mode" = --json ]; then
+    printf '['
+    for i in "${!names[@]}"; do
+      [ "$i" -gt 0 ] && printf ','
+      printf '{"name":"%s","status":"%s","stack":"%s","path":"%s","description":"%s","current":%s}' \
+        "$(_json_esc "${names[$i]}")" "$(_json_esc "${stats[$i]}")" "$(_json_esc "${stacks[$i]}")" \
+        "$(_json_esc "${projs[$i]}")" "$(_json_esc "${descs[$i]}")" "${curs[$i]}"
+    done
+    printf ']\n'; return 0
+  fi
+
+  # human table: compute display values + column widths
+  local wname=4 wstat=6 wstack=5 wpath=4
+  local dpaths=() dstacks=() ddescs=() marks=() dpath dstack ddesc mark
+  for i in "${!names[@]}"; do
+    dpath="${projs[$i]}"; case "$dpath" in "$HOME"/*) dpath="~${dpath#"$HOME"}";; "$HOME") dpath="~";; esac
+    [ -n "$dpath" ] || dpath="-"
+    dstack="${stacks[$i]}"; [ -n "$dstack" ] || dstack="-"
+    ddesc="${descs[$i]}";   [ -n "$ddesc" ]  || ddesc="-"
+    mark=" "; [ "${curs[$i]}" = true ] && mark="*"
+    dpaths+=("$dpath"); dstacks+=("$dstack"); ddescs+=("$ddesc"); marks+=("$mark")
+    [ ${#names[$i]} -gt "$wname"  ] && wname=${#names[$i]}
+    [ ${#stats[$i]} -gt "$wstat"  ] && wstat=${#stats[$i]}
+    [ ${#dstack}    -gt "$wstack" ] && wstack=${#dstack}
+    [ ${#dpath}     -gt "$wpath"  ] && wpath=${#dpath}
+  done
+
   echo "sluice boxes"
   printf '  %-*s  %-*s  %-*s  %-*s  %s\n' "$wname" NAME "$wstat" STATUS "$wstack" STACK "$wpath" PATH DESCRIPTION
-  local i
   for i in "${!names[@]}"; do
     printf '%s %-*s  %-*s  %-*s  %-*s  %s\n' "${marks[$i]}" \
-      "$wname" "${names[$i]}" "$wstat" "${stats[$i]}" "$wstack" "${stacks[$i]}" "$wpath" "${paths[$i]}" "${descs[$i]}"
+      "$wname" "${names[$i]}" "$wstat" "${stats[$i]}" "$wstack" "${dstacks[$i]}" "$wpath" "${dpaths[$i]}" "${ddescs[$i]}"
   done
 }
 
@@ -625,10 +728,14 @@ find_config() {
 }
 
 # `sluice doctor`: self-contained health report (resolves its own engine/config), runs anywhere.
-if [ "${1:-}" = doctor ]; then cmd_doctor; exit 0; fi
+if [ "${1:-}" = doctor ]; then
+  case "${2:-}" in ""|--json) cmd_doctor "${2:-}"; exit 0 ;; *) die "usage: sluice doctor [--json]" ;; esac
+fi
 
 # `sluice ls`: global box listing (resolves its own engine above; no project config needed).
-if [ "${1:-}" = ls ]; then cmd_ls; exit 0; fi
+if [ "${1:-}" = ls ]; then
+  case "${2:-}" in ""|--json) cmd_ls "${2:-}"; exit 0 ;; *) die "usage: sluice ls [--json]" ;; esac
+fi
 
 # --- `sluice agent [name]`: write the agents/<name>.config.sh preset, then build+run ----
 if [ "${1:-}" = agent ]; then
@@ -656,7 +763,7 @@ if ! PROJECT_CONFIG="$(find_config)"; then
   # no config: scaffold for build/run commands; others have nothing to act on.
   case "${1:-run-default}" in
     run-default|build|rebuild|shell|run|smoke) ;;
-    stop|logs|learn) die "no sluice.config.sh found in $PWD or any parent - nothing to ${1}." ;;
+    stop|logs|learn|egress) die "no sluice.config.sh found in $PWD or any parent - nothing to ${1}." ;;
     *) die "unknown command: ${1:-} - run 'sluice help' for usage." ;;
   esac
   # zero-config: scaffold, preview, then confirm before build/run (CI stops unless SLUICE_YES=1).
@@ -754,6 +861,20 @@ start() {
     --sysctl net.ipv4.conf.all.route_localnet=1
     --sysctl net.ipv6.conf.all.disable_ipv6=1
     --sysctl net.ipv6.conf.default.disable_ipv6=1)
+
+  # SLUICE_POLICY_URL: fetch a central allowlist on the host (free egress, before the box locks down)
+  # and merge it into the box's egress policy at run. Plain text, one host per line, # comments OK.
+  # Additive + host-trusted (you author the config); a fetch failure warns and uses the local allowlist.
+  if [ -n "${SLUICE_POLICY_URL:-}" ]; then
+    local policy_raw policy_hosts
+    if policy_raw="$(curl -fsSL --max-time 10 "$SLUICE_POLICY_URL" 2>/dev/null)"; then
+      policy_hosts="$(printf '%s\n' "$policy_raw" | sed 's/#.*//' | awk '{$1=$1};1' | grep -v '^$' | tr '\n' ' ' | sed 's/ *$//')"
+      [ -n "$policy_hosts" ] && run_args+=(-e "SLUICE_POLICY_ALLOW=$policy_hosts")
+      echo "[sluice] egress policy from $SLUICE_POLICY_URL ($(printf '%s' "$policy_hosts" | wc -w | tr -d ' ') hosts)"
+    else
+      echo "[sluice] WARNING: could not fetch SLUICE_POLICY_URL=$SLUICE_POLICY_URL - using the local allowlist" >&2
+    fi
+  fi
 
   # Mount the project dir rw; SLUICE_WORKDIR tells the entrypoint to chown it to sluice (Linux uid).
   run_args+=(-v "$PROJECT_DIR":"$PROJECT_DIR" -e "SLUICE_WORKDIR=$PROJECT_DIR")
@@ -985,6 +1106,13 @@ case "${1:-run-default}" in
       --audit) cmd_learn_audit; exit $? ;;
       "")      cmd_learn; exit 0 ;;
       *)       die "usage: sluice learn [--print | --apply | --audit]" ;;
+    esac
+    ;;
+  egress)
+    shift
+    case "${1:-}" in
+      ""|--json) cmd_egress "${1:-}"; exit $? ;;
+      *)         die "usage: sluice egress [--json]" ;;
     esac
     ;;
   lock)

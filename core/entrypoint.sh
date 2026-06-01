@@ -9,6 +9,8 @@ set -e
   printf '%s\n' github.com api.github.com codeload.github.com objects.githubusercontent.com \
                 registry.npmjs.org registry.yarnpkg.com
   for d in ${SLUICE_ALLOW_DOMAINS:-}; do printf '%s\n' "$d"; done
+  # Central egress policy hosts (SLUICE_POLICY_URL), fetched + passed by the launcher at run.
+  for d in ${SLUICE_POLICY_ALLOW:-}; do printf '%s\n' "$d"; done
 } > /etc/squid/allowlist.txt
 
 # Audit mode (learn --audit): open egress to ALL HTTP/HTTPS hosts so one run logs every host the
