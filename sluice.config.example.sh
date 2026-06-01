@@ -62,6 +62,12 @@ SLUICE_ALLOW_DOMAINS=""
 # bypassing the hostname proxy. Space-separated. Keep minimal. e.g. "203.0.113.7/32"
 SLUICE_ALLOW_IPS=""
 
+# Central egress policy: a URL (http/https/file) returning a plain-text allowlist (one host per
+# line, # comments OK), fetched on the HOST at run and merged into this box's allowlist. Additive
+# only (it can't weaken the sandbox) and host-trusted - keep it a URL you control. e.g. a shared
+# org allowlist. Leave empty for none.
+SLUICE_POLICY_URL=""
+
 # --- serving --------------------------------------------------------------------
 
 # TCP ports to publish to the host (bound to 127.0.0.1 -> reach via localhost only).

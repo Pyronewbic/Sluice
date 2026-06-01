@@ -93,8 +93,9 @@ sluice update          # rebuild from scratch (re-resolve packages) + refresh sl
 sluice stop            # remove the project's container
 
 # Inspect
-sluice doctor          # health check: engine, image, allowlist, blocked egress
-sluice ls              # list all sluice boxes on this machine (name, status, stack, path)
+sluice doctor          # health check: engine, image, allowlist, blocked egress (--json)
+sluice ls              # list all sluice boxes on this machine (name, status, stack, path; --json)
+sluice egress          # show what this box reached vs. was blocked (--json)
 sluice logs            # follow firewall/readiness logs
 sluice lock            # record installed apk+npm versions to sluice.lock (supply-chain audit)
 sluice smoke           # build (if needed) + run the image smoke test
@@ -127,6 +128,9 @@ sluice boxes
 * sluice-blog  running   node/astro  ~/code/blog  personal blog
   sluice-api   built     python      ~/code/api   internal API
 ```
+
+`ls`, `doctor`, and `egress` all take `--json` for scripting and CI - e.g. `sluice egress --json`
+emits the box's reached-vs-blocked hosts as a machine-readable audit record.
 
 `sluice lock` writes a committable `sluice.lock` — a full inventory of the image (every apk +
 global npm package with its version and digest) so what's in your sandbox is reviewable in a
@@ -189,6 +193,7 @@ Everything is driven by `sluice.config.sh`. Copy [`sluice.config.example.sh`](sl
 | `SLUICE_SETUP_ROOT_CMDS` | build-time setup as root (free egress) - provision outside `$HOME`, e.g. a `/nix` store |
 | `SLUICE_ALLOW_DOMAINS` | runtime egress domains, on top of the base |
 | `SLUICE_ALLOW_IPS` | runtime egress IPs/CIDRs |
+| `SLUICE_POLICY_URL` | URL of a plain-text allowlist fetched on the host and merged in (additive, host-trusted) |
 | `SLUICE_PORTS` | TCP ports to publish (firewall opens a matching inbound rule) |
 | `SLUICE_RUN_CMD` | the command a bare `sluice` runs (default: a shell) |
 | `SLUICE_ENV` | host env var names to forward into the session |

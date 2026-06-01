@@ -87,6 +87,11 @@ file or tool result steering an agent, or simply buggy agent code - any of which
    (no `SLUICE_ENV`/`SLUICE_PRELAUNCH`/state dirs), **ephemeral** (a throwaway container, torn down
    after), loudly warned + confirm-gated, and never the default. Non-HTTP ports and IPv6 stay
    default-DROP. Use it only on code you trust.
+10. **`SLUICE_POLICY_URL` is host-trusted and additive.** It's fetched on the **host** (before the box
+    locks down) and can only **add** allowlist hosts - it never weakens the non-HTTP/IPv6/non-root/
+    direct-IP guarantees. But the hosts it adds carry the same **allowed-host laundering** risk as any
+    allowlist entry (item 2), and a malicious policy URL could add an exfil host - so point it only at a
+    URL you control, same trust class as `SLUICE_PRELAUNCH` (you author the config).
 
 ## Residual risk, one line
 
