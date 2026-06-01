@@ -827,6 +827,7 @@ cmd_init() {
     local pm="pip"
     if   [ -f "$dir/uv.lock" ]; then pm="uv"; extra_pkgs="$extra_pkgs uv"
     elif [ -f "$dir/poetry.lock" ] || _init_py_has 'tool\.poetry'; then pm="poetry"; extra_pkgs="$extra_pkgs poetry"
+    elif [ -f "$dir/Pipfile" ]; then pm="pipenv"; setup="pip install --user pipenv"   # baked at build (free egress); no reliable Wolfi apk
     fi
 
     local entry="" f
@@ -852,6 +853,7 @@ cmd_init() {
       pip)
         if [ -n "$inst_target" ]; then run_cmd="export PATH=\"\$HOME/.local/bin:\$PATH\"; pip install --user $inst_target && $fwcmd"
         else                           run_cmd="export PATH=\"\$HOME/.local/bin:\$PATH\"; $fwcmd"; fi ;;
+      pipenv) run_cmd="export PATH=\"\$HOME/.local/bin:\$PATH\"; pipenv install && pipenv run $fwcmd" ;;
       poetry) run_cmd="poetry install && poetry run $fwcmd" ;;
       uv)     run_cmd="uv sync && uv run $fwcmd" ;;
     esac
@@ -889,6 +891,8 @@ cmd_init() {
   elif [ -f "$dir/go.mod" ]; then
     stack="go"; detected="go"; extra_pkgs="go"; allow="proxy.golang.org sum.golang.org"; run_cmd="go run ."
   fi
+
+  [ "$stack" = generic ] && note="no known stack detected - set SLUICE_RUN_CMD and SLUICE_EXTRA_PKGS for your toolchain (or re-run from your project's root)."
 
   # secondary manifests (polyglot / monorepo): flag them, don't try to merge stacks
   local others=""

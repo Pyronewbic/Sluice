@@ -78,6 +78,12 @@ d="$(dir py-ver)"
 printf '3.11\n' > "$d/.python-version"; printf 'requests\n' > "$d/requirements.txt"; init "$d"
 has "$d" "py/version 3.11"       'SLUICE_EXTRA_PKGS="python-3.11 py3.11-pip"'
 
+d="$(dir py-pipenv)"
+printf '[[source]]\nurl = "https://pypi.org/simple"\n[packages]\nflask = "*"\n' > "$d/Pipfile"; : > "$d/app.py"; init "$d"
+has "$d" "py/pipenv setup"       'SLUICE_SETUP_CMDS="pip install --user pipenv"'
+has "$d" "py/pipenv run cmd"     'pipenv install && pipenv run flask --app app run'
+has "$d" "py/pipenv detected"    'detected: python-3.12/pipenv (flask)'
+
 # ---- deno ----
 d="$(dir deno)"
 printf '{"tasks":{"dev":"deno run -A main.ts"}}\n' > "$d/deno.json"; init "$d"
@@ -110,6 +116,7 @@ has "$d" "go run cmd"            'SLUICE_RUN_CMD="go run ."'
 # ---- generic + polyglot ----
 d="$(dir generic)"; init "$d"
 has "$d" "generic bash"          'SLUICE_RUN_CMD="bash"'
+has "$d" "generic note"          'no known stack detected'
 
 d="$(dir poly)"
 printf '{"scripts":{"dev":"vite"},"devDependencies":{"vite":"^5"}}\n' > "$d/package.json"
