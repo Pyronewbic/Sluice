@@ -102,8 +102,9 @@ fumbling first contact when the post drives a skeptical, Linux-heavy dev/securit
       drift caught -> SBOM with purl + integrity hash). The probe and learn demos were merged into the cage
       hero, and doctor was split into its own clip; the standalone `agent-live` tape was removed; the live
       agent demo still wants a real key, so record it live when cutting the post.
-- [ ] **Top-of-README quickstart** - install -> one command -> see the block, in ~10 seconds, so the
-      click-through lands fast. (Landed 2026-06-01.)
+- [x] **Top-of-README quickstart (landed 2026-06-01).** Install -> one command -> see the block in
+      ~10 seconds: a one-paragraph value prop, then the hero gif (the firewall block, above the fold),
+      then the copy-paste `sluice agent claude` / bare `sluice` quickstart.
 - [ ] **First-comment text** for the post (repo link + a 3-line "how it works") - LinkedIn suppresses
       body links, so the link goes in the first comment.
 - [x] **Issue templates + CONTRIBUTING (landed 2026-06-02).** Bug + feature issue forms (the bug form

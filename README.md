@@ -34,19 +34,6 @@ brew install Pyronewbic/tap/sluice
 The installer symlinks `bin/sluice` into `~/.local/bin` (ensure it's on `PATH`). Needs
 **docker** or **podman** to build and run (`sluice init` needs neither).
 
-### Updating
-
-Update the **sluice CLI itself** (not to be confused with `sluice update`, which rebuilds your
-project's sandbox) via your installer:
-
-```bash
-brew upgrade sluice                                # stable
-brew upgrade --fetch-HEAD Pyronewbic/tap/sluice    # dev stream (latest main)
-curl -fsSL https://raw.githubusercontent.com/Pyronewbic/Sluice/main/install.sh | sh   # script install: re-run to git-pull
-```
-
-`sluice version` flags a newer release when one is out (`SLUICE_NO_UPDATE_CHECK=1` skips the check).
-
 ## Quickstart
 
 Sandbox a coding agent - non-root, sees only this repo, behind the egress firewall, so YOLO mode is
@@ -66,6 +53,19 @@ cd your-project
 sluice            # detect the stack, scaffold a config, build + run it sandboxed
 sluice egress     # what it reached vs. what the firewall blocked
 ```
+
+## Updating
+
+Update the **sluice CLI itself** (not to be confused with `sluice update`, which rebuilds your
+project's sandbox) via your installer:
+
+```bash
+brew upgrade sluice                                # stable
+brew upgrade --fetch-HEAD Pyronewbic/tap/sluice    # dev stream (latest main)
+curl -fsSL https://raw.githubusercontent.com/Pyronewbic/Sluice/main/install.sh | sh   # script install: re-run to git-pull
+```
+
+`sluice version` flags a newer release when one is out (`SLUICE_NO_UPDATE_CHECK=1` skips the check).
 
 ## Use
 
