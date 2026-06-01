@@ -1000,6 +1000,20 @@ PROJECT_DIR="$(cd "$(dirname "$PROJECT_CONFIG")" && pwd)"
 # --- per-project image + container names (SLUICE_NAME overrides the dir-name default) ----
 derive_names
 
+# Pre-run nudge: a config that declares auth vars (SLUICE_ENV) but has none set on the host - and no
+# persisted session to fall back on - will likely fail to authenticate, since the key is forwarded
+# from your shell (never baked) and a browser OAuth login can't complete headless. Warn, don't block;
+# run-default path only (not build/lock or an explicit `sluice run <cmd>`).
+warn_auth_unset() {
+  [ -n "${SLUICE_ENV:-}" ] || return 0
+  local v; for v in $SLUICE_ENV; do [ -n "${!v:-}" ] && return 0; done
+  local store="${XDG_STATE_HOME:-$HOME/.local/state}/sluice/$slug"
+  [ -n "${SLUICE_STATE_DIRS:-}" ] && [ -d "$store" ] && return 0
+  echo "${E_YEL}[sluice] note:${E_RST} none of [$SLUICE_ENV] are set on the host - export one before running." >&2
+  echo "         the key is forwarded from your shell (never baked); a browser OAuth login can't complete in the sandbox." >&2
+}
+case "${1:-run-default}" in run-default) warn_auth_unset ;; esac
+
 # --- build: assemble a temp context (core + this project's config) and build ----
 # Verify a published base image's cosign signature (keyless/OIDC). Soft by default: warn if
 # cosign is absent or the image is unsigned; SLUICE_REQUIRE_SIGNED=1 makes either case fatal.

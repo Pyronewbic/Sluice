@@ -1,0 +1,22 @@
+name: agents smoke
+
+# Weekly cred-free smoke of every coding-agent preset: build each, confirm the agent CLI installs and
+# runs, its declared API hosts are reachable through the proxy, a non-allowlisted host is blocked, and
+# the auth env var is forwarded. Catches preset drift (a renamed package, a moved/changed egress host,
+# a removed binary) before a user hits it. NO secrets -> the live API round-trips skip themselves, so
+# there's no API spend; the full live verification stays in verify-agents.yml (manual, with secrets).
+# Heavy (7 real agent builds) -> weekly, not on every PR. The PR gate stays acceptance.yml.
+on:
+  schedule:
+    - cron: "0 7 * * 1"   # Mondays 07:00 UTC
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    name: agent presets (cred-free)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify agent presets
+        run: ./test/verify-agents.sh   # AGENTS unset -> all 7; no key set -> live probes skip

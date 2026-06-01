@@ -200,6 +200,12 @@ and defaults to the full set.
 per-project host store (`~/.local/state/sluice/<name>`) into the agent home, so each preset's
 sessions/history/auth survive a rebuild, `sluice stop`, or reboot (e2e-verified). `sluice doctor`
 reports it.
+**Drift caught proactively (2026-06-02).** The cred-free preset checks (install + declared-host
+reachability + block + auth-forward) now run weekly on a schedule (`.github/workflows/agents-smoke.yml`),
+so a rotted preset (renamed package, moved egress host) is caught before a user hits it - not just on a
+manual `verify-agents` run. A pre-run `note` also fires if an agent's `SLUICE_ENV` key is unset with no
+saved session, instead of failing confusingly inside the box.
+
 **Pending.** The live authenticated round-trips for amp/cursor/codex/gemini are one credential
 away (run the harness with the key, or add a repo secret) - the only remaining #3 loose end.
 
