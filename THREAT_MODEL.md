@@ -52,10 +52,11 @@ file or tool result steering an agent, or simply buggy agent code - any of which
   `sluice` verifies the keyless signature before building on it (`SLUICE_REQUIRE_SIGNED=1` to
   enforce). The image carries no private key (the splice cert is generated per-container).
   Your declared `SLUICE_EXTRA_PKGS` are your own layer on top - `sluice lock` records a
-  committable inventory (every apk + npm package with its version + digest) so you can review
-  and drift-detect exactly what's installed (`sluice doctor` flags drift; `sluice lock --check`
-  *enforces* it as a CI gate, and `sluice lock --sbom` emits a CycloneDX SBOM for scanners). It's
-  an audit/drift aid, not a reproducibility guarantee (Wolfi apk is a rolling repo).
+  committable inventory (every apk, npm, pip, gem, and go package with its version + digest) so you can
+  review and drift-detect exactly what's installed (`sluice doctor` flags drift; `sluice lock --check`
+  *enforces* it as a CI gate, and `sluice lock --sbom` emits a CycloneDX SBOM, with apk integrity
+  hashes, for scanners). It's an audit/drift aid, not a reproducibility guarantee (Wolfi apk is a
+  rolling repo).
 
 ## What it does NOT defend against (be explicit)
 
@@ -70,8 +71,12 @@ file or tool result steering an agent, or simply buggy agent code - any of which
    unfiltered by hostname. Keep the list minimal and specific.
 4. **A squid vulnerability or a loose allowlist.** The egress policy now rests on squid +
    the allowlist file. A squid CVE or an over-broad `SLUICE_ALLOW_DOMAINS` is the trust anchor
-   to guard. (squid runs as its own uid; only that uid is granted direct egress, so app
-   code can't reach the network except through it.)
+   to guard - including the `.domain` wildcards `sluice learn` can write (a leading-dot entry
+   matches *every* subdomain, so it's offered, never forced; prefer exact hosts when you can).
+   `learn` applies your picks live (an in-place squid reload, no rebuild), but only ever **adds**
+   the hosts you chose - it never weakens the non-HTTP/IPv6/non-root/direct-IP guarantees. (squid
+   runs as its own uid; only that uid is granted direct egress, so app code can't reach the network
+   except through it.)
 5. **Destruction within the project dir.** It's mounted read-write by design; the sluice
    can corrupt/delete your working tree (git history on the host is your backstop).
 6. **Whatever `SLUICE_PRELAUNCH` does.** It runs on the **host** and is fully trusted - a

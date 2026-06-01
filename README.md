@@ -6,16 +6,21 @@
 [![Release](https://img.shields.io/github/v/release/Pyronewbic/Sluice?color=blue)](https://github.com/Pyronewbic/Sluice/releases/latest)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-A sandboxed, firewalled, isolated container for any project - drop a `sluice.config.sh`
-in a directory and run `sluice`. The sluice runs untrusted code/dependencies behind a
-**default-DROP egress firewall** (only allowlisted hosts are reachable), as a
-**non-root user**, seeing **only that project directory**. Declare what software the
-project needs, what it may reach on the network, what ports it serves, and the command
-to run - sluice builds the image and runs it.
+Run any project - or a coding agent in full YOLO mode - in a locked-down container that
+**can't read your secrets, reach outside the repo, or phone home**. sluice runs it as a
+**non-root user**, seeing **only that project directory**, behind a **default-DROP egress
+firewall** (only the hosts you allow, by name, are reachable) - and ends every run with a
+**receipt** of exactly what it reached and what the firewall blocked.
+
+Drop a `sluice.config.sh` in a directory and run `sluice`, or just run `sluice` and let it
+detect the stack, scaffold the config, and build + run it. You declare what the project
+needs, what it may reach, what ports it serves, and the command to run.
 
 **Runs entirely on your machine** - no account, no telemetry, nothing uploaded. The only
 network call sluice itself makes is an opt-out check to GitHub for a newer release
 (`SLUICE_NO_UPDATE_CHECK=1` to disable).
+
+<p align="center"><img src="assets/cage-demo.gif" width="800" alt="proving the sandbox with real commands: uid 1000 (non-root) and the host SSH key isn't mounted; the app runs and the egress receipt shows api.github.com reached while the firewall blocks google and api.openai.com; then sluice learn collapses the two google subdomains to a .google.com wildcard and skips openai (live, no rebuild), and the next run's receipt shows google reached while openai stays blocked"></p>
 
 ## Install
 
@@ -42,6 +47,26 @@ curl -fsSL https://raw.githubusercontent.com/Pyronewbic/Sluice/main/install.sh |
 
 `sluice version` flags a newer release when one is out (`SLUICE_NO_UPDATE_CHECK=1` skips the check).
 
+## Quickstart
+
+Sandbox a coding agent - non-root, sees only this repo, behind the egress firewall, so YOLO mode is
+defensible:
+
+```bash
+brew install Pyronewbic/tap/sluice     # needs docker or podman
+export ANTHROPIC_API_KEY=sk-ant-...     # forwarded into the sandbox, never baked into the image
+cd your-project
+sluice agent claude                     # also: codex, gemini, cursor, aider, opencode, amp
+```
+
+Or run any project sandboxed, then see where its egress hit a wall:
+
+```bash
+cd your-project
+sluice            # detect the stack, scaffold a config, build + run it sandboxed
+sluice egress     # what it reached vs. what the firewall blocked
+```
+
 ## Use
 
 From anywhere inside a project with a `sluice.config.sh` (found by walking up, like git
@@ -51,20 +76,28 @@ detects the stack, scaffolds one, shows what it'll do, and on confirm builds and
 ```bash
 cd any-repo
 sluice           # no config -> scaffold from detection, then (on [Y/n]) build + run
-sluice learn     # proposes the hosts to allow (harvested from what the proxy blocked)
-sluice rebuild   # apply the allowlist - now sandboxed + firewalled, and working
+sluice learn     # review the hosts the proxy blocked; allow the ones you pick - live, no rebuild
 ```
 
-When a run exits, sluice prints a one-line hint of any hosts it blocked, so a failed fetch
-points you straight at `sluice learn`. For a fuller picture, `sluice doctor` reports the
-engine, image freshness, the effective allowlist, auth env, and the hosts blocked this run -
-and works even before anything is built.
+When a run exits, sluice prints an **egress receipt**: the hosts it reached (with hit counts)
+and any it tried but the firewall blocked - so you see at a glance everything your code or
+agent talked to, and a failed fetch points you straight at `sluice learn`. `sluice egress`
+shows the same per-host on demand, and `sluice doctor` reports the engine, the mounted project dir,
+image freshness, published ports, the effective allowlist, auth env, and the hosts your last run was
+blocked from - even before anything is built.
 
-`learn` works in enforce mode (it reads what the proxy blocked, never opening egress). For the
-one case that can't reach - trusted code whose fetcher aborts on the *first* blocked host -
-`sluice learn --audit` runs the command once in a throwaway, **credential-stripped** container with
-egress open to all HTTP/HTTPS hosts, then proposes the full allowlist from everything it reached.
-It's loudly warned and confirm-gated; see [`THREAT_MODEL.md`](THREAT_MODEL.md).
+<p align="center"><img src="assets/doctor-demo.gif" width="680" alt="sluice doctor prints a one-screen health panel: the container engine, the mounted project dir (the box's only host path), image freshness (config current), the published port, the auth env var (set), and the hosts the last run was blocked from (api.openai.com) with a 'sluice learn' hint - green for ok, red for blocked"></p>
+
+`learn` is a **per-host review**, not a rubber-stamp: it lists the hosts the proxy blocked during
+the last run (with request counts + bytes; `--all` for everything since boot) and, for each, you
+**allow / skip / collapse to a `.domain` wildcard** - so a telemetry or exfil host can stay blocked
+while the real dependency goes through. Your picks are written to the config **and applied live**
+(squid reloads in place, no rebuild). `--apply` allows them all non-interactively; `--print` emits the
+list for CI. It works in enforce mode (it never opens egress). For the one case that can't reach -
+trusted code whose fetcher aborts on the *first* blocked host - `sluice learn --audit` runs the command
+once in a throwaway, **credential-stripped** container with egress open to all HTTP/HTTPS hosts, then
+offers the same per-host review from everything it reached. It's loudly warned and confirm-gated; see
+[`THREAT_MODEL.md`](THREAT_MODEL.md).
 
 `sluice init` does just the scaffold step (no prompt, no run) if you'd rather review the
 config first; in CI, a bare `sluice` scaffolds and stops unless `SLUICE_YES=1`. `init` infers
@@ -97,7 +130,7 @@ sluice doctor          # health check: engine, image, allowlist, blocked egress 
 sluice ls              # list all sluice boxes on this machine (name, status, stack, path; --json)
 sluice egress          # show what this box reached vs. was blocked (--json)
 sluice logs            # follow firewall/readiness logs
-sluice lock            # record installed apk+npm versions to sluice.lock (supply-chain audit)
+sluice lock            # inventory apk+npm+pip+gem+go to sluice.lock (--check | --diff | --sbom)
 sluice smoke           # build (if needed) + run the image smoke test
 ```
 
@@ -132,18 +165,24 @@ sluice boxes
 `ls`, `doctor`, and `egress` all take `--json` for scripting and CI - e.g. `sluice egress --json`
 emits the box's reached-vs-blocked hosts as a machine-readable audit record.
 
-`sluice lock` writes a committable `sluice.lock` — a full inventory of the image (every apk +
-global npm package with its version and digest) so what's in your sandbox is reviewable in a
-diff, and `sluice doctor` flags drift. It's an audit artifact, not a reproducibility guarantee:
-Wolfi's apk repo is rolling, so `sluice update` re-resolves to current versions on demand.
-`sluice lock --check` turns drift into a **CI gate** (exits non-zero if the built image differs
-from `sluice.lock`), and `sluice lock --sbom` emits a deterministic **CycloneDX** SBOM for
-scanners (Grype/Trivy/Dependency-Track):
+`sluice lock` writes a committable `sluice.lock` — a full inventory of the image (every apk, npm,
+pip, gem, and go package with its version and digest) so what's in your sandbox is reviewable in a
+diff, and `sluice doctor` flags drift. Re-locking (and `sluice update`) prints the supply-chain
+delta — what was added, removed, or version-bumped — so you review the change before committing.
+It's an audit artifact, not a reproducibility guarantee: Wolfi's apk repo is rolling, so
+`sluice update` re-resolves to current versions on demand. `sluice lock --check` turns drift into
+a **CI gate** (exits non-zero, `--json` for parsing); it checks the image as built (noting, not
+fixing, a stale image), so the gate never rebuilds, and `sluice lock --diff` shows the same view
+read-only; `sluice lock --sbom` emits a deterministic **CycloneDX 1.6** SBOM (purls + apk integrity
+hashes) for scanners (Grype/Trivy/Dependency-Track):
 
 ```bash
 sluice lock --check              # fail the build if the sandbox drifted from sluice.lock
-sluice lock --sbom > sbom.cdx.json   # CycloneDX inventory (apk + npm purls), byte-stable
+sluice lock --diff               # show the drift without failing (local review)
+sluice lock --sbom > sbom.cdx.json   # CycloneDX inventory (apk/npm/pip/gem/go purls), byte-stable
 ```
+
+<p align="center"><img src="assets/lock-demo.gif" width="700" alt="sluice lock --check reports the inventory in sync; after a dependency is added and the box rebuilt, lock --check catches the drift (classified: + apk tree, exit 1); re-lock records the supply-chain delta, then a CycloneDX SBOM carries the new package with its purl and SHA-1 integrity hash"></p>
 
 Image and container are named per project (`sluice-<dir>`, or `SLUICE_NAME` to override), so
 projects never collide. The image auto-rebuilds when `sluice.config.sh` or the core changes
