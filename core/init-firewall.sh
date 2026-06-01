@@ -95,4 +95,9 @@ fi
 # Allow: an always-allowlisted base host must work THROUGH the proxy. Warn-only (transient).
 curl -sS -o /dev/null --max-time 12 https://registry.npmjs.org 2>/dev/null \
   || echo "[firewall] WARN: registry.npmjs.org unreachable via proxy - check 'docker exec <sluice> cat /var/log/squid/cache.log'" >&2
+
+# The self-tests above (deny-canary + this allow-check) ran through squid and are now in its
+# access log. Truncate it so `sluice egress` / the egress receipt show the session's real traffic,
+# not sluice's own boot checks. squid appends, so it keeps logging cleanly from here.
+squid -k rotate 2>/dev/null || : > /var/log/squid/access.log 2>/dev/null || true
 echo "[firewall] hostname-filtered egress active (proxy: squid)."

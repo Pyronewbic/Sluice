@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Verify the supply-chain commands on a real built image: `sluice lock` records the inventory,
-# `sluice lock --check` is in-sync then fails (exit 1) on drift, and `sluice lock --sbom` emits a
-# deterministic CycloneDX SBOM with apk + npm purls. Heavy (builds an image) - manual, not the PR gate.
+# Verify the supply-chain commands on a real built image: `sluice lock` records the multi-ecosystem
+# inventory (apk+npm+pip+go), `--check`/`--diff` report drift (classified, with --json), and `--sbom`
+# emits a deterministic CycloneDX 1.6 SBOM (purls + apk integrity hashes). Heavy (builds an image with
+# python + go) - manual, not the PR gate.
 #
 #   ./test/verify-lock.sh
 set -u
@@ -15,8 +16,9 @@ bad() { FAIL=$((FAIL+1)); printf '  FAIL %s\n' "$1"; }
 
 work="$(mktemp -d)/lock"; mkdir -p "$work"
 cat > "$work/sluice.config.sh" <<'CFG'
-SLUICE_EXTRA_PKGS="ripgrep"
+SLUICE_EXTRA_PKGS="ripgrep python-3.12 py3.12-pip go"
 SLUICE_EXTRA_NPM="cowsay"
+SLUICE_SETUP_ROOT_CMDS="pip3 install --break-system-packages --quiet requests && go install rsc.io/2fa@latest"
 SLUICE_RUN_CMD="bash"
 CFG
 container="sluice-lock"
@@ -39,13 +41,52 @@ else bad "lock inventory missing ripgrep/cowsay"; fi
 ( cd "$work" && "$SLUICE" lock --check ) >/dev/null 2>&1 && ok "--check in sync (exit 0)" \
   || bad "--check should be in sync after lock"
 
+# 2b. multi-ecosystem: the build-time pip + go installs are captured in the inventory.
+grep -qE '^pip +requests ' "$work/sluice.lock" && ok "lock recorded requests (pip)" \
+  || bad "lock inventory missing pip requests"
+grep -qE '^go +rsc\.io/2fa ' "$work/sluice.lock" && ok "lock recorded rsc.io/2fa (go)" \
+  || bad "lock inventory missing go rsc.io/2fa"
+
+# 2c. --diff is read-only (exit 0) when in sync.
+( cd "$work" && "$SLUICE" lock --diff ) >/dev/null 2>&1 && ok "--diff in sync (exit 0)" \
+  || bad "--diff should exit 0 in sync"
+
+# 2d. --check --json reports in_sync=true when clean.
+cj="$( cd "$work" && "$SLUICE" lock --check --json 2>/dev/null )"
+if command -v jq >/dev/null 2>&1; then
+  printf '%s' "$cj" | jq -e '.in_sync==true' >/dev/null 2>&1 && ok "--check --json in_sync=true (clean)" \
+    || bad "--check --json should be in_sync=true clean: $cj"
+else
+  printf '%s' "$cj" | grep -q '"in_sync":true' && ok "--check --json in_sync=true (grep)" || bad "json in_sync"
+fi
+
+# 2e. SBOM hardening: CycloneDX 1.6 + sluice tool metadata + pip purl + apk arch qualifier + SHA-1 hash.
+sb="$( cd "$work" && "$SLUICE" lock --sbom 2>/dev/null )"
+if command -v jq >/dev/null 2>&1; then
+  printf '%s' "$sb" | jq -e '.specVersion=="1.6" and (.metadata.tools.components[0].name=="sluice")' >/dev/null 2>&1 \
+    && ok "--sbom is CycloneDX 1.6 with sluice tool metadata" || bad "--sbom missing 1.6 / tools metadata"
+  printf '%s' "$sb" | jq -e 'any(.components[]; (.hashes//[])[0].alg=="SHA-1")' >/dev/null 2>&1 \
+    && ok "--sbom apk components carry SHA-1 hashes" || bad "--sbom missing apk SHA-1 hashes"
+fi
+printf '%s' "$sb" | grep -q 'pkg:pypi/requests@' && ok "--sbom has the requests pypi purl" \
+  || bad "--sbom missing requests pypi purl"
+printf '%s' "$sb" | grep -q 'pkg:golang/rsc.io/2fa@' && ok "--sbom has the rsc.io/2fa golang purl" \
+  || bad "--sbom missing rsc.io/2fa golang purl"
+printf '%s' "$sb" | grep -q 'pkg:apk/wolfi/ripgrep@.*arch=' && ok "--sbom apk purl carries arch qualifier" \
+  || bad "--sbom apk purl missing arch qualifier"
+
 # 3. drift: add a package, rebuild, --check must fail (exit 1) and name the drift.
-printf 'SLUICE_EXTRA_PKGS="ripgrep tree"\n' >> "$work/sluice.config.sh"   # last assignment wins
+printf 'SLUICE_EXTRA_PKGS="ripgrep python-3.12 py3.12-pip go tree"\n' >> "$work/sluice.config.sh"  # last wins
 ( cd "$work" && "$SLUICE" build ) >/dev/null 2>&1
 out="$( cd "$work" && "$SLUICE" lock --check 2>&1 )"; rc=$?
 if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'tree'; then
   ok "--check fails on drift (exit $rc, names 'tree')"
 else bad "--check should fail on drift (rc=$rc): $out"; fi
+# 3b. --check --json reports in_sync=false and names the drifted package.
+dj="$( cd "$work" && "$SLUICE" lock --check --json 2>/dev/null )"
+if printf '%s' "$dj" | grep -q '"in_sync":false' && printf '%s' "$dj" | grep -q 'tree'; then
+  ok "--check --json in_sync=false names 'tree' on drift"
+else bad "--check --json should report drift: $dj"; fi
 ( cd "$work" && "$SLUICE" lock ) >/dev/null 2>&1   # relock clears it
 ( cd "$work" && "$SLUICE" lock --check ) >/dev/null 2>&1 && ok "--check in sync after relock" \
   || bad "--check should be in sync after relock"

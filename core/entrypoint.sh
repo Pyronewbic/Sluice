@@ -5,6 +5,10 @@ set -e
 
 # --- squid allowlist: base hosts (registries + GitHub) + SLUICE_ALLOW_DOMAINS ---
 . /usr/local/share/sluice.config.sh 2>/dev/null || true
+# The launcher passes the live host allowlist via SLUICE_RUNTIME_ALLOW; it wins over the baked copy
+# so `sluice learn` (and any allowlist edit) applies with no rebuild. Set-but-empty clears it; unset
+# (a bare `docker run`) keeps the baked value.
+[ -n "${SLUICE_RUNTIME_ALLOW+x}" ] && SLUICE_ALLOW_DOMAINS="${SLUICE_RUNTIME_ALLOW}"
 {
   printf '%s\n' github.com api.github.com codeload.github.com objects.githubusercontent.com \
                 registry.npmjs.org registry.yarnpkg.com
