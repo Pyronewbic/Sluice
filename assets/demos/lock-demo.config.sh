@@ -1,0 +1,3 @@
+SLUICE_NAME="lock-demo"
+SLUICE_RUN_CMD=true
+SLUICE_EXTRA_PKGS="ripgrep"
