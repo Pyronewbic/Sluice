@@ -69,6 +69,7 @@ Build & lifecycle:
 
 Inspect:
   doctor           health check: engine, image, allowlist, blocked egress
+  ls               list all sluice boxes on this machine (name, status, stack, path)
   logs             follow firewall + readiness logs
   lock             record installed apk+npm versions to sluice.lock (supply-chain audit)
                    --check fails on drift (CI gate); --sbom emits a CycloneDX SBOM
@@ -266,6 +267,7 @@ cmd_doctor() {
   # shellcheck disable=SC1090
   . "$PROJECT_CONFIG"
   derive_names
+  [ -n "${SLUICE_DESC:-}" ] && _doc desc "$SLUICE_DESC"
 
   if [ -n "$eng" ]; then
     if "$eng" image inspect "$tag" >/dev/null 2>&1; then
@@ -325,6 +327,52 @@ cmd_doctor() {
   else
     _doc egress "sandbox not running - start it, exercise the app, re-run 'sluice doctor'"
   fi
+}
+
+# --- `sluice ls`: a derived, read-only table of every built sluice box on this machine ----
+# Boxes are identified by the sluice.confighash label (baked since early versions); path/stack/desc
+# come from labels baked at build, so nothing is sourced here. The box matching $PWD is marked '*'.
+cmd_ls() {
+  local imgs here=""
+  imgs="$("$ENGINE" image ls --filter label=sluice.confighash --format '{{.Repository}}' 2>/dev/null | grep -v '^<none>$' | sort -u)"
+  if [ -z "$imgs" ]; then
+    echo "[sluice] no sluice boxes built yet - run 'sluice' in a project."
+    return 0
+  fi
+  # Current box = the project dir for $PWD's config (no sourcing), matched on the sluice.project label.
+  if here="$(find_config 2>/dev/null)"; then here="$(cd "$(dirname "$here")" && pwd)"; else here=""; fi
+
+  local names=() stats=() stacks=() paths=() descs=() marks=()
+  local wname=4 wstat=6 wstack=5 wpath=4   # column min-widths (header lengths)
+  local name proj stack desc run status dpath mark
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    proj="$( "$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.project" }}' "$name" 2>/dev/null || true)"
+    stack="$("$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.stack" }}'   "$name" 2>/dev/null || true)"
+    desc="$( "$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.desc" }}'    "$name" 2>/dev/null || true)"
+    run="$(  "$ENGINE" container inspect -f '{{.State.Running}}' "$name" 2>/dev/null || true)"
+    if   [ "$run" = true ]; then status=running
+    elif [ -n "$run" ];     then status=stopped
+    else                         status=built; fi
+    dpath="$proj"; case "$dpath" in "$HOME"/*) dpath="~${dpath#"$HOME"}";; "$HOME") dpath="~";; esac
+    [ -n "$dpath" ] || dpath="-"; [ -n "$stack" ] || stack="-"; [ -n "$desc" ] || desc="-"
+    mark=" "; [ -n "$here" ] && [ "$proj" = "$here" ] && mark="*"
+    marks+=("$mark"); names+=("$name"); stats+=("$status"); stacks+=("$stack"); paths+=("$dpath"); descs+=("$desc")
+    [ ${#name}   -gt "$wname"  ] && wname=${#name}
+    [ ${#status} -gt "$wstat"  ] && wstat=${#status}
+    [ ${#stack}  -gt "$wstack" ] && wstack=${#stack}
+    [ ${#dpath}  -gt "$wpath"  ] && wpath=${#dpath}
+  done <<EOF
+$imgs
+EOF
+
+  echo "sluice boxes"
+  printf '  %-*s  %-*s  %-*s  %-*s  %s\n' "$wname" NAME "$wstat" STATUS "$wstack" STACK "$wpath" PATH DESCRIPTION
+  local i
+  for i in "${!names[@]}"; do
+    printf '%s %-*s  %-*s  %-*s  %-*s  %s\n' "${marks[$i]}" \
+      "$wname" "${names[$i]}" "$wstat" "${stats[$i]}" "$wstack" "${stacks[$i]}" "$wpath" "${paths[$i]}" "${descs[$i]}"
+  done
 }
 
 # sluice-gate mark on human entries; stderr + TTY-only + SLUICE_NO_BANNER-suppressible.
@@ -579,6 +627,9 @@ find_config() {
 # `sluice doctor`: self-contained health report (resolves its own engine/config), runs anywhere.
 if [ "${1:-}" = doctor ]; then cmd_doctor; exit 0; fi
 
+# `sluice ls`: global box listing (resolves its own engine above; no project config needed).
+if [ "${1:-}" = ls ]; then cmd_ls; exit 0; fi
+
 # --- `sluice agent [name]`: write the agents/<name>.config.sh preset, then build+run ----
 if [ "${1:-}" = agent ]; then
   banner
@@ -652,11 +703,19 @@ verify_base() {
   fi
 }
 
+# Best-effort stack label for `sluice ls`: the `(detected: X)` note `sluice init` writes into a
+# scaffolded config; empty for hand-written / agent configs.
+config_stack() { grep -oE 'detected: [^)]+' "$PROJECT_CONFIG" 2>/dev/null | head -1 | sed 's/detected: //' || true; }
+
 build() {
   local tmp; tmp="$(mktemp -d)"
   cp -R "$CORE"/. "$tmp"/
   cp "$PROJECT_CONFIG" "$tmp/sluice.config.sh"
-  local args=(--label "sluice.confighash=$(config_hash)" "$@")   # extra flags, e.g. --no-cache
+  # Self-describing labels (read by `sluice ls`; not part of config_hash, so no spurious rebuild).
+  local args=(--label "sluice.confighash=$(config_hash)"
+    --label "sluice.project=$PROJECT_DIR"
+    --label "sluice.stack=$(config_stack)"
+    --label "sluice.desc=${SLUICE_DESC:-}" "$@")   # extra flags, e.g. --no-cache
   if [ -n "${SLUICE_BASE_IMAGE:-}" ]; then
     verify_base "$SLUICE_BASE_IMAGE"
     args+=(--build-arg "BASE_IMAGE=$SLUICE_BASE_IMAGE")     # project layer FROM the signed base

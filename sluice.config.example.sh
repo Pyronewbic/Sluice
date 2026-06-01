@@ -14,6 +14,9 @@
 # Set it when two checkouts share a basename, or to pin a stable name across worktrees.
 SLUICE_NAME=""
 
+# One-line human description, shown in `sluice ls` and `sluice doctor` (optional).
+SLUICE_DESC=""
+
 # --- software (baked into the image at build time) ------------------------------
 
 # Extra apk packages on top of the base (node/npm/git/gh/curl/jq + firewall tools).
