@@ -1,0 +1,37 @@
+name: Bug report
+description: sluice does something wrong - a crash, a wrong result, or a sandbox that won't build/run.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Found a **security** hole (a sandbox escape or an egress/firewall bypass)? Please don't file
+        it here - follow [SECURITY.md](https://github.com/Pyronewbic/Sluice/blob/main/SECURITY.md).
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What did you expect, and what did sluice actually do?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Your `sluice.config.sh` (or note that it was auto-detected) and the exact commands you ran.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: Paste the output of `sluice version` and `sluice doctor`, and note your OS.
+      placeholder: |
+        sluice version:
+        engine:           # docker / podman + version
+        OS:
+        sluice doctor:
+      render: shell
+    validations:
+      required: true

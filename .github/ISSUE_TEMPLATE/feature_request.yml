@@ -1,0 +1,24 @@
+name: Feature or idea
+description: Propose a capability, a new knob, or a change to how sluice behaves.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do that sluice makes hard or impossible today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you'd want
+      description: A new flag, a config knob, a different default? Rough is fine.
+    validations:
+      required: false
+  - type: markdown
+    attributes:
+      value: |
+        sluice keeps a deliberately small, flat verb surface - see the
+        [README](https://github.com/Pyronewbic/Sluice#readme) and
+        [ROADMAP](https://github.com/Pyronewbic/Sluice/blob/main/ROADMAP.md) for what's in and out of scope.

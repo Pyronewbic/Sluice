@@ -106,7 +106,10 @@ fumbling first contact when the post drives a skeptical, Linux-heavy dev/securit
       click-through lands fast. (Landed 2026-06-01.)
 - [ ] **First-comment text** for the post (repo link + a 3-line "how it works") - LinkedIn suppresses
       body links, so the link goes in the first comment.
-- [ ] (optional) Issue templates + a CONTRIBUTING note, for the inbound the post may bring.
+- [x] **Issue templates + CONTRIBUTING (landed 2026-06-02).** Bug + feature issue forms (the bug form
+      collects version/engine/OS/`doctor`), a config that disables blank issues and routes security
+      reports to the existing `SECURITY.md`, and a lean `CONTRIBUTING.md` (dev/test/PR, Conventional
+      Commits) that links the existing docs instead of duplicating them.
 - Mechanics (not roadmap, just don't forget): post Tue/Wed ~7:30pm IST (US dev morning), reply in the
   first 90 min, cross-post HN/Reddit at the same window. Accuracy nit: the cosign-signed base is
   **opt-in** (`SLUICE_BASE_IMAGE`); the default build is `FROM cgr.dev/chainguard/wolfi-base` - the
