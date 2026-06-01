@@ -142,6 +142,10 @@ config_hash() {
 
 running() { [ "$("$ENGINE" inspect -f '{{.State.Running}}' "$container" 2>/dev/null || true)" = "true" ]; }
 
+# True when the HOST enforces SELinux (Fedora/RHEL/CentOS default). On such a host a bind mount is
+# inaccessible to the box without a label, so sluice runs it label=disable (see the run paths).
+selinux_enforcing() { [ -r /sys/fs/selinux/enforce ] && [ "$(cat /sys/fs/selinux/enforce 2>/dev/null)" = 1 ]; }
+
 # squid access log. Full by default (box-level audit: egress/doctor/learn); from _RCPT_OFFSET bytes
 # when set, so the run-default egress receipt is scoped to just that run, not the box's whole boot.
 _squid_log() {
@@ -1099,6 +1103,9 @@ start() {
     --sysctl net.ipv4.conf.all.route_localnet=1
     --sysctl net.ipv6.conf.all.disable_ipv6=1
     --sysctl net.ipv6.conf.default.disable_ipv6=1)
+  # SELinux-enforcing hosts deny the box access to a bind mount without a label; run it unconfined for
+  # SELinux only (non-root + caps + egress firewall + dir-only mount still confine it).
+  selinux_enforcing && run_args+=(--security-opt label=disable)
 
   # SLUICE_POLICY_URL: fetch a central allowlist on the host (free egress, before the box locks down)
   # and merge it into the box's egress policy at run. Plain text, one host per line, # comments OK.
@@ -1387,6 +1394,7 @@ EOF
     --sysctl net.ipv6.conf.default.disable_ipv6=1
     -e SLUICE_AUDIT=1
     -v "$PROJECT_DIR":"$PROJECT_DIR" -e "SLUICE_WORKDIR=$PROJECT_DIR")
+  selinux_enforcing && run_args+=(--security-opt label=disable)   # see the main run path
   if git -C "$PROJECT_DIR" rev-parse --git-common-dir >/dev/null 2>&1; then
     local common; common="$(git -C "$PROJECT_DIR" rev-parse --git-common-dir)"
     case "$common" in /*) ;; *) common="$PROJECT_DIR/$common";; esac

@@ -44,7 +44,9 @@ file or tool result steering an agent, or simply buggy agent code - any of which
 - **Reading/altering the rest of your machine** -> only the project dir (and its git
   common dir, for worktrees) is mounted. Nothing else is visible.
 - **Host privilege escalation** -> runs non-root (uid 1000), only `NET_ADMIN`/`NET_RAW`,
-  no Docker socket, no Docker-in-Docker.
+  no Docker socket, no Docker-in-Docker. (On SELinux-enforcing hosts the box runs
+  `--security-opt label=disable` so it can read the project mount; that drops the SELinux layer, but
+  the non-root / caps / firewall / dir-only guarantees above are unaffected.)
 - **Supply-chain fetch vs. runtime** -> deps are pulled at build (pre-firewall); the
   *running* container is locked to the allowlist.
 - **Tampered sandbox core** -> the generic core (proxy, firewall, entrypoint, non-root user)
