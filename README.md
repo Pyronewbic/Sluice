@@ -2,12 +2,20 @@
 
 <img src="assets/logo-badge.svg" width="84" align="right" alt="sluice logo">
 
+[![CI](https://github.com/Pyronewbic/Sluice/actions/workflows/acceptance.yml/badge.svg)](https://github.com/Pyronewbic/Sluice/actions/workflows/acceptance.yml)
+[![Release](https://img.shields.io/github/v/release/Pyronewbic/Sluice?color=blue)](https://github.com/Pyronewbic/Sluice/releases/latest)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
 A sandboxed, firewalled, isolated container for any project - drop a `sluice.config.sh`
 in a directory and run `sluice`. The sluice runs untrusted code/dependencies behind a
 **default-DROP egress firewall** (only allowlisted hosts are reachable), as a
 **non-root user**, seeing **only that project directory**. Declare what software the
 project needs, what it may reach on the network, what ports it serves, and the command
 to run - sluice builds the image and runs it.
+
+**Runs entirely on your machine** - no account, no telemetry, nothing uploaded. The only
+network call sluice itself makes is an opt-out check to GitHub for a newer release
+(`SLUICE_NO_UPDATE_CHECK=1` to disable).
 
 ## Install
 
@@ -86,12 +94,39 @@ sluice stop            # remove the project's container
 
 # Inspect
 sluice doctor          # health check: engine, image, allowlist, blocked egress
+sluice ls              # list all sluice boxes on this machine (name, status, stack, path)
 sluice logs            # follow firewall/readiness logs
 sluice lock            # record installed apk+npm versions to sluice.lock (supply-chain audit)
 sluice smoke           # build (if needed) + run the image smoke test
 ```
 
 > Pre-1.0: the command surface is still stabilizing and may change before the 1.0 lock.
+
+### What it looks like
+
+`sluice doctor` shows the whole posture at a glance - engine, image freshness, the effective
+allowlist, and what the firewall blocked this run:
+
+```
+sluice doctor
+  engine     Docker version 27.4.0
+  config     ~/code/blog/sluice.config.sh
+  desc       personal blog
+  image      sluice-blog built (config current)
+  allowlist  api.anthropic.com
+             base: github.com api.github.com registry.npmjs.org ...
+  egress     1 host(s) blocked - run 'sluice learn' to allow:
+             cdn.tracking.example
+```
+
+`sluice ls` shows every box on this machine, and which one you're in (`*`):
+
+```
+sluice boxes
+  NAME         STATUS    STACK       PATH         DESCRIPTION
+* sluice-blog  running   node/astro  ~/code/blog  personal blog
+  sluice-api   built     python      ~/code/api   internal API
+```
 
 `sluice lock` writes a committable `sluice.lock` — a full inventory of the image (every apk +
 global npm package with its version and digest) so what's in your sandbox is reviewable in a
@@ -146,6 +181,7 @@ Everything is driven by `sluice.config.sh`. Copy [`sluice.config.example.sh`](sl
 | knob | purpose |
 |------|---------|
 | `SLUICE_NAME` | image/container name `sluice-<name>` (default: the project dir's name) |
+| `SLUICE_DESC` | one-line description, shown in `sluice ls` and `sluice doctor` |
 | `SLUICE_BASE_IMAGE` | opt-in: build FROM a cosign-signed base image (`ghcr.io/.../sluice-base`) instead of from `core/` |
 | `SLUICE_EXTRA_PKGS` | extra apk packages (build time) |
 | `SLUICE_EXTRA_NPM` | extra global npm packages, pinned (build time) |
