@@ -22,7 +22,7 @@ _json_esc() { local s="$1"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; s="${s//$'\t'/
 _json_arr() { local first=1 line; printf '['; while IFS= read -r line; do [ -n "$line" ] || continue; [ "$first" = 1 ] && first=0 || printf ','; printf '"%s"' "$(_json_esc "$line")"; done; printf ']'; }
 
 # --- version + help ------------------------------------------------------------
-SLUICE_VERSION="0.5.0"   # fallback when not a git checkout
+SLUICE_VERSION="0.6.0"   # fallback when not a git checkout
 sluice_version() {       # git tag if $ROOT is our own checkout, else the baked constant
   local v
   if [ -e "$ROOT/.git" ] && v="$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null)" && [ -n "$v" ]; then
