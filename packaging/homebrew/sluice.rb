@@ -17,6 +17,10 @@ class Sluice < Formula
   def install
     libexec.install Dir["*"]
     bin.install_symlink libexec/"bin/sluice"
+    # Shell completion (auto-loaded by brew's completion dirs). The scripts find agents/ relative to
+    # the resolved binary, which points back into libexec, so agent-name completion works.
+    bash_completion.install libexec/"completion/sluice.bash" => "sluice"
+    zsh_completion.install libexec/"completion/_sluice"
   end
 
   test do

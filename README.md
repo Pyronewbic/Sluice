@@ -274,8 +274,8 @@ install.sh                curl|sh + local installer
 sluice.config.example.sh  documented config template (every knob)
 ```
 
-Shell completion (commands, flags, agent names): `source completion/sluice.bash` (bash), or add
-`completion/` to your `fpath` before `compinit` (zsh).
+Shell completion (commands, flags, agent names) auto-installs via `brew install` / `install.sh`.
+Manual: `source completion/sluice.bash` (bash), or add `completion/` to your `fpath` before `compinit` (zsh).
 
 Runs on **docker** or **podman** (auto-detected; override with `SLUICE_ENGINE`). CI
 ([`.github/workflows/acceptance.yml`](.github/workflows/acceptance.yml)) runs the harness

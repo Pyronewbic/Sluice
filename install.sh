@@ -28,6 +28,15 @@ mkdir -p "$BIN"
 ln -sf "$src/bin/sluice" "$BIN/sluice"
 echo "Linked $BIN/sluice -> $src/bin/sluice"
 
+# Shell completion (best-effort). bash: XDG dir is auto-loaded by bash-completion. zsh: needs the
+# dir on fpath, so we symlink + print the one-liner.
+bashc="$HOME/.local/share/bash-completion/completions"
+zshc="$HOME/.local/share/zsh/site-functions"
+mkdir -p "$bashc" "$zshc"
+ln -sf "$src/completion/sluice.bash" "$bashc/sluice"
+ln -sf "$src/completion/_sluice" "$zshc/_sluice"
+echo "Completion: bash auto-loads; zsh needs  fpath=($zshc \$fpath)  before compinit."
+
 case ":$PATH:" in
   *":$BIN:"*) echo "Ready - run 'sluice init' in a project, or 'sluice agent claude'." ;;
   *) echo "Add ~/.local/bin to PATH:  echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.profile" ;;
