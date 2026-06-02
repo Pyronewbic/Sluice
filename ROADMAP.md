@@ -77,8 +77,8 @@ release notes with Highlights + Install + Docs links (the x.0 release-notes styl
 
 **C. Quality bar (should already mostly hold - audit before cutting):**
 - [ ] All tests green: acceptance (15), init-detection (43), the no-Docker CLI + installer units
-      (cli / install), and the verify-* harnesses (security / agents / runtimes / lock / learn / nix /
-      audit / ls / seams - the manual ones now gated in nightly).
+      (cli / install), and the verify-* harnesses (security / agents / runtimes / lock / learn /
+      control-plane / nix - sharing test/lib.sh; the manual ones gated in nightly).
 - [ ] Docs current + consistent: README, THREAT_MODEL, examples/, sluice.config.example.sh, and help
       all match the locked surface (knob table = the frozen knobs; command list = the frozen verbs).
 - [ ] Distribution intact (already done): signed GHCR base + cosign-verify, tap, install.sh,

@@ -6,14 +6,7 @@
 #   ./test/verify-security.sh
 set -u
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SLUICE="$ROOT/bin/sluice"
-ENG="${SLUICE_ENGINE:-docker}"
-PASS=0 FAIL=0
-ok()   { PASS=$((PASS+1)); printf '  ok   %s\n' "$1"; }
-bad()  { FAIL=$((FAIL+1)); printf '  FAIL %s\n' "$1"; }
-note() { printf '  note %s\n' "$1"; }
-export SLUICE_NO_BANNER=1
+. "$(dirname "$0")/lib.sh"
 
 BASE="$(mktemp -d)"
 STORE="${XDG_STATE_HOME:-$HOME/.local/state}/sluice/sectest-state"   # host-side, OUTSIDE the temp tree
@@ -145,5 +138,4 @@ else
 fi
 ( cd "$mnt" && "$SLUICE" stop ) >/dev/null 2>&1
 
-echo "== $PASS passed, $FAIL failed =="
-[ "$FAIL" -eq 0 ]
+finish

@@ -35,11 +35,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [lock, learn, audit, seams, ls]
+        suite: [lock, learn, control-plane]   # learn folds in audit; control-plane folds in ls + seams
     steps:
       - uses: actions/checkout@v4
       - name: Verify ${{ matrix.suite }}
-        run: ./test/verify-${{ matrix.suite }}.sh   # python3 (for seams) + docker preinstalled
+        run: ./test/verify-${{ matrix.suite }}.sh   # python3 (for control-plane) + docker preinstalled
 
   # Nix builds a ~1.5GB image, so it gets its own job + a longer budget.
   nix:

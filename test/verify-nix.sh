@@ -4,12 +4,7 @@
 # Heavy - runs nightly/manual, not the PR gate.   Usage: ./test/verify-nix.sh
 set -u
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SLUICE="$ROOT/bin/sluice"
-ENG="${SLUICE_ENGINE:-docker}"
-PASS=0 FAIL=0
-ok()  { PASS=$((PASS+1)); printf '    ok    %s\n' "$1"; }
-bad() { FAIL=$((FAIL+1)); printf '    FAIL  %s\n' "$1"; }
+. "$(dirname "$0")/lib.sh"
 
 echo "== sluice nix example verification (build-time Nix, contained at runtime) =="
 work="$(mktemp -d)/nix"; mkdir -p "$work"
@@ -19,7 +14,7 @@ container="sluice-nix"
 echo "-- building (installs Nix + bakes the pinned tool; this is the slow part) --"
 if ! ( cd "$work" && "$SLUICE" build ) >"/tmp/verify-nix-build.log" 2>&1; then
   bad "build failed (see /tmp/verify-nix-build.log)"; tail -25 /tmp/verify-nix-build.log
-  rm -rf "$(dirname "$work")"; echo "== $PASS passed, $FAIL failed =="; exit 1
+  rm -rf "$(dirname "$work")"; finish; exit 1
 fi
 ok "example image built (Nix installed + tool baked)"
 
@@ -48,10 +43,9 @@ else
   ok "runtime egress locked (example.com blocked)"
 fi
 
-# Teardown: chown the mount back so the host can clean up (see verify-agents.sh).
-"$ENG" exec --user root "$container" chown -R "$(id -u):$(id -g)" "$work" >/dev/null 2>&1 || true
+# Teardown: chown the mount back, stop. Keep the ~1.5GB Nix image cached (don't rmi).
+host_own "$container" "$work"
 ( cd "$work" && "$SLUICE" stop ) >/dev/null 2>&1
 rm -rf "$(dirname "$work")" 2>/dev/null || true
 
-echo "== $PASS passed, $FAIL failed =="
-[ "$FAIL" -eq 0 ]
+finish

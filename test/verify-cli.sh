@@ -4,12 +4,8 @@
 #   ./test/verify-cli.sh
 set -u
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SLUICE="$ROOT/bin/sluice"
-PASS=0 FAIL=0
-ok()  { PASS=$((PASS+1)); printf '  ok   %s\n' "$1"; }
-bad() { FAIL=$((FAIL+1)); printf '  FAIL %s\n' "$1"; }
-export SLUICE_NO_UPDATE_CHECK=1 SLUICE_NO_BANNER=1
+. "$(dirname "$0")/lib.sh"
+export SLUICE_NO_UPDATE_CHECK=1
 
 echo "== CLI surface =="
 
@@ -56,5 +52,4 @@ else
   printf '  note %s\n' "zsh not present - skipped zsh -n on completion/_sluice"
 fi
 
-echo "== $PASS passed, $FAIL failed =="
-[ "$FAIL" -eq 0 ]
+finish

@@ -3,10 +3,8 @@
 # end-to-end (the CI gate). Engine-agnostic (SLUICE_ENGINE). ACCEPTANCE_QUICK=1 skips Strudel.
 set -u
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SLUICE="$ROOT/bin/sluice"
+. "$(dirname "$0")/lib.sh"
 WORK="$(mktemp -d)"
-PASS=0 FAIL=0
 
 cleanup() {
   # The entrypoint chowns each mount to the sandbox uid (1000); chown it back to the host uid
@@ -20,8 +18,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-ok()   { PASS=$((PASS+1)); printf '  ok   %s\n' "$1"; }
-bad()  { FAIL=$((FAIL+1)); printf '  FAIL %s\n' "$1"; }
 bxrun() { ( cd "$1" && shift && "$SLUICE" run "$@" ) >/dev/null 2>&1; }
 # Allow-checks use curl -sS (no -f): success = reached the host (4xx still = allowed) + retry.
 # Deny-checks keep -f and don't retry (they pass when curl fails).
@@ -113,5 +109,4 @@ else
   ( cd "$WORK/strudel" && "$SLUICE" stop ) >/dev/null 2>&1
 fi
 
-echo "== $PASS passed, $FAIL failed =="
-[ "$FAIL" -eq 0 ]
+finish

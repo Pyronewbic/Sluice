@@ -3,13 +3,8 @@
 # sluice.config.sh for synthetic manifests, locking in detection + the toolchain fixes.
 set -u
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SLUICE="$ROOT/bin/sluice"
+. "$(dirname "$0")/lib.sh"
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
-PASS=0 FAIL=0
-
-ok()   { PASS=$((PASS+1)); printf '  ok   %s\n' "$1"; }
-bad()  { FAIL=$((FAIL+1)); printf '  FAIL %s\n' "$1"; }
 dir()  { local d="$WORK/$1"; mkdir -p "$d"; printf '%s' "$d"; }
 init() { ( cd "$1" && "$SLUICE" init ) >/dev/null 2>&1; }
 # has DIR LABEL SUBSTRING  -> PASS if the generated config contains the literal substring
@@ -130,5 +125,4 @@ printf '{"scripts":{"dev":"vite"},"devDependencies":{"vite":"^5"}}\n' > "$d/pack
 if ( cd "$d" && "$SLUICE" init )        >/dev/null 2>&1; then bad "force: refuses without --force"; else ok "force: refuses without --force"; fi
 if ( cd "$d" && "$SLUICE" init --force ) >/dev/null 2>&1; then ok "force: --force overwrites"; else bad "force: --force overwrites"; fi
 
-echo "== $PASS passed, $FAIL failed =="
-[ "$FAIL" -eq 0 ]
+finish

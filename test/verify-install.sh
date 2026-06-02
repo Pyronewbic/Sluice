@@ -4,11 +4,7 @@
 #   ./test/verify-install.sh
 set -u
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-PASS=0 FAIL=0
-ok()  { PASS=$((PASS+1)); printf '  ok   %s\n' "$1"; }
-bad() { FAIL=$((FAIL+1)); printf '  FAIL %s\n' "$1"; }
-
+. "$(dirname "$0")/lib.sh"
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 echo "== install.sh smoke =="
 
@@ -34,5 +30,4 @@ else
 fi
 "$link" help >/dev/null 2>&1 && ok "installed 'sluice help' runs" || bad "installed 'sluice help' failed"
 
-echo "== $PASS passed, $FAIL failed =="
-[ "$FAIL" -eq 0 ]
+finish

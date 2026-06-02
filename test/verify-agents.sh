@@ -9,13 +9,7 @@
 #   AGENTS=claude CURSOR_API_KEY=... ./test/verify-agents.sh    # one preset + a live round-trip
 set -u
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SLUICE="$ROOT/bin/sluice"
-ENG="${SLUICE_ENGINE:-docker}"
-PASS=0 FAIL=0 SKIP=0
-ok()   { PASS=$((PASS+1)); printf '    ok    %s\n' "$1"; }
-bad()  { FAIL=$((FAIL+1)); printf '    FAIL  %s\n' "$1"; }
-skip() { SKIP=$((SKIP+1)); printf '    skip  %s\n' "$1"; }
+. "$(dirname "$0")/lib.sh"
 
 # Best-guess non-interactive invocation per agent (this spelling is the genuinely-unverified
 # bit; the proxy-log check below is what actually confirms the round-trip). Override per agent
@@ -96,11 +90,10 @@ for name in $AGENTS; do
     skip "$name: live round-trip (set \$$firstvar on the host to verify the authenticated call)"
   fi
 
-  # Teardown: chown the mount back so the host can clean up (see verify-runtimes.sh).
-  "$ENG" exec --user root "$container" chown -R "$(id -u):$(id -g)" "$work" >/dev/null 2>&1 || true
+  # Teardown: chown the mount back, stop (keep the agent image cached across presets).
+  host_own "$container" "$work"
   ( cd "$work" && "$SLUICE" stop ) >/dev/null 2>&1
   rm -rf "$(dirname "$work")" 2>/dev/null || true
 done
 
-echo "== $PASS passed, $FAIL failed, $SKIP skipped =="
-[ "$FAIL" -eq 0 ]
+finish

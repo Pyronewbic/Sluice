@@ -7,12 +7,7 @@
 #   ./test/verify-lock.sh
 set -u
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SLUICE="$ROOT/bin/sluice"
-ENG="${SLUICE_ENGINE:-docker}"
-PASS=0 FAIL=0
-ok()  { PASS=$((PASS+1)); printf '  ok   %s\n' "$1"; }
-bad() { FAIL=$((FAIL+1)); printf '  FAIL %s\n' "$1"; }
+. "$(dirname "$0")/lib.sh"
 
 work="$(mktemp -d)/lock"; mkdir -p "$work"
 cat > "$work/sluice.config.sh" <<'CFG'
@@ -22,12 +17,11 @@ SLUICE_SETUP_ROOT_CMDS="pip3 install --break-system-packages --quiet requests &&
 SLUICE_RUN_CMD="bash"
 CFG
 container="sluice-lock"
-export SLUICE_NO_BANNER=1
 
 echo "== sluice supply-chain (lock / --check / --sbom) =="
 if ! ( cd "$work" && "$SLUICE" build ) >/tmp/verify-lock-build.log 2>&1; then
   bad "build"; tail -20 /tmp/verify-lock-build.log; rm -rf "$(dirname "$work")"
-  echo "== $PASS passed, $FAIL failed =="; exit 1
+  finish; exit 1
 fi
 ok "build"
 
@@ -107,11 +101,5 @@ printf '%s' "$s1" | grep -q 'pkg:npm/cowsay@' && ok "--sbom has the cowsay npm p
   || bad "--sbom missing cowsay npm purl"
 [ "$s1" = "$s2" ] && ok "--sbom is deterministic (two runs identical)" || bad "--sbom not deterministic"
 
-# Teardown: chown the mount back so the host can clean up (see verify-agents.sh).
-"$ENG" exec --user root "$container" chown -R "$(id -u):$(id -g)" "$work" >/dev/null 2>&1 || true
-( cd "$work" && "$SLUICE" stop ) >/dev/null 2>&1
-"$ENG" rmi -f "$container" >/dev/null 2>&1 || true
-rm -rf "$(dirname "$work")" 2>/dev/null || true
-
-echo "== $PASS passed, $FAIL failed =="
-[ "$FAIL" -eq 0 ]
+teardown_box "$container" "$work"; rm -rf "$(dirname "$work")" 2>/dev/null || true
+finish
