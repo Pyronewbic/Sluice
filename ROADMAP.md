@@ -125,8 +125,8 @@ rough effort (S/M/L) and the gap each closes.
   adoption, and the preset library is community moat.
 
 **Later (adoption-gated / bigger):**
-- **Hosted control plane / fleet - L.** The OSS seams already shipped (`ls`/`doctor --json`, `egress
-  --json`, `SLUICE_POLICY_URL`). The SaaS aggregator/dashboard + fleet `ls` + richer policy bundles +
+- **Hosted control plane / fleet - L.** The OSS seams already shipped (`ls` with posture/orphan/filters + `--egress`,
+  cross-dir `-b/--box` targeting, `prune --orphans`, `doctor`/`egress --json`, `SLUICE_POLICY_URL`). The SaaS aggregator/dashboard + fleet `ls` + richer policy bundles +
   credential brokering wait on adoption pull - the monetization (open-core), not first.
 - **Supply-chain depth - M.** APKINDEX-snapshot pinning + full pinned-version replay (CycloneDX + cosign
   SBOM attestation + cargo inventory + SPDX output + `lock --enforce` strict gate shipped).
