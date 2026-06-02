@@ -169,22 +169,22 @@ printf 'SLUICE_NAME="sectest-doh"\nSLUICE_ALLOW_DOMAINS="cloudflare-dns.com"\nSL
 ( cd "$doh" && "$SLUICE" run true ) >/dev/null 2>&1   # build + bring up
 "$ENG" exec sluice-sectest-doh sh -c 'test -s /etc/squid/doh-endpoints.txt' \
   && ok "doh: denylist baked in the box" || bad "doh: denylist missing/empty"
-"$ENG" exec sluice-sectest-doh grep -q '^http_access deny doh_host' /etc/squid.conf \
-  && ok "doh: squid denies DoH hosts ahead of the allowlist" || bad "doh: deny rule missing from squid.conf"
+# DoH is blocked by FILTERING it out of the splice allowlist (not via squid ssl_bump rules).
+"$ENG" exec sluice-sectest-doh sh -c '! grep -qx cloudflare-dns.com /etc/squid/allowlist.txt' \
+  && ok "doh: an allowlisted DoH host is filtered out of the splice allowlist" || bad "doh: DoH host still in the allowlist"
 if "$ENG" exec --user sluice sluice-sectest-doh curl -s -o /dev/null --max-time 8 https://cloudflare-dns.com/ 2>/dev/null; then
   bad "doh: an allowlisted DoH resolver was reachable (block failed)"
 else
   ok "doh: an allowlisted DoH resolver is blocked (live)"
 fi
-# SLUICE_ALLOW_DOH=1 clears the denylist (opt back in)
-printf 'SLUICE_NAME="sectest-doh"\nSLUICE_ALLOW_DOMAINS="cloudflare-dns.com"\nSLUICE_ALLOW_DOH=1\nSLUICE_RUN_CMD="bash"\n' > "$doh/sluice.config.sh"
-( cd "$doh" && "$SLUICE" rebuild ) >/dev/null 2>&1
-if "$ENG" exec sluice-sectest-doh sh -c 'test -s /etc/squid/doh-endpoints.txt'; then
-  bad "doh: SLUICE_ALLOW_DOH=1 did not clear the denylist"
-else
-  ok "doh: SLUICE_ALLOW_DOH=1 clears the denylist (opt-in)"
-fi
-( cd "$doh" && "$SLUICE" stop ) >/dev/null 2>&1
+# SLUICE_ALLOW_DOH=1 opts back in: the host stays in the allowlist. FRESH dir - the box chowns the
+# project dir to uid 1000 on Linux, so rewriting the config in place would be Permission denied.
+doh2="$BASE/doh-optin"; mkdir -p "$doh2"
+printf 'SLUICE_NAME="sectest-doh"\nSLUICE_ALLOW_DOMAINS="cloudflare-dns.com"\nSLUICE_ALLOW_DOH=1\nSLUICE_RUN_CMD="bash"\n' > "$doh2/sluice.config.sh"
+( cd "$doh2" && "$SLUICE" run true ) >/dev/null 2>&1   # rebuild (config changed) + bring up with opt-in
+"$ENG" exec sluice-sectest-doh sh -c 'grep -qx cloudflare-dns.com /etc/squid/allowlist.txt' \
+  && ok "doh: SLUICE_ALLOW_DOH=1 keeps the DoH host on the allowlist (opt-in)" || bad "doh: SLUICE_ALLOW_DOH=1 did not opt in"
+( cd "$doh2" && "$SLUICE" stop ) >/dev/null 2>&1
 
 # --- SLUICE_SECCOMP=hardened: the namespace/userns syscall class is blocked (opt-in) -------------
 sc="$BASE/seccomp"; mkdir -p "$sc"
