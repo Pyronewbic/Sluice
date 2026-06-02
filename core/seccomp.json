@@ -1,0 +1,35 @@
+{
+  "_comment": "sluice hardened seccomp profile (opt-in via SLUICE_SECCOMP=hardened). Allow-by-default minus a dangerous syscall class the sandbox never needs: in-container namespace creation (the userns/CVE surface), tracing, key material, mount, kernel-module/kexec/swap. Sessions already run uid 1000 with zero caps, so this is defence in depth. NOTE: blocking unshare/clone(NEWUSER) breaks browser-engine sandboxes (Chromium/Playwright) - run those with the engine's default profile or the browser's --no-sandbox. Targets amd64/arm64 (clone flags = arg0).",
+  "defaultAction": "SCMP_ACT_ALLOW",
+  "syscalls": [
+    {
+      "names": [
+        "unshare", "setns",
+        "bpf", "perf_event_open",
+        "keyctl", "add_key", "request_key",
+        "ptrace", "process_vm_readv", "process_vm_writev",
+        "mount", "umount2", "pivot_root", "move_mount", "open_tree", "fsopen", "fsconfig", "fsmount",
+        "init_module", "finit_module", "delete_module",
+        "kexec_load", "kexec_file_load",
+        "swapon", "swapoff"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1
+    },
+    {
+      "_comment": "clone3 -> ENOSYS so glibc falls back to clone(), which we then filter for CLONE_NEWUSER. Preserves normal thread/fork creation.",
+      "names": ["clone3"],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 38
+    },
+    {
+      "_comment": "block clone() only when CLONE_NEWUSER (0x10000000) is set; normal threads/forks (no NEWUSER) are allowed.",
+      "names": ["clone"],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        { "index": 0, "value": 268435456, "valueTwo": 268435456, "op": "SCMP_CMP_MASKED_EQ" }
+      ]
+    }
+  ]
+}

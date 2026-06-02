@@ -85,7 +85,10 @@ The guarantees below hold only while these do:
   drop squid to its uid, run the firewall, bind DNS, reload squid); `no-new-privileges` blocks any
   setuid path to root. So even a compromised in-box process has no route to the capabilities or to
   root. `--pids-limit` (`SLUICE_PIDS_LIMIT`) and optional `--memory` (`SLUICE_MEMORY`) keep a runaway
-  agent or build from exhausting the host. (On SELinux-enforcing hosts the box runs
+  agent or build from exhausting the host. An opt-in hardened seccomp profile
+  (`SLUICE_SECCOMP=hardened`) additionally errors the in-container namespace-creation / tracing /
+  keyctl / mount syscall class (off by default - it breaks browser-engine sandboxes). (On
+  SELinux-enforcing hosts the box runs
   `--security-opt label=disable` so it can read the project mount; that drops the SELinux layer, but
   the guarantees above are unaffected.)
 - **Supply-chain fetch vs. runtime** -> deps are pulled at build (pre-firewall); the

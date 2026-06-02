@@ -10,7 +10,7 @@ set -u
 
 BASE="$(mktemp -d)"
 STORE="${XDG_STATE_HOME:-$HOME/.local/state}/sluice/sectest-state"   # host-side, OUTSIDE the temp tree
-CONTAINERS="sluice-sectest-ips sluice-sectest-hash sluice-sectest-pre sluice-sectest-state sluice-sectest-wt sluice-sectest-mnt sluice-sectest-harden sluice-sectest-doh"
+CONTAINERS="sluice-sectest-ips sluice-sectest-hash sluice-sectest-pre sluice-sectest-state sluice-sectest-wt sluice-sectest-mnt sluice-sectest-harden sluice-sectest-doh sluice-sectest-seccomp"
 cleanup() {
   # The entrypoint chowns the project + state mounts to uid 1000; chown the host tree back (via a
   # root container off a built sectest image - wolfi-base may lack chown) so the host can rm it.
@@ -185,5 +185,30 @@ else
   ok "doh: SLUICE_ALLOW_DOH=1 clears the denylist (opt-in)"
 fi
 ( cd "$doh" && "$SLUICE" stop ) >/dev/null 2>&1
+
+# --- SLUICE_SECCOMP=hardened: the namespace/userns syscall class is blocked (opt-in) -------------
+sc="$BASE/seccomp"; mkdir -p "$sc"
+printf 'SLUICE_NAME="sectest-seccomp"\nSLUICE_EXTRA_PKGS="util-linux-misc"\nSLUICE_RUN_CMD="bash"\n' > "$sc/sluice.config.sh"   # util-linux-misc ships /usr/bin/unshare
+( cd "$sc" && SLUICE_SECCOMP=hardened "$SLUICE" run true ) >/dev/null 2>&1   # build + up WITH the profile
+"$ENG" exec sluice-sectest-seccomp sh -c 'command -v unshare >/dev/null' 2>/dev/null \
+  && ok "seccomp: unshare binary present (real syscall test)" || bad "seccomp: unshare binary missing - test would false-pass"
+"$ENG" inspect sluice-sectest-seccomp --format '{{.HostConfig.SecurityOpt}}' 2>/dev/null | grep -q seccomp \
+  && ok "seccomp: hardened profile applied" || bad "seccomp: profile not applied"
+# unshare(CLONE_NEWUSER) is allowed for an unprivileged user normally; the profile must EPERM it.
+if "$ENG" exec --user sluice sluice-sectest-seccomp unshare -Ur true 2>/dev/null; then
+  bad "seccomp: unshare(NEWUSER) succeeded (profile not blocking the userns vector)"
+else
+  ok "seccomp: unshare(NEWUSER) blocked"
+fi
+# normal fork/exec (clone without NEWUSER) is untouched by the masked filter
+"$ENG" exec --user sluice sluice-sectest-seccomp sh -c 'echo hi | cat >/dev/null && echo ok' >/dev/null 2>&1 \
+  && ok "seccomp: normal fork/exec still works" || bad "seccomp: normal fork/exec broke"
+# default (no SLUICE_SECCOMP) leaves the engine profile - no sluice seccomp override
+( cd "$sc" && "$SLUICE" stop ) >/dev/null 2>&1
+( cd "$sc" && "$SLUICE" run true ) >/dev/null 2>&1
+"$ENG" inspect sluice-sectest-seccomp --format '{{.HostConfig.SecurityOpt}}' 2>/dev/null | grep -q 'seccomp=' \
+  && bad "seccomp: a sluice profile was applied without SLUICE_SECCOMP" \
+  || ok "seccomp: default run uses the engine profile (no override)"
+( cd "$sc" && "$SLUICE" stop ) >/dev/null 2>&1
 
 finish

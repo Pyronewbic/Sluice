@@ -109,6 +109,7 @@ Meta:
 Env: SLUICE_ENGINE  SLUICE_NO_BANNER  SLUICE_YES  SLUICE_NO_UPDATE_CHECK  NO_COLOR
      SLUICE_PIDS_LIMIT (default 4096)  SLUICE_MEMORY (e.g. 4g; unset = no cap)
      SLUICE_ALLOW_DOH=1 (permit DoH/DoT resolvers; blocked by default as an exfil channel)
+     SLUICE_SECCOMP=hardened (block namespace/trace/keyctl syscalls; breaks browser sandboxes)
 Docs: https://github.com/Pyronewbic/Sluice
 EOF
 }
@@ -1566,6 +1567,9 @@ start() {
     --sysctl net.ipv6.conf.all.disable_ipv6=1
     --sysctl net.ipv6.conf.default.disable_ipv6=1)
   [ -n "${SLUICE_MEMORY:-}" ] && run_args+=(--memory "$SLUICE_MEMORY")
+  # SLUICE_SECCOMP=hardened: opt-in profile that errors the namespace/trace/keyctl/mount class on top
+  # of the dropped caps (breaks browser-engine sandboxes; default = the engine's own profile).
+  [ "${SLUICE_SECCOMP:-}" = hardened ] && run_args+=(--security-opt "seccomp=$CORE/seccomp.json")
   # SELinux-enforcing hosts deny the box access to a bind mount without a label; run it unconfined for
   # SELinux only (non-root + caps + egress firewall + dir-only mount still confine it).
   selinux_enforcing && run_args+=(--security-opt label=disable)
