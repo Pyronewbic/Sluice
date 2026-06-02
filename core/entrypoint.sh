@@ -3,12 +3,13 @@
 # network (init-firewall.sh), then idle so sessions can be exec'd in as the sluice user.
 set -e
 
-# --- squid allowlist: base hosts (registries + GitHub) + SLUICE_ALLOW_DOMAINS ---
 . /usr/local/share/sluice.config.sh 2>/dev/null || true
-# The launcher passes the live host allowlist via SLUICE_RUNTIME_ALLOW; it wins over the baked copy
-# so `sluice learn` (and any allowlist edit) applies with no rebuild. Set-but-empty clears it; unset
-# (a bare `docker run`) keeps the baked value.
+# SLUICE_RUNTIME_ALLOW (live allowlist from the launcher) wins over the baked copy, so an allowlist
+# edit (e.g. `sluice learn`) needs no rebuild. Set-but-empty clears it; unset keeps the baked value.
 [ -n "${SLUICE_RUNTIME_ALLOW+x}" ] && SLUICE_ALLOW_DOMAINS="${SLUICE_RUNTIME_ALLOW}"
+# Same override semantics for the opt-in TLS-interception (bump) knobs (default off; see below).
+[ -n "${SLUICE_RUNTIME_BUMP+x}" ]      && SLUICE_BUMP_DOMAINS="${SLUICE_RUNTIME_BUMP}"
+[ -n "${SLUICE_RUNTIME_BUMP_URLS+x}" ] && SLUICE_BUMP_URLS="${SLUICE_RUNTIME_BUMP_URLS}"
 {
   printf '%s\n' github.com api.github.com codeload.github.com objects.githubusercontent.com \
                 registry.npmjs.org registry.yarnpkg.com
@@ -17,9 +18,8 @@ set -e
   for d in ${SLUICE_POLICY_ALLOW:-}; do printf '%s\n' "$d"; done
 } > /etc/squid/allowlist.txt
 
-# Audit mode (learn --audit): open egress to ALL HTTP/HTTPS hosts so one run logs every host the
-# app reaches. Runtime-only - edits this container's own /etc/squid.conf, never the image; the
-# container is ephemeral + credential-stripped. iptables still drops non-HTTP ports + IPv6.
+# Audit mode (learn --audit): open egress to ALL HTTP/HTTPS so one run logs every host the app reaches.
+# Runtime-only (this container's squid.conf, never the image); ephemeral + cred-stripped; iptables still drops non-HTTP + IPv6.
 if [ "${SLUICE_AUDIT:-}" = 1 ]; then
   echo "[sluice] AUDIT MODE: egress OPEN to all HTTP/HTTPS hosts (logging every SNI). Trusted code, no creds." >&2
   sed -i -e 's/^ssl_bump splice allowed_sni$/ssl_bump splice all/' \
@@ -28,11 +28,9 @@ fi
 
 # (IPv6-off + route_localnet are set via --sysctl at docker run; /proc/sys is ro here.)
 
-# --- caching DNS resolver (dnsmasq) ---------------------------------------------
-# squid's transparent-intercept Host-forgery check compares the client's connected IP
-# against squid's own DNS of the SNI. For rotating-CDN hosts (Google/Akamai) the two
-# lookups land on different pool IPs, so squid 409s a legitimate allowlisted host. A
-# shared cache makes the client and squid see the same IP set, so the check passes.
+# squid's transparent-intercept Host-forgery check compares the client's connected IP against squid's
+# own DNS of the SNI. For rotating-CDN hosts (Google/Akamai) the two lookups can hit different pool IPs,
+# so squid 409s a legit allowlisted host. A shared DNS cache makes both see the same IPs, so it passes.
 dns_up="$(awk '/^nameserver/ { print $2 }' /etc/resolv.conf 2>/dev/null | grep -v ':' | tr '\n' ' ')"
 [ -n "$dns_up" ] || dns_up="127.0.0.11"     # docker embedded DNS
 printf '%s\n' $dns_up > /run/sluice-dns-upstream   # init-firewall allows these for dnsmasq
@@ -58,16 +56,51 @@ if [ "$ok" != 1 ]; then
   exit 1
 fi
 
-# --- start the egress filter BEFORE the firewall --------------------------------
-# (init-firewall.sh's self-test makes a real request through the proxy.)
+# Start squid before the firewall: init-firewall.sh's self-test makes a real request through it.
 mkdir -p /etc/squid/ssl /var/log/squid /var/cache/squid /run/squid
-# Throwaway splice cert, generated per-container (so the published base image carries no key).
-# We splice (never forge), so it is never presented - it only lets squid bind the ssl-bump port.
-if [ ! -f /etc/squid/ssl/squid-cert.pem ]; then
-  openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
-    -keyout /etc/squid/ssl/squid-key.pem -out /etc/squid/ssl/squid-cert.pem \
-    -subj "/CN=sluice-egress-filter" 2>/dev/null
-  chmod 600 /etc/squid/ssl/squid-key.pem
+# Egress-filter cert. Default: a throwaway splice cert (never presented - we splice, never forge - so
+# the published base carries no key). With SLUICE_BUMP_DOMAINS set (scoped TLS interception, opt-in;
+# see THREAT_MODEL) the named hosts are decrypted for URL filtering, needing a per-container CA the box trusts.
+if [ -n "${SLUICE_BUMP_DOMAINS:-}" ] && [ "${SLUICE_AUDIT:-}" != 1 ]; then
+  : > /etc/squid/bumplist.txt; for d in ${SLUICE_BUMP_DOMAINS};   do printf '%s\n' "$d" >> /etc/squid/bumplist.txt; done
+  : > /etc/squid/bump-urls.txt; for u in ${SLUICE_BUMP_URLS:-};   do printf '%s\n' "$u" >> /etc/squid/bump-urls.txt; done
+  echo "[sluice] TLS interception (bump) ON for: $(tr '\n' ' ' < /etc/squid/bumplist.txt)- everything else still splices." >&2
+  if [ ! -f /etc/squid/ssl/squid-cert.pem ]; then
+    openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+      -keyout /etc/squid/ssl/squid-key.pem -out /etc/squid/ssl/squid-cert.pem \
+      -subj "/CN=sluice-egress-ca" \
+      -addext "basicConstraints=critical,CA:TRUE" \
+      -addext "keyUsage=critical,keyCertSign,cRLSign" 2>/dev/null
+    chmod 600 /etc/squid/ssl/squid-key.pem
+    # Make the box trust the CA. wolfi has no update-ca-certificates: append to the system bundle (this
+    # combined file is what SSL_CERT_FILE/REQUESTS_CA_BUNDLE point at; NODE_EXTRA_CA_CERTS gets the bare CA).
+    cat /etc/squid/ssl/squid-cert.pem >> /etc/ssl/certs/ca-certificates.crt
+  fi
+  # Per-host cert forging: init the cert-gen db (the helper creates the dir; the parent must exist).
+  [ -d /var/cache/squid/ssl_db ] || /usr/libexec/security_file_certgen -c -s /var/cache/squid/ssl_db -M 4MB >/dev/null 2>&1
+  # Turn on dynamic cert generation + the bump ACLs/rules (the static squid.conf stays splice-only).
+  # Idempotent: skip if already applied (a container restart re-runs this entrypoint).
+  if ! grep -q '^ssl_bump bump bump_sni' /etc/squid.conf; then
+    sed -i \
+      -e 's#^  generate-host-certificates=off#  generate-host-certificates=on#' \
+      -e '/^  generate-host-certificates=on/a sslcrtd_program /usr/libexec/security_file_certgen -s /var/cache/squid/ssl_db -M 4MB\nsslcrtd_children 4' \
+      -e '/^acl ssl_tunnel   method CONNECT/a acl bump_sni ssl::server_name "/etc/squid/bumplist.txt"\nacl bump_dom dstdomain        "/etc/squid/bumplist.txt"\nacl bump_url url_regex        "/etc/squid/bump-urls.txt"' \
+      -e 's#^ssl_bump splice allowed_sni#ssl_bump bump bump_sni\nssl_bump splice allowed_sni#' \
+      /etc/squid.conf
+    # Enforce per-URL only when patterns were given; else the bumped host is allowed wholesale (you
+    # still get full-URL logging). Patterns should embed the host, scoping them to one bumped host.
+    [ -s /etc/squid/bump-urls.txt ] \
+      && sed -i 's#^http_access allow allowed_host#http_access deny bump_dom !bump_url\nhttp_access allow allowed_host#' /etc/squid.conf
+  fi
+else
+  # Throwaway splice cert, generated per-container (so the published base image carries no key).
+  # We splice (never forge), so it is never presented - it only lets squid bind the ssl-bump port.
+  if [ ! -f /etc/squid/ssl/squid-cert.pem ]; then
+    openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+      -keyout /etc/squid/ssl/squid-key.pem -out /etc/squid/ssl/squid-cert.pem \
+      -subj "/CN=sluice-egress-filter" 2>/dev/null
+    chmod 600 /etc/squid/ssl/squid-key.pem
+  fi
 fi
 chown -R squid:squid /etc/squid/ssl /var/log/squid /var/cache/squid /run/squid 2>/dev/null || true
 # -N (single process) avoids flaky SMP/shm startup; squid drops to its own uid after binding.

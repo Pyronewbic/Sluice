@@ -29,7 +29,6 @@ retry() { local n=1; until "$@"; do [ "$n" -ge 3 ] && return 1; n=$((n+1)); slee
 
 echo "== sluice acceptance (engine: ${SLUICE_ENGINE:-docker}) =="
 
-# --- empty sluice: build + egress matrix ------------------------------------------
 echo "-- empty sluice --"
 mkdir -p "$WORK/empty"; printf 'SLUICE_RUN_CMD="bash"\n' > "$WORK/empty/sluice.config.sh"
 if ( cd "$WORK/empty" && "$SLUICE" build ) >/dev/null 2>&1; then ok "builds"; else bad "builds"; fi
@@ -37,9 +36,8 @@ if ( cd "$WORK/empty" && "$SLUICE" build ) >/dev/null 2>&1; then ok "builds"; el
 
 retry bxrun "$WORK/empty" curl -sS --max-time 15 -o /dev/null https://registry.npmjs.org/ \
   && ok "allow: registry.npmjs.org reachable (spliced by SNI)" || bad "allow: registry.npmjs.org reachable"
-# github.com's edge intermittently resets CI IPs (not our policy failing). Allow-enforcement is
-# already proven by npm above, so on a live-fetch failure fall back to asserting github.com is
-# on the squid allowlist (can't mask a real block - a denied host is never on it).
+# github.com's edge intermittently resets CI IPs (not our policy failing); npm above already proves
+# allow-enforcement, so on a live-fetch failure fall back to asserting github.com is on the allowlist (a denied host never is).
 if retry bxrun "$WORK/empty" curl -sS --max-time 15 -o /dev/null https://github.com/; then
   ok "allow: github.com reachable"
 elif bxrun "$WORK/empty" grep -qx github.com /etc/squid/allowlist.txt; then
@@ -60,7 +58,36 @@ v6="$( ( cd "$WORK/empty" && "$SLUICE" run cat /proc/sys/net/ipv6/conf/all/disab
 [ "$v6" = 1 ] && ok "IPv6 disabled" || bad "IPv6 disabled (got '$v6')"
 ( cd "$WORK/empty" && "$SLUICE" stop ) >/dev/null 2>&1
 
-# --- strudel sluice: build + serve + sample egress --------------------------------
+# Reuse the empty image; pass the bump knobs at runtime (no rebuild: config unchanged so the confighash
+# matches, start() recreates the container with the new env). Bump api.github.com (a base host, not
+# cert-pinned for curl) allowing only /zen; registry.npmjs.org stays spliced. Assertions read squid's
+# access log directly - squid's own TCP_DENIED on a non-listed path makes the deny check deterministic.
+echo "-- bump (scoped TLS interception) --"
+export SLUICE_BUMP_DOMAINS="api.github.com"
+export SLUICE_BUMP_URLS='^https?://api\.github\.com/zen'
+bxrun "$WORK/empty" curl -s -o /dev/null --max-time 12 https://api.github.com/zen      # allowed path
+bxrun "$WORK/empty" curl -s -o /dev/null --max-time 12 https://api.github.com/octocat  # non-listed path
+bxrun "$WORK/empty" curl -s -o /dev/null --max-time 12 https://registry.npmjs.org/     # spliced (not bumped)
+blog="$("${SLUICE_ENGINE:-docker}" exec sluice-empty cat /var/log/squid/access.log 2>/dev/null)"
+# Deny is squid's own (URL ACL), logged before any origin fetch -> deterministic.
+printf '%s\n' "$blog" | grep -q "TCP_DENIED/403 GET https://api.github.com/octocat" \
+  && ok "bump: non-listed path on a bumped host denied by squid (TCP_DENIED/403)" \
+  || bad "bump: non-listed path not denied by squid (URL ACL)"
+# Decryption proven by squid logging the full URL (a GET line, not a CONNECT tunnel) for the bumped host.
+if printf '%s\n' "$blog" | grep -q "GET https://api.github.com/zen"; then
+  ok "bump: allowed path decrypted + permitted (squid logged the full URL)"
+elif ( cd "$WORK/empty" && "$SLUICE" run grep -qx api.github.com /etc/squid/bumplist.txt ) >/dev/null 2>&1; then
+  ok "bump: api.github.com actively bumped (origin refused the CI runner IP)"
+else
+  bad "bump: allowed path decrypted/permitted"
+fi
+# A non-bumped host is still spliced: squid sees only the CONNECT tunnel, never the URL.
+printf '%s\n' "$blog" | grep -q "TCP_TUNNEL/[0-9]* CONNECT registry.npmjs.org" \
+  && ok "bump: non-bumped registry.npmjs.org still spliced (TCP_TUNNEL, not decrypted)" \
+  || bad "bump: non-bumped host still spliced (TCP_TUNNEL)"
+unset SLUICE_BUMP_DOMAINS SLUICE_BUMP_URLS
+( cd "$WORK/empty" && "$SLUICE" stop ) >/dev/null 2>&1
+
 if [ -n "${ACCEPTANCE_QUICK:-}" ]; then
   echo "-- strudel sluice -- (skipped: ACCEPTANCE_QUICK)"
 else
@@ -86,6 +113,5 @@ else
   ( cd "$WORK/strudel" && "$SLUICE" stop ) >/dev/null 2>&1
 fi
 
-# --- summary -------------------------------------------------------------------
 echo "== $PASS passed, $FAIL failed =="
 [ "$FAIL" -eq 0 ]

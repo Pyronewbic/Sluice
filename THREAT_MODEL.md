@@ -100,6 +100,20 @@ file or tool result steering an agent, or simply buggy agent code - any of which
     allowlist entry (item 2), and a malicious policy URL could add an exfil host - so point it only at a
     URL you control, same trust class as `SLUICE_PRELAUNCH` (you author the config).
 
+## Scoped TLS interception (opt-in, off by default)
+
+By default sluice **splices** every allowed host: it reads the SNI and passes the TLS through without
+decrypting, so it can't inspect payloads (the allowed-host laundering gap, item 2). `SLUICE_BUMP_DOMAINS`
+opts a **named** host into decryption: the box mints a per-container CA, trusts it, and forges that host's
+cert so squid sees the full request and can filter by URL (`SLUICE_BUMP_URLS` denies non-matching paths;
+omit it to allow the host wholesale but log full URLs). Every host *not* listed still splices - "never
+decrypts" stays the default. Weigh before listing a host: (1) a CA signing key now lives in that one
+container (per-run, never in the published base image; blast radius is the box itself); (2) **cert-pinned**
+hosts can't be bumped and will fail TLS, so list only hosts you control or that don't pin; (3) you are
+decrypting your own traffic to that host - the box's logs/egress receipt gain full URLs, so treat them as
+sensitive. It narrows laundering for the listed host (path-level filtering) but does not eliminate it:
+data hidden in an *allowed* path is still opaque.
+
 ## Residual risk, one line
 
 Egress is **hostname-filtered** (squid splice) with IPv6 off and direct-IP blocked, so the

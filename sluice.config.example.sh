@@ -68,6 +68,20 @@ SLUICE_ALLOW_IPS=""
 # org allowlist. Leave empty for none.
 SLUICE_POLICY_URL=""
 
+# Scoped TLS interception (SSL-bump): OPT-IN, OFF BY DEFAULT. By default every allowed host is
+# spliced (SNI read, never decrypted). List a host here and the box mints a per-container CA, trusts
+# it, and decrypts that host so squid can filter by URL - every other host still splices. Space/
+# newline-separated. WEIGH IT: a CA signing key then lives in the box for that run (blast radius is
+# the box itself), and cert-pinned hosts can't be bumped (they fail TLS) - list only hosts you
+# control or that don't pin. See THREAT_MODEL.md#scoped-tls-interception-opt-in-off-by-default.
+# e.g. "api.internal.example.com"
+SLUICE_BUMP_DOMAINS=""
+
+# url_regex patterns ALLOWED on a bumped host; non-matching paths get 403. Embed the host in the
+# pattern so it scopes to one bumped host. Space/newline-separated. Empty = allow each bumped host
+# wholesale but log its full URLs. e.g. "^https?://api\.internal\.example\.com/v1/"
+SLUICE_BUMP_URLS=""
+
 # --- serving --------------------------------------------------------------------
 
 # TCP ports to publish to the host (bound to 127.0.0.1 -> reach via localhost only).
