@@ -101,6 +101,12 @@ printf '%s' "$s1" | grep -q 'pkg:npm/cowsay@' && ok "--sbom has the cowsay npm p
   || bad "--sbom missing cowsay npm purl"
 [ "$s1" = "$s2" ] && ok "--sbom is deterministic (two runs identical)" || bad "--sbom not deterministic"
 
+# 4b. the hidden __sbom <image> arm (CI uses it to attest the base's SBOM) matches lock --sbom for the
+# same built image - it's the same codepath with an explicit ref instead of the derived project tag.
+si="$( "$SLUICE" __sbom "$container" 2>/dev/null )"
+[ "$si" = "$s1" ] && ok "__sbom <image> matches lock --sbom (attestation codepath)" \
+  || bad "__sbom <image> diverged from lock --sbom"
+
 # 5. lock --scan: vuln-scan the SBOM via a host scanner. Gated on a scanner being present (so it's a
 # skip without one; the nightly lock job installs grype). The lodash@4.17.4 pin above carries CVEs.
 if command -v grype >/dev/null 2>&1 || command -v trivy >/dev/null 2>&1; then

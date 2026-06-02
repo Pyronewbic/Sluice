@@ -52,7 +52,11 @@ file or tool result steering an agent, or simply buggy agent code - any of which
 - **Tampered sandbox core** -> the generic core (proxy, firewall, entrypoint, non-root user)
   can be pulled as a **cosign-signed base image** from GHCR (opt-in via `SLUICE_BASE_IMAGE`);
   `sluice` verifies the keyless signature before building on it (`SLUICE_REQUIRE_SIGNED=1` to
-  enforce). The image carries no private key (the splice cert is generated per-container).
+  enforce). CI also attaches a keyless **CycloneDX SBOM attestation** (in-toto) to the signed
+  digest, and `sluice` soft-verifies it alongside the signature, so a verified base carries a
+  signed inventory of what it contains. (The attested SBOM is amd64-derived; the apk/npm set is
+  arch-invariant, only the purl arch qualifier differs.) The image carries no private key (the
+  splice cert is generated per-container).
   Your declared `SLUICE_EXTRA_PKGS` are your own layer on top - `sluice lock` records a
   committable inventory (every apk, npm, pip, gem, and go package with its version + digest) so you can
   review and drift-detect exactly what's installed (`sluice doctor` flags drift; `sluice lock --check`

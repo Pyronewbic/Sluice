@@ -235,8 +235,8 @@ The guardrail that makes running untrusted code defensible:
   `SLUICE_BUMP_DOMAINS` opts into decrypting it for per-URL filtering (off by default;
   see [THREAT_MODEL](THREAT_MODEL.md#scoped-tls-interception-opt-in-off-by-default)).
 - **Signed core (opt-in).** Build FROM a cosign-signed base image (`SLUICE_BASE_IMAGE`)
-  instead of rebuilding `core/` locally; sluice verifies the signature first. The image
-  carries no key (the splice cert is generated per-container).
+  instead of rebuilding `core/` locally; sluice verifies the signature and its CycloneDX
+  SBOM attestation first. The image carries no key (the splice cert is generated per-container).
 
 Build-time setup (`SLUICE_SETUP_CMDS`) runs on the host *before* the firewall, so clones
 and dependency downloads have free egress; the *running* container is locked down.

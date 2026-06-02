@@ -488,13 +488,16 @@ cmd_lock_diff()  { _drift_report 0 "${1:-}"; }
 # `sluice lock --sbom`: a deterministic CycloneDX 1.6 SBOM (apk + npm + pip + gem purls) to stdout.
 # Assembled in-image (jq lives there); apk components carry their SHA-1 integrity hash (the db's Q1
 # checksum, hex-decoded). No timestamp/serial + purl-sorted so it's byte-stable; base/toolver/tag via env.
-cmd_sbom() {
-  maybe_build
-  local baseref bdig
+cmd_sbom() { maybe_build; _sbom_for "$tag"; }
+
+# Emit the CycloneDX SBOM for an arbitrary image ref (introspected in-image). cmd_sbom passes the built
+# project $tag; the hidden __sbom arm passes the base ref (so CI can attest the base's own SBOM).
+_sbom_for() {
+  local img="$1" baseref bdig
   baseref="${SLUICE_BASE_IMAGE:-cgr.dev/chainguard/wolfi-base}"
   bdig="$("$ENGINE" image inspect "$baseref" --format '{{ if .RepoDigests }}{{ index .RepoDigests 0 }}{{ end }}' 2>/dev/null || true)"
-  "$ENGINE" run --rm -i -e "SBOM_BASE=${bdig:-$baseref}" -e "SBOM_TOOLVER=$SLUICE_VERSION" -e "SBOM_IMAGE=$tag" \
-    --entrypoint sh "$tag" 2>/dev/null <<'SBOM'
+  "$ENGINE" run --rm -i -e "SBOM_BASE=${bdig:-$baseref}" -e "SBOM_TOOLVER=$SLUICE_VERSION" -e "SBOM_IMAGE=$img" \
+    --entrypoint sh "$img" 2>/dev/null <<'SBOM'
 SBOM_ARCH="$(apk --print-arch 2>/dev/null || uname -m)"; export SBOM_ARCH
 {
   # apk: name, version, and the Q1<base64-sha1> checksum decoded to hex (4th field; empty if undecodable).
@@ -839,26 +842,29 @@ ART
   printf '%s' "$r" >&2
 }
 
-# Per-command help (sluice <cmd> --help) + hidden helpers - before engine/config (they need neither).
+# container engine (docker, else podman; override SLUICE_ENGINE)
+resolve_engine() {
+  ENGINE="${SLUICE_ENGINE:-}"
+  if [ -z "$ENGINE" ]; then
+    if command -v docker >/dev/null 2>&1; then ENGINE=docker
+    elif command -v podman >/dev/null 2>&1; then ENGINE=podman
+    else die "no container engine found - install docker or podman, or set SLUICE_ENGINE"; fi
+  fi
+  command -v "$ENGINE" >/dev/null 2>&1 || die "SLUICE_ENGINE=$ENGINE not found on PATH"
+}
+
+# Per-command help (sluice <cmd> --help) + hidden helpers - before config (they need none).
 case "${2:-}" in -h|--help) help_for "${1:-}"; exit 0 ;; esac
 case "${1:-}" in
   __parent)      parent_of "${2:-}"; exit 0 ;;          # registrable parent (tests/completion)
   __collapsible) _collapsible "${2:-}" && echo yes || echo no; exit 0 ;;
+  __sbom)        [ -n "${2:-}" ] || die "usage: sluice __sbom <image-ref>"; resolve_engine; _sbom_for "$2"; exit $? ;;
 esac
 
-# container engine (docker, else podman; override SLUICE_ENGINE)
 # init + info commands need no engine; resolve one only for the rest.
 case "${1:-}" in
   init|help|-h|--help|version|-v|--version|doctor) ;;
-  *)
-    ENGINE="${SLUICE_ENGINE:-}"
-    if [ -z "$ENGINE" ]; then
-      if command -v docker >/dev/null 2>&1; then ENGINE=docker
-      elif command -v podman >/dev/null 2>&1; then ENGINE=podman
-      else die "no container engine found - install docker or podman, or set SLUICE_ENGINE"; fi
-    fi
-    command -v "$ENGINE" >/dev/null 2>&1 || die "SLUICE_ENGINE=$ENGINE not found on PATH"
-    ;;
+  *) resolve_engine ;;
 esac
 
 # `sluice init` helpers: best-effort manifest parsing (no jq), each returns 0
@@ -1167,7 +1173,7 @@ case "${1:-run-default}" in run-default) warn_auth_unset ;; esac
 # Verify a published base image's cosign signature (keyless/OIDC). Soft by default: warn if
 # cosign is absent or the image is unsigned; SLUICE_REQUIRE_SIGNED=1 makes either case fatal.
 verify_base() {
-  local img="$1"
+  local img="$1" att
   case "$img" in ghcr.io/*sluice-base*) ;; *) return 0 ;; esac   # only auto-verify our own base
   if ! command -v cosign >/dev/null 2>&1; then
     [ "${SLUICE_REQUIRE_SIGNED:-}" = 1 ] && die "SLUICE_REQUIRE_SIGNED=1 but cosign is not installed"
@@ -1177,6 +1183,16 @@ verify_base() {
        --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
        --certificate-identity-regexp='^https://github.com/Pyronewbic/Sluice/' >/dev/null 2>&1; then
     echo "[sluice] ${E_GRN}cosign-verified${E_RST} base image: $img" >&2
+    # also confirm the signed CycloneDX SBOM attestation (soft; bases signed before this had none).
+    cosign verify-attestation --type cyclonedx "$img" \
+      --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+      --certificate-identity-regexp='^https://github.com/Pyronewbic/Sluice/' >/dev/null 2>&1 && att=0 || att=$?
+    if [ "$att" = 0 ]; then
+      echo "[sluice] ${E_GRN}cosign-verified${E_RST} SBOM attestation: $img" >&2
+    else
+      [ "${SLUICE_REQUIRE_SIGNED:-}" = 1 ] && die "no verifiable SBOM attestation for $img"
+      echo "[sluice] ${E_YEL}note${E_RST}: $img is signed but has no verifiable SBOM attestation (continuing)" >&2
+    fi
   else
     [ "${SLUICE_REQUIRE_SIGNED:-}" = 1 ] && die "cosign verification failed for $img"
     echo "[sluice] ${E_YEL}WARNING:${E_RST} could not verify $img (continuing; SLUICE_REQUIRE_SIGNED=1 to enforce)" >&2

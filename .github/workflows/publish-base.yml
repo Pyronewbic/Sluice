@@ -69,6 +69,24 @@ jobs:
         run: cosign sign --yes "${IMAGE}@${DIGEST}"
         env:
           DIGEST: ${{ steps.push.outputs.digest }}
+
+      # --- attest sluice's own CycloneDX SBOM to the signed index digest (keyless). The SBOM comes from
+      #     the amd64 smoke image loaded above; the apk/npm set is arch-invariant (only the purl arch
+      #     qualifier differs), so one predicate covers the multi-arch index. ---
+      - name: Generate base SBOM
+        run: bin/sluice __sbom sluice-base:smoke > base.cdx.json
+      - name: cosign attest (CycloneDX SBOM)
+        run: cosign attest --yes --type cyclonedx --predicate base.cdx.json "${IMAGE}@${DIGEST}"
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+      - name: cosign verify-attestation (sanity)
+        run: |
+          cosign verify-attestation --type cyclonedx "${IMAGE}@${DIGEST}" \
+            --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+            --certificate-identity-regexp='^https://github.com/Pyronewbic/Sluice/' >/dev/null
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+
       - name: cosign verify (sanity)
         run: |
           cosign verify "${IMAGE}:${GITHUB_REF_NAME}" \
