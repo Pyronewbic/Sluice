@@ -1911,6 +1911,14 @@ case "${1:-run-default}" in
     else
       run_in sh -lc "${SLUICE_RUN_CMD:-bash}"
     fi
+    # A deliberate no-op run-cmd (e.g. the lock demo's `true`) exits 0 with no output and, absent
+    # egress, a silent receipt - indistinguishable from a hang. Say the box is up and what to run.
+    case "${SLUICE_RUN_CMD:-}" in
+      true|:|/bin/true)
+        _shell_hint="sluice shell"; [ -n "$SLUICE_BOX_TARGET" ] && _shell_hint="sluice -b $SLUICE_BOX_SLUG shell"
+        echo "${E_DIM}[sluice]${E_RST} SLUICE_RUN_CMD is '${SLUICE_RUN_CMD}' - box is up, nothing to run." >&2
+        echo "         try '$_shell_hint' or a subcommand (e.g. sluice lock)." >&2 ;;
+    esac
     ;;
   *) die "unknown command: $1 - run 'sluice help' for usage." ;;
 esac
