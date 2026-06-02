@@ -26,6 +26,11 @@ niche, mutually-exclusive `--check`/`--diff`/`--sbom` modes, so the lock-flag pr
 2026-06-01: keep `smoke`** (harmless, distinct - runs the baked smoke-test.sh - and CI-useful), so the
 **16-verb surface is final**. sluice stays a flat-verb task runner, not noun-verb.
 
+**Direction - open (2026-06-02): weight the next cycle toward new features, less on fixes/hardening.**
+0.7.0 was hardening-heavy (scoped TLS interception aside: the lean-comment pass, the escape-hatch test
+suite, CI-gating the manual verify-* suites, CLI polish). Steer 0.8.x toward net-new capability over
+further fix/test passes unless something is actually broken. Kept open - not yet resolved into items.
+
 ### 1.0 readiness checklist
 1.0 = a **stability commitment**, not new features. The v1 cut line is met and #1-#6 are landed, so
 cutting 1.0 is gated on locking the surface + closing (or consciously accepting) the confidence items
@@ -71,8 +76,9 @@ release notes with Highlights + Install + Docs links (the x.0 release-notes styl
       Linux dev machine; most target users are on Linux).
 
 **C. Quality bar (should already mostly hold - audit before cutting):**
-- [ ] All tests green: acceptance (12/12), init-detection (39), and the verify-* harnesses
-      (agents / runtimes / lock / learn / nix / audit / ls / seams).
+- [ ] All tests green: acceptance (15), init-detection (43), the no-Docker CLI + installer units
+      (cli / install), and the verify-* harnesses (security / agents / runtimes / lock / learn / nix /
+      audit / ls / seams - the manual ones now gated in nightly).
 - [ ] Docs current + consistent: README, THREAT_MODEL, examples/, sluice.config.example.sh, and help
       all match the locked surface (knob table = the frozen knobs; command list = the frozen verbs).
 - [ ] Distribution intact (already done): signed GHCR base + cosign-verify, tap, install.sh,
@@ -360,6 +366,16 @@ reserved `example.*` domains are filtered from learn's proposal (doctor/hint sta
 
 - **Stronger isolation** - opt-in gVisor runtime or microVM (Lima/krunkit) for users who
   need kernel-level isolation. Roadmap, not a v1 claim.
+  - *Edera (edera.dev) candidate (noted 2026-06-02).* A container-native Type-1 hypervisor (Xen); each
+    workload runs in a "zone" with its own kernel - the kernel-escape gap THREAT_MODEL disclaims.
+    Complementary on isolation, but the egress philosophies overlap: Edera filters at the host (nftables
+    + a host-side Squid/Envoy, by zone subnet); sluice filters in-box. Linchpin: do sluice's in-zone
+    iptables REDIRECT + squid + route_localnet/disable_ipv6 sysctls come up inside a zone? If yes, clean
+    compose (Edera is the escape-proof box, sluice runs unchanged inside); if no, fall back to Edera's
+    host-side filter and lose "policy travels with the box". Spike (Linux+Xen only; macOS stays
+    docker/podman): `protect workload launch --help` (its CLI has `-m` mount + `--cap-add`; `--sysctl`
+    is the open flag), then a ~30-min in-zone bring-up of `core/init-firewall.sh` + squid against the
+    acceptance egress matrix.
 - **Hosted control plane** - managed runners, org egress policies, audit/compliance, SSO.
   The monetization, *after* OSS adoption - not first. **OSS seams landed 2026-06-01** (the
   integration points, not the SaaS): `ls --json` / `doctor --json` (machine-readable inventory +
