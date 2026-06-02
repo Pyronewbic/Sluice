@@ -37,7 +37,14 @@ fi
 # squid's transparent-intercept Host-forgery check compares the client's connected IP against squid's
 # own DNS of the SNI. For rotating-CDN hosts (Google/Akamai) the two lookups can hit different pool IPs,
 # so squid 409s a legit allowlisted host. A shared DNS cache makes both see the same IPs, so it passes.
-dns_up="$(awk '/^nameserver/ { print $2 }' /etc/resolv.conf 2>/dev/null | grep -v ':' | tr '\n' ' ')"
+# Upstream resolvers for dnsmasq. Normally read from the resolv.conf docker set; in read-only mode
+# resolv.conf is already 127.0.0.1 (the launcher sets it via --dns, since we can't rewrite it under
+# --read-only), so the launcher passes the real upstream(s) in SLUICE_DNS_UPSTREAM instead.
+if [ -n "${SLUICE_DNS_UPSTREAM:-}" ]; then
+  dns_up="$SLUICE_DNS_UPSTREAM"
+else
+  dns_up="$(awk '/^nameserver/ { print $2 }' /etc/resolv.conf 2>/dev/null | grep -v ':' | tr '\n' ' ')"
+fi
 [ -n "$dns_up" ] || dns_up="127.0.0.11"     # docker embedded DNS
 printf '%s\n' $dns_up > /run/sluice-dns-upstream   # init-firewall allows these for dnsmasq
 {
@@ -49,9 +56,10 @@ printf '%s\n' $dns_up > /run/sluice-dns-upstream   # init-firewall allows these 
   echo "cache-size=2000"
   echo "min-cache-ttl=3600"        # pin pool IPs long enough that client + squid agree
   for u in $dns_up; do echo "server=$u"; done
-} > /etc/dnsmasq-sluice.conf
-dnsmasq --conf-file=/etc/dnsmasq-sluice.conf
-printf 'nameserver 127.0.0.1\n' > /etc/resolv.conf  # client + squid resolve via the cache
+} > /run/dnsmasq-sluice.conf       # /run (not /etc) so it works under a read-only rootfs
+dnsmasq --conf-file=/run/dnsmasq-sluice.conf
+# Point client + squid at the dnsmasq cache. Read-only mode already has resolv.conf=127.0.0.1 (--dns).
+[ "${SLUICE_READONLY_ROOT:-}" = 1 ] || printf 'nameserver 127.0.0.1\n' > /etc/resolv.conf
 ok=0
 for _ in $(seq 1 20); do
   if [ -n "$(dig +short +time=1 +tries=1 @127.0.0.1 registry.npmjs.org 2>/dev/null)" ]; then ok=1; break; fi

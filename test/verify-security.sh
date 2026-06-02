@@ -10,7 +10,7 @@ set -u
 
 BASE="$(mktemp -d)"
 STORE="${XDG_STATE_HOME:-$HOME/.local/state}/sluice/sectest-state"   # host-side, OUTSIDE the temp tree
-CONTAINERS="sluice-sectest-ips sluice-sectest-hash sluice-sectest-pre sluice-sectest-state sluice-sectest-wt sluice-sectest-mnt sluice-sectest-harden sluice-sectest-doh sluice-sectest-seccomp"
+CONTAINERS="sluice-sectest-ips sluice-sectest-hash sluice-sectest-pre sluice-sectest-state sluice-sectest-wt sluice-sectest-mnt sluice-sectest-harden sluice-sectest-doh sluice-sectest-seccomp sluice-sectest-ro"
 cleanup() {
   # The entrypoint chowns the project + state mounts to uid 1000; chown the host tree back (via a
   # root container off a built sectest image - wolfi-base may lack chown) so the host can rm it.
@@ -18,7 +18,7 @@ cleanup() {
   for i in $CONTAINERS; do "$ENG" image inspect "$i" >/dev/null 2>&1 && { img="$i"; break; }; done
   [ -n "$img" ] && "$ENG" run --rm --user root -v "$BASE:$BASE" -v "$STORE:$STORE" \
     --entrypoint chown "$img" -R "$(id -u):$(id -g)" "$BASE" "$STORE" >/dev/null 2>&1 || true
-  for c in $CONTAINERS; do "$ENG" rm -f "$c" >/dev/null 2>&1 || true; "$ENG" rmi -f "$c" >/dev/null 2>&1 || true; done
+  for c in $CONTAINERS; do "$ENG" rm -f -v "$c" >/dev/null 2>&1 || true; "$ENG" rmi -f "$c" >/dev/null 2>&1 || true; done
   rm -rf "$BASE" "$STORE" 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -210,5 +210,23 @@ fi
   && bad "seccomp: a sluice profile was applied without SLUICE_SECCOMP" \
   || ok "seccomp: default run uses the engine profile (no override)"
 ( cd "$sc" && "$SLUICE" stop ) >/dev/null 2>&1
+
+# --- SLUICE_READONLY_ROOT=1: immutable rootfs, writable only where the box needs it ---------------
+ro="$BASE/ro"; mkdir -p "$ro"
+printf 'SLUICE_NAME="sectest-ro"\nSLUICE_RUN_CMD="bash"\n' > "$ro/sluice.config.sh"
+( cd "$ro" && SLUICE_READONLY_ROOT=1 "$SLUICE" run true ) >/dev/null 2>&1   # build + bring up read-only
+[ "$("$ENG" inspect sluice-sectest-ro --format '{{.HostConfig.ReadonlyRootfs}}' 2>/dev/null)" = true ] \
+  && ok "readonly: rootfs is read-only" || bad "readonly: ReadonlyRootfs not set"
+if "$ENG" exec sluice-sectest-ro sh -c 'touch /evil' 2>/dev/null; then
+  bad "readonly: the rootfs was writable (--read-only not enforced)"
+else
+  ok "readonly: a write to / is rejected"
+fi
+"$ENG" exec --user sluice sluice-sectest-ro sh -c 'touch /home/sluice/.p && rm /home/sluice/.p' 2>/dev/null \
+  && ok "readonly: /home/sluice still writable (anon volume)" || bad "readonly: /home/sluice not writable"
+# the box reaching 'ready' under read-only means the firewall + dnsmasq (--dns/upstream path) came up
+"$ENG" exec sluice-sectest-ro sh -c 'grep -q registry.npmjs.org /etc/squid/allowlist.txt' 2>/dev/null \
+  && ok "readonly: firewall/DNS came up under read-only (allowlist live)" || bad "readonly: firewall/DNS failed under read-only"
+( cd "$ro" && "$SLUICE" stop ) >/dev/null 2>&1   # rm -v cleans the anon volumes
 
 finish

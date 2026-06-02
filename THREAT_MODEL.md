@@ -87,8 +87,10 @@ The guarantees below hold only while these do:
   root. `--pids-limit` (`SLUICE_PIDS_LIMIT`) and optional `--memory` (`SLUICE_MEMORY`) keep a runaway
   agent or build from exhausting the host. An opt-in hardened seccomp profile
   (`SLUICE_SECCOMP=hardened`) additionally errors the in-container namespace-creation / tracing /
-  keyctl / mount syscall class (off by default - it breaks browser-engine sandboxes). (On
-  SELinux-enforcing hosts the box runs
+  keyctl / mount syscall class (off by default - it breaks browser-engine sandboxes). An opt-in
+  `SLUICE_READONLY_ROOT=1` makes the rootfs immutable (tmpfs the ephemeral paths; `/etc/squid` +
+  `/home/sluice` become writable anon volumes pre-populated from the image) so a process can't tamper
+  with system files or leave persistence. (On SELinux-enforcing hosts the box runs
   `--security-opt label=disable` so it can read the project mount; that drops the SELinux layer, but
   the guarantees above are unaffected.)
 - **Supply-chain fetch vs. runtime** -> deps are pulled at build (pre-firewall); the

@@ -110,6 +110,7 @@ Env: SLUICE_ENGINE  SLUICE_NO_BANNER  SLUICE_YES  SLUICE_NO_UPDATE_CHECK  NO_COL
      SLUICE_PIDS_LIMIT (default 4096)  SLUICE_MEMORY (e.g. 4g; unset = no cap)
      SLUICE_ALLOW_DOH=1 (permit DoH/DoT resolvers; blocked by default as an exfil channel)
      SLUICE_SECCOMP=hardened (block namespace/trace/keyctl syscalls; breaks browser sandboxes)
+     SLUICE_READONLY_ROOT=1 (immutable rootfs; tmpfs + anon-volume the writable paths)
 Docs: https://github.com/Pyronewbic/Sluice
 EOF
 }
@@ -1413,8 +1414,8 @@ if ! PROJECT_CONFIG="$(find_config)"; then
   if [ -n "$SLUICE_BOX_TARGET" ]; then
     container="$SLUICE_BOX_IMAGE"; tag="$SLUICE_BOX_IMAGE"
     case "${1:-run-default}" in
-      stop) "$RUNNER" rm -f "$container" >/dev/null 2>&1 || true; echo "[sluice] $container stopped"; exit 0 ;;
-      rm)   "$RUNNER" rm -f "$container" >/dev/null 2>&1 || true; "$ENGINE" rmi -f "$tag" >/dev/null 2>&1 || true; echo "[sluice] removed $container (container + image)"; exit 0 ;;
+      stop) "$RUNNER" rm -f -v "$container" >/dev/null 2>&1 || true; echo "[sluice] $container stopped"; exit 0 ;;
+      rm)   "$RUNNER" rm -f -v "$container" >/dev/null 2>&1 || true; "$ENGINE" rmi -f "$tag" >/dev/null 2>&1 || true; echo "[sluice] removed $container (container + image)"; exit 0 ;;
       *)    die "box '$SLUICE_BOX_SLUG' is an orphan (project dir ${BOX_PROJECT:-?} is gone) - 'sluice -b $SLUICE_BOX_SLUG rm' to remove it" ;;
     esac
   fi
@@ -1516,7 +1517,7 @@ build() {
   else
     rm -rf "$tmp"; die "image build failed"
   fi
-  "$RUNNER" rm -f "$container" >/dev/null 2>&1 || true   # rebuilt image -> fresh container
+  "$RUNNER" rm -f -v "$container" >/dev/null 2>&1 || true   # rebuilt image -> fresh container
   runtime_sync_image force
 }
 
@@ -1540,7 +1541,7 @@ image_stale() {
 
 # start: run the idle container (firewall comes up in the entrypoint)
 start() {
-  "$RUNNER" rm -f "$container" >/dev/null 2>&1 || true
+  "$RUNNER" rm -f -v "$container" >/dev/null 2>&1 || true
 
   # Optional host-side hook to stage credentials/secrets before launch.
   if [ -n "${SLUICE_PRELAUNCH:-}" ]; then
@@ -1570,6 +1571,20 @@ start() {
   # SLUICE_SECCOMP=hardened: opt-in profile that errors the namespace/trace/keyctl/mount class on top
   # of the dropped caps (breaks browser-engine sandboxes; default = the engine's own profile).
   [ "${SLUICE_SECCOMP:-}" = hardened ] && run_args+=(--security-opt "seccomp=$CORE/seccomp.json")
+  # SLUICE_READONLY_ROOT=1: immutable rootfs. tmpfs the ephemeral system paths; the two dirs that mix
+  # baked content with runtime writes (/etc/squid, /home/sluice) become anon volumes (pre-populated
+  # from the image, writable). resolv.conf can't be rewritten under --read-only, so we set it via
+  # --dns 127.0.0.1 (-> dnsmasq) and hand the real upstream(s) to the entrypoint via SLUICE_DNS_UPSTREAM
+  # (probed from a throwaway run of the image, which still has docker's default resolv.conf).
+  if [ "${SLUICE_READONLY_ROOT:-}" = 1 ]; then
+    local _ro_up
+    _ro_up="$("$ENGINE" run --rm --entrypoint sh "$tag" -c 'awk "/^nameserver/{print \$2}" /etc/resolv.conf | grep -v : | tr "\n" " "' 2>/dev/null | sed 's/ *$//')"
+    [ -n "$_ro_up" ] || _ro_up="127.0.0.11"
+    run_args+=(--read-only
+      --tmpfs /tmp --tmpfs /run --tmpfs /var/log/squid --tmpfs /var/cache/squid
+      -v /etc/squid -v /home/sluice
+      --dns 127.0.0.1 -e "SLUICE_DNS_UPSTREAM=$_ro_up" -e SLUICE_READONLY_ROOT=1)
+  fi
   # SELinux-enforcing hosts deny the box access to a bind mount without a label; run it unconfined for
   # SELinux only (non-root + caps + egress firewall + dir-only mount still confine it).
   selinux_enforcing && run_args+=(--security-opt label=disable)
@@ -1917,8 +1932,8 @@ EOF
 case "${1:-run-default}" in
   build)   build; exit 0 ;;
   rebuild) build; start; exit 0 ;;
-  stop)    "$RUNNER" rm -f "$container" >/dev/null 2>&1 || true; echo "[sluice] $container stopped"; exit 0 ;;
-  rm)      "$RUNNER" rm -f "$container" >/dev/null 2>&1 || true; "$ENGINE" rmi -f "$tag" >/dev/null 2>&1 || true; echo "[sluice] removed $container (container + image)"; exit 0 ;;
+  stop)    "$RUNNER" rm -f -v "$container" >/dev/null 2>&1 || true; echo "[sluice] $container stopped"; exit 0 ;;
+  rm)      "$RUNNER" rm -f -v "$container" >/dev/null 2>&1 || true; "$ENGINE" rmi -f "$tag" >/dev/null 2>&1 || true; echo "[sluice] removed $container (container + image)"; exit 0 ;;
   logs)    "$RUNNER" logs -f "$container" ;;
   smoke)
     maybe_build
