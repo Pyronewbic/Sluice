@@ -11,11 +11,13 @@ set -u
 
 work="$(mktemp -d)/lock"; mkdir -p "$work"
 cat > "$work/sluice.config.sh" <<'CFG'
-SLUICE_EXTRA_PKGS="ripgrep python-3.12 py3.12-pip go"
+SLUICE_EXTRA_PKGS="ripgrep python-3.12 py3.12-pip go rust"
 SLUICE_EXTRA_NPM="cowsay lodash@4.17.4"
-SLUICE_SETUP_ROOT_CMDS="pip3 install --break-system-packages --quiet requests && go install rsc.io/2fa@latest"
+SLUICE_SETUP_ROOT_CMDS="pip3 install --break-system-packages --quiet requests && go install rsc.io/2fa@latest && mkdir -p /root/.cargo && printf '%s' '{\"installs\":{\"ripgrep 14.1.1 (registry+https://github.com/rust-lang/crates.io-index)\":{}},\"v\":4}' > /root/.cargo/.crates2.json"
 SLUICE_RUN_CMD="bash"
 CFG
+# cargo: 'rust' gives the cargo binary; we seed a representative ~/.cargo/.crates2.json rather than
+# `cargo install` a crate (which needs a C linker + a compile). The inventory arm only reads that file.
 container="sluice-lock"
 
 echo "== sluice supply-chain (lock / --check / --sbom) =="
@@ -40,6 +42,8 @@ grep -qE '^pip +requests ' "$work/sluice.lock" && ok "lock recorded requests (pi
   || bad "lock inventory missing pip requests"
 grep -qE '^go +rsc\.io/2fa ' "$work/sluice.lock" && ok "lock recorded rsc.io/2fa (go)" \
   || bad "lock inventory missing go rsc.io/2fa"
+grep -qE '^cargo +ripgrep ' "$work/sluice.lock" && ok "lock recorded ripgrep (cargo)" \
+  || bad "lock inventory missing cargo ripgrep"
 
 # 2c. --diff is read-only (exit 0) when in sync.
 ( cd "$work" && "$SLUICE" lock --diff ) >/dev/null 2>&1 && ok "--diff in sync (exit 0)" \
@@ -70,7 +74,7 @@ printf '%s' "$sb" | grep -q 'pkg:apk/wolfi/ripgrep@.*arch=' && ok "--sbom apk pu
   || bad "--sbom apk purl missing arch qualifier"
 
 # 3. drift: add a package, rebuild, --check must fail (exit 1) and name the drift.
-printf 'SLUICE_EXTRA_PKGS="ripgrep python-3.12 py3.12-pip go tree"\n' >> "$work/sluice.config.sh"  # last wins
+printf 'SLUICE_EXTRA_PKGS="ripgrep python-3.12 py3.12-pip go rust tree"\n' >> "$work/sluice.config.sh"  # last wins
 ( cd "$work" && "$SLUICE" build ) >/dev/null 2>&1
 out="$( cd "$work" && "$SLUICE" lock --check 2>&1 )"; rc=$?
 if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'tree'; then
@@ -99,6 +103,8 @@ printf '%s' "$s1" | grep -q 'pkg:apk/wolfi/ripgrep@' && ok "--sbom has the ripgr
   || bad "--sbom missing ripgrep apk purl"
 printf '%s' "$s1" | grep -q 'pkg:npm/cowsay@' && ok "--sbom has the cowsay npm purl" \
   || bad "--sbom missing cowsay npm purl"
+printf '%s' "$s1" | grep -q 'pkg:cargo/ripgrep@' && ok "--sbom has the ripgrep cargo purl" \
+  || bad "--sbom missing ripgrep cargo purl"
 [ "$s1" = "$s2" ] && ok "--sbom is deterministic (two runs identical)" || bad "--sbom not deterministic"
 
 # 4b. the hidden __sbom <image> arm (CI uses it to attest the base's SBOM) matches lock --sbom for the
@@ -106,6 +112,40 @@ printf '%s' "$s1" | grep -q 'pkg:npm/cowsay@' && ok "--sbom has the cowsay npm p
 si="$( "$SLUICE" __sbom "$container" 2>/dev/null )"
 [ "$si" = "$s1" ] && ok "__sbom <image> matches lock --sbom (attestation codepath)" \
   || bad "__sbom <image> diverged from lock --sbom"
+
+# 4c. --sbom --format spdx: a second serialization of the SAME package set (SPDX 2.3) - deterministic,
+# reusing the CycloneDX purls as externalRefs; and bare --sbom must stay byte-identical (no regression).
+sp1="$( cd "$work" && "$SLUICE" lock --sbom --format spdx 2>/dev/null )"
+sp2="$( cd "$work" && "$SLUICE" lock --sbom --format spdx 2>/dev/null )"
+if command -v jq >/dev/null 2>&1; then
+  printf '%s' "$sp1" | jq -e '.spdxVersion=="SPDX-2.3" and (.packages|length>0)' >/dev/null 2>&1 \
+    && ok "--sbom --format spdx is valid SPDX 2.3" || bad "--sbom --format spdx not valid SPDX 2.3"
+fi
+printf '%s' "$sp1" | grep -q 'pkg:apk/wolfi/ripgrep@' && ok "--sbom spdx reuses the apk purl (externalRef)" \
+  || bad "--sbom spdx missing the shared apk purl"
+printf '%s' "$sp1" | grep -q 'pkg:cargo/ripgrep@' && ok "--sbom spdx carries the cargo purl" \
+  || bad "--sbom spdx missing the cargo purl"
+[ "$sp1" = "$sp2" ] && ok "--sbom spdx is deterministic" || bad "--sbom spdx not deterministic"
+sdef="$( cd "$work" && "$SLUICE" lock --sbom --format cyclonedx 2>/dev/null )"
+[ "$sdef" = "$s1" ] && ok "--sbom --format cyclonedx == bare --sbom (default unchanged)" \
+  || bad "--sbom --format cyclonedx diverged from bare --sbom"
+
+# 4d. lock --enforce: a strict CI gate - passes in sync, fails on drift, and (unlike --check) refuses a
+# stale image (dies asking to rebuild) instead of tolerating it. Restores a clean image for section 5.
+( cd "$work" && "$SLUICE" lock ) >/dev/null 2>&1   # in sync vs the built image
+( cd "$work" && "$SLUICE" lock --enforce ) >/dev/null 2>&1 && ok "lock --enforce passes in sync" \
+  || bad "lock --enforce should pass when in sync"
+printf 'SLUICE_EXTRA_PKGS="ripgrep python-3.12 py3.12-pip go rust tree"\n' >> "$work/sluice.config.sh"
+( cd "$work" && "$SLUICE" build ) >/dev/null 2>&1   # image now drifts from the committed lock
+( cd "$work" && "$SLUICE" lock --enforce ) >/dev/null 2>&1 \
+  && bad "lock --enforce did NOT gate on drift" || ok "lock --enforce gates (non-zero) on drift"
+( cd "$work" && "$SLUICE" lock ) >/dev/null 2>&1    # relock clears the drift
+printf 'SLUICE_EXTRA_PKGS="ripgrep python-3.12 py3.12-pip go rust tree git"\n' >> "$work/sluice.config.sh"  # confighash changes; do NOT rebuild
+en="$( cd "$work" && "$SLUICE" lock --enforce 2>&1 )"; enrc=$?
+{ printf '%s' "$en" | grep -qi rebuild && [ "$enrc" -ne 0 ]; } && ok "lock --enforce refuses a stale image" \
+  || bad "lock --enforce should refuse a stale image (rc=$enrc)"
+( cd "$work" && "$SLUICE" build ) >/dev/null 2>&1   # restore a non-stale image + lock for section 5
+( cd "$work" && "$SLUICE" lock ) >/dev/null 2>&1
 
 # 5. lock --scan: vuln-scan the SBOM via a host scanner. Gated on a scanner being present (so it's a
 # skip without one; the nightly lock job installs grype). The lodash@4.17.4 pin above carries CVEs.

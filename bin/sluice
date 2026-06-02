@@ -126,7 +126,7 @@ help_for() {
     ls)      echo "sluice ls [--json]      - list all sluice boxes on this machine." ;;
     egress)  echo "sluice egress [--json]  - show what this box reached vs. was blocked." ;;
     logs)    echo "sluice logs             - follow firewall + readiness logs." ;;
-    lock)    echo "sluice lock [--check [--json] | --diff [--json] | --sbom | --scan [--json] [--fail-on <sev>]] - record/verify/vuln-scan the supply-chain inventory." ;;
+    lock)    echo "sluice lock [--check [--json] | --diff [--json] | --enforce [--json] | --sbom [--format cyclonedx|spdx] | --scan [--json] [--fail-on <sev>]] - record/verify/vuln-scan the supply-chain inventory." ;;
     smoke)   echo "sluice smoke            - build (if needed) + run the image smoke test." ;;
     version) echo "sluice version [--json] - show version + host runtime." ;;
     *)       usage ;;
@@ -367,6 +367,7 @@ npm ls -g --depth=0 --json 2>/dev/null | jq -r '(.dependencies // {})|to_entries
 command -v pip3 >/dev/null 2>&1 && pip3 list --format=json 2>/dev/null | jq -r '.[]|"pip  \(.key//.name|ascii_downcase) \(.value//.version)"' 2>/dev/null
 command -v gem  >/dev/null 2>&1 && gem list --local --quiet 2>/dev/null | awk '{name=$1;rest=$0;sub(/^[^(]*\(/,"",rest);sub(/\).*$/,"",rest);n=split(rest,vs,/, */);for(i=1;i<=n;i++){v=vs[i];sub(/^default: */,"",v);if(v!="")printf "gem  %s %s\n",name,v}}'
 command -v go   >/dev/null 2>&1 && { gb=""; for d in "$(go env GOBIN 2>/dev/null)" "$(go env GOPATH 2>/dev/null)/bin" /home/sluice/go/bin; do [ -n "$d" ] && [ -d "$d" ] || continue; case " $gb " in *" $d "*) ;; *) gb="$gb $d";; esac; done; for d in $gb; do for f in "$d"/*; do [ -f "$f" ] && [ -x "$f" ] || continue; go version -m "$f" 2>/dev/null | awk '$1=="mod"{print "go  "$2" "$3; exit}'; done; done; }
+command -v cargo >/dev/null 2>&1 && { for ch in "${CARGO_HOME:-$HOME/.cargo}" /home/sluice/.cargo /root/.cargo; do [ -f "$ch/.crates2.json" ] || continue; jq -r '.installs|keys[]|split(" ")|"cargo  \(.[0]) \(.[1])"' "$ch/.crates2.json" 2>/dev/null; break; done; }
 true
 INTROSPECT
 }
@@ -374,7 +375,7 @@ INTROSPECT
 # Build (if needed) and write ./sluice.lock from the image inventory.
 write_lock() {
   maybe_build
-  local lock="$PROJECT_DIR/sluice.lock" inv na nn np ng ngo parts deltarows="" had_lock=0
+  local lock="$PROJECT_DIR/sluice.lock" inv na nn np ng ngo nc parts deltarows="" had_lock=0
   inv="$(current_inventory)"
   # Capture the supply-chain delta vs the existing lock BEFORE overwriting (reuse $inv; no re-introspect).
   [ -f "$lock" ] && { had_lock=1; deltarows="$(classify_drift "$(lock_drift "$inv")")"; }
@@ -389,11 +390,13 @@ write_lock() {
   np="$(printf '%s\n' "$inv" | grep -c '^pip ' || true)"
   ng="$(printf '%s\n' "$inv" | grep -c '^gem ' || true)"
   ngo="$(printf '%s\n' "$inv" | grep -c '^go ' || true)"
+  nc="$(printf '%s\n' "$inv" | grep -c '^cargo ' || true)"
   parts="$na apk"
   [ "$nn" -gt 0 ]  && parts="$parts + $nn npm"
   [ "$np" -gt 0 ]  && parts="$parts + $np pip"
   [ "$ng" -gt 0 ]  && parts="$parts + $ng gem"
   [ "$ngo" -gt 0 ] && parts="$parts + $ngo go"
+  [ "$nc" -gt 0 ]  && parts="$parts + $nc cargo"
   echo "[sluice] wrote $lock ($parts packages)"
   if [ "$had_lock" = 1 ] && [ -n "$deltarows" ]; then
     echo "[sluice] supply-chain delta since last lock: +$(printf '%s\n' "$deltarows" | grep -c '^add' || true) -$(printf '%s\n' "$deltarows" | grep -c '^del' || true) ~$(printf '%s\n' "$deltarows" | grep -c '^chg' || true)"
@@ -455,15 +458,17 @@ render_drift_json() {
     END{ printf "{\"in_sync\":%s,\"added\":[%s],\"removed\":[%s],\"changed\":[%s]}\n", (n==0?"true":"false"), a, d, c }'
 }
 
-# Shared drift report for --check (exit 1 on drift) and --diff (exit 0). $1 = exit-on-drift, $2 = --json|"".
+# Shared drift report for --check (exit 1 on drift), --diff (exit 0), and --enforce (strict). $1 =
+# exit-on-drift, $2 = --json|"", $3 = strict|"" (refuse to build/tolerate a stale image - a pure verifier).
 _drift_report() {
-  local on_drift="$1" json=0; [ "${2:-}" = --json ] && json=1
+  local on_drift="$1" json=0 strict=0; [ "${2:-}" = --json ] && json=1; [ "${3:-}" = strict ] && strict=1
   [ -f "$PROJECT_DIR/sluice.lock" ] || die "no sluice.lock to check against - run 'sluice lock' first"
   # A check verifies the artifact as built: build only if no image exists; if the image predates a
   # config edit, note it (on stderr, so --json stays clean) but still report against what's built -
-  # a gate shouldn't silently rebuild (that's `sluice build`/`sluice lock`).
-  if image_missing; then build
-  elif image_stale; then echo "[sluice] ${E_YEL}note${E_RST}: image predates config edits - run 'sluice build' to refresh" >&2; fi
+  # a gate shouldn't silently rebuild (that's `sluice build`/`sluice lock`). --enforce is stricter
+  # still: it refuses to build or to report against a stale image (a CI gate must not mutate).
+  if image_missing; then [ "$strict" = 1 ] && die "no built image to enforce against - run 'sluice build' first"; build
+  elif image_stale; then [ "$strict" = 1 ] && die "image predates config edits - rebuild before 'sluice lock --enforce'"; echo "[sluice] ${E_YEL}note${E_RST}: image predates config edits - run 'sluice build' to refresh" >&2; fi
   local rows; rows="$(classify_drift)"
   if [ "$json" = 1 ]; then
     [ -z "$rows" ] && { echo '{"in_sync":true,"added":[],"removed":[],"changed":[]}'; return 0; }
@@ -484,11 +489,28 @@ _drift_report() {
 cmd_lock_check() { _drift_report 1 "${1:-}"; }
 # `sluice lock --diff [--json]`: same drift view, read-only (exit 0) - a local review, not a CI gate.
 cmd_lock_diff()  { _drift_report 0 "${1:-}"; }
+# `sluice lock --enforce [--json]`: a strict CI gate - like --check, but refuses to build or to tolerate
+# a stale image (verify the committed lock against the image as-built, no side effects). Gates against
+# the committed lock, not bit-reproducibility (Wolfi apk is a rolling repo).
+cmd_lock_enforce() { _drift_report 1 "${1:-}" strict; }
 
-# `sluice lock --sbom`: a deterministic CycloneDX 1.6 SBOM (apk + npm + pip + gem purls) to stdout.
-# Assembled in-image (jq lives there); apk components carry their SHA-1 integrity hash (the db's Q1
-# checksum, hex-decoded). No timestamp/serial + purl-sorted so it's byte-stable; base/toolver/tag via env.
-cmd_sbom() { maybe_build; _sbom_for "$tag"; }
+# `sluice lock --sbom [--format cyclonedx|spdx]`: a deterministic SBOM (apk + npm + pip + gem + go +
+# cargo purls) to stdout. Assembled in-image (jq lives there); apk components carry their SHA-1 integrity
+# hash (the db's Q1 checksum, hex-decoded). No timestamp/serial + purl-sorted so it's byte-stable;
+# base/toolver/tag via env. Default CycloneDX 1.6; --format spdx emits the same package set as SPDX 2.3.
+cmd_sbom() {
+  local fmt=cyclonedx
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --format)   fmt="${2:-}"; [ -n "$fmt" ] || die "usage: sluice lock --sbom [--format cyclonedx|spdx]"; shift ;;
+      --format=*) fmt="${1#--format=}" ;;
+      *)          die "usage: sluice lock --sbom [--format cyclonedx|spdx]" ;;
+    esac
+    shift
+  done
+  case "$fmt" in cyclonedx|spdx) ;; *) die "invalid --sbom format '$fmt' (cyclonedx|spdx)" ;; esac
+  maybe_build; _sbom_for "$tag" "$fmt"
+}
 
 # Emit the CycloneDX SBOM for an arbitrary image ref (introspected in-image). cmd_sbom passes the built
 # project $tag; the hidden __sbom arm passes the base ref (so CI can attest the base's own SBOM).
@@ -497,7 +519,7 @@ _sbom_for() {
   baseref="${SLUICE_BASE_IMAGE:-cgr.dev/chainguard/wolfi-base}"
   bdig="$("$ENGINE" image inspect "$baseref" --format '{{ if .RepoDigests }}{{ index .RepoDigests 0 }}{{ end }}' 2>/dev/null || true)"
   "$ENGINE" run --rm -i -e "SBOM_BASE=${bdig:-$baseref}" -e "SBOM_TOOLVER=$SLUICE_VERSION" -e "SBOM_IMAGE=$img" \
-    --entrypoint sh "$img" 2>/dev/null <<'SBOM'
+    -e "SBOM_FORMAT=${2:-cyclonedx}" --entrypoint sh "$img" 2>/dev/null <<'SBOM'
 SBOM_ARCH="$(apk --print-arch 2>/dev/null || uname -m)"; export SBOM_ARCH
 {
   # apk: name, version, and the Q1<base64-sha1> checksum decoded to hex (4th field; empty if undecodable).
@@ -510,24 +532,36 @@ SBOM_ARCH="$(apk --print-arch 2>/dev/null || uname -m)"; export SBOM_ARCH
   command -v pip3 >/dev/null 2>&1 && pip3 list --format=json 2>/dev/null | jq -r '.[]|"pip\t\(.key//.name|ascii_downcase)\t\(.value//.version)\t"' 2>/dev/null
   command -v gem  >/dev/null 2>&1 && gem list --local --quiet 2>/dev/null | awk '{name=$1;rest=$0;sub(/^[^(]*\(/,"",rest);sub(/\).*$/,"",rest);n=split(rest,vs,/, */);for(i=1;i<=n;i++){v=vs[i];sub(/^default: */,"",v);if(v!="")printf "gem\t%s\t%s\t\n",name,v}}'
   command -v go   >/dev/null 2>&1 && { gb=""; for d in "$(go env GOBIN 2>/dev/null)" "$(go env GOPATH 2>/dev/null)/bin" /home/sluice/go/bin; do [ -n "$d" ] && [ -d "$d" ] || continue; case " $gb " in *" $d "*) ;; *) gb="$gb $d";; esac; done; for d in $gb; do for f in "$d"/*; do [ -f "$f" ] && [ -x "$f" ] || continue; go version -m "$f" 2>/dev/null | awk '$1=="mod"{printf "go\t%s\t%s\t\n",$2,$3; exit}'; done; done; }
+  command -v cargo >/dev/null 2>&1 && { for ch in "${CARGO_HOME:-$HOME/.cargo}" /home/sluice/.cargo /root/.cargo; do [ -f "$ch/.crates2.json" ] || continue; jq -r '.installs|keys[]|split(" ")|"cargo\t\(.[0])\t\(.[1])\t"' "$ch/.crates2.json" 2>/dev/null; break; done; }
   true
 } | jq -R -s '
-  [ split("\n")[] | select(length>0) | split("\t")
-    | { eco:.[0], name:.[1], version:.[2], hash:.[3] }
-    | .purl = ( if   .eco=="apk" then "pkg:apk/wolfi/"+.name+"@"+.version+"?arch="+env.SBOM_ARCH+"&distro=wolfi"
-                elif .eco=="npm" then "pkg:npm/"+.name+"@"+.version
-                elif .eco=="pip" then "pkg:pypi/"+.name+"@"+.version
-                elif .eco=="go"  then "pkg:golang/"+.name+"@"+.version
-                else                  "pkg:gem/"+.name+"@"+.version end )
-    | { type:"library", "bom-ref":.purl, name:.name, version:.version, purl:.purl }
-      + ( if (.hash // "") != "" then { hashes:[ { alg:"SHA-1", content:.hash } ] } else {} end ) ]
-  | unique_by(.purl)
-  | { bomFormat:"CycloneDX", specVersion:"1.6", version:1,
-      metadata:{
-        tools:{ components:[ { type:"application", name:"sluice", version:env.SBOM_TOOLVER } ] },
-        component:{ type:"container", name:env.SBOM_IMAGE,
-                    properties:[ { name:"sluice:base", value:env.SBOM_BASE } ] } },
-      components: . }'
+  ( [ split("\n")[] | select(length>0) | split("\t")
+      | { eco:.[0], name:.[1], version:.[2], hash:.[3] }
+      | .purl = ( if   .eco=="apk"   then "pkg:apk/wolfi/"+.name+"@"+.version+"?arch="+env.SBOM_ARCH+"&distro=wolfi"
+                  elif .eco=="npm"   then "pkg:npm/"+.name+"@"+.version
+                  elif .eco=="pip"   then "pkg:pypi/"+.name+"@"+.version
+                  elif .eco=="go"    then "pkg:golang/"+.name+"@"+.version
+                  elif .eco=="cargo" then "pkg:cargo/"+.name+"@"+.version
+                  else                    "pkg:gem/"+.name+"@"+.version end ) ]
+    | unique_by(.purl) ) as $pkgs
+  | if env.SBOM_FORMAT=="spdx"
+    then { spdxVersion:"SPDX-2.3", dataLicense:"CC0-1.0", SPDXID:"SPDXRef-DOCUMENT",
+           name:env.SBOM_IMAGE, documentNamespace:("https://sluice.invalid/"+env.SBOM_IMAGE),
+           creationInfo:{ created:"1970-01-01T00:00:00Z", creators:[ "Tool: sluice-"+env.SBOM_TOOLVER ] },
+           packages:[ $pkgs[] | { SPDXID:("SPDXRef-Package-"+(.purl|gsub("[^A-Za-z0-9.-]";"-"))),
+                                  name:.name, versionInfo:.version, downloadLocation:"NOASSERTION",
+                                  externalRefs:[ { referenceCategory:"PACKAGE-MANAGER", referenceType:"purl", referenceLocator:.purl } ] }
+                              + ( if (.hash // "") != "" then { checksums:[ { algorithm:"SHA1", checksumValue:.hash } ] } else {} end ) ],
+           relationships:[ $pkgs[] | { spdxElementId:"SPDXRef-DOCUMENT", relationshipType:"DESCRIBES",
+                                       relatedSpdxElement:("SPDXRef-Package-"+(.purl|gsub("[^A-Za-z0-9.-]";"-"))) } ] }
+    else { bomFormat:"CycloneDX", specVersion:"1.6", version:1,
+           metadata:{
+             tools:{ components:[ { type:"application", name:"sluice", version:env.SBOM_TOOLVER } ] },
+             component:{ type:"container", name:env.SBOM_IMAGE,
+                         properties:[ { name:"sluice:base", value:env.SBOM_BASE } ] } },
+           components: [ $pkgs[] | { type:"library", "bom-ref":.purl, name:.name, version:.version, purl:.purl }
+                                   + ( if (.hash // "") != "" then { hashes:[ { alg:"SHA-1", content:.hash } ] } else {} end ) ] }
+    end'
 SBOM
 }
 
@@ -1623,12 +1657,13 @@ case "${1:-run-default}" in
   lock)
     shift
     case "${1:-}" in
-      --check) cmd_lock_check "${2:-}"; exit $? ;;
-      --diff)  cmd_lock_diff  "${2:-}"; exit $? ;;
-      --sbom)  cmd_sbom; exit $? ;;
-      --scan)  shift; cmd_scan "$@"; exit $? ;;
-      "")      write_lock; exit 0 ;;
-      *)       die "usage: sluice lock [--check [--json] | --diff [--json] | --sbom | --scan [--json] [--fail-on <sev>]]" ;;
+      --check)   cmd_lock_check   "${2:-}"; exit $? ;;
+      --diff)    cmd_lock_diff    "${2:-}"; exit $? ;;
+      --enforce) cmd_lock_enforce "${2:-}"; exit $? ;;
+      --sbom)    shift; cmd_sbom "$@"; exit $? ;;
+      --scan)    shift; cmd_scan "$@"; exit $? ;;
+      "")        write_lock; exit 0 ;;
+      *)         die "usage: sluice lock [--check [--json] | --diff [--json] | --enforce [--json] | --sbom [--format cyclonedx|spdx] | --scan [--json] [--fail-on <sev>]]" ;;
     esac
     ;;
   update)  build --no-cache; write_lock; exit 0 ;;
