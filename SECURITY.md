@@ -10,7 +10,20 @@ Sluice is a security tool - its job is to contain untrusted code. If you find a 
 - Or email <kan.nam.dev@gmail.com>.
 
 Include a description, the affected version/commit, and a reproduction. Please don't open a
-public issue for a vulnerability. We aim to acknowledge within a few days.
+public issue for a vulnerability.
+
+## Disclosure
+
+We aim to acknowledge a report within a few days and give an initial assessment within about a
+week, then coordinate a fix and a public advisory with you. Please allow a reasonable window -
+up to **90 days** - to ship a fix before public disclosure; we'll credit you in the advisory
+unless you'd prefer to stay anonymous.
+
+## Safe harbor
+
+We support good-faith security research. If you make a genuine effort to follow this policy -
+stay in scope, avoid privacy violations and service disruption, and report privately - we will
+not pursue or support legal action against you for that research.
 
 ## Scope
 

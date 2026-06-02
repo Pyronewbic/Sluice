@@ -80,27 +80,21 @@ Docs format), tap bump. The README then no longer says "pre-1.0."
 the control plane, stronger isolation, Windows/GPU, etc. - is deferred past 1.0. 1.0 adds nothing new;
 it's the stability commitment.
 
-### Pre-launch readiness (before the LinkedIn / HN push)
-No new features needed - every claim in the launch post is backed by shipped code. This is about not
-fumbling first contact when the post drives a skeptical, Linux-heavy dev/security crowd to the repo.
+### Readiness
+No new features needed - every claim here is backed by shipped code. This is about not fumbling first
+contact with a skeptical, Linux-heavy dev/security crowd landing on the repo.
 - [x] **Linux dev-box smoke (landed 2026-06-02).** Ran the real first-try path on a throwaway cloud
       Linux VM (Ubuntu 24.04 / Docker 29.5.2): `install.sh` curl|sh from main, `sluice build` on the
       stock Dockerfile, the egress matrix (npmjs reached, example.com blocked), and `doctor`, all
       credential-free and non-sudo. No first-try surprises; the stock build needs no manual patch. (Closes #2.)
-- [x] **Demo assets (landed 2026-06-02).** Three capability GIFs in the README (real pasted commands):
-      **cage** (the hero - non-root + no host secrets, the egress receipt's firewall block, `learn`
-      collapsing subdomains to a wildcard live/no-rebuild), **doctor** (the one-screen health panel),
-      **lock** (drift caught -> SBOM with purl + integrity hash). The live agent demo still wants a real
-      key - record it when cutting the post.
-- [x] **Top-of-README quickstart (landed 2026-06-01).** Value prop -> hero gif -> copy-paste quickstart.
-- [ ] **First-comment text** for the post (repo link + a 3-line "how it works") - LinkedIn suppresses
-      body links, so the link goes in the first comment.
+- [x] **Demo assets (landed 2026-06-02).** Two capability GIFs in the README (real pasted commands):
+      **doctor** (the one-screen health panel, incl. the supply-chain lock line) and **lock** (drift
+      caught -> SBOM with purl + integrity hash). The cage hero GIF was dropped as low-value (2026-06-02,
+      prose leads instead); the live agent demo still wants a real key - record it before launch.
+- [x] **Top-of-README quickstart (landed 2026-06-01).** Value prop -> copy-paste quickstart.
 - [x] **Issue templates + CONTRIBUTING (landed 2026-06-02).** Bug + feature forms (bug form collects
       version/engine/OS/`doctor`), blank issues disabled + security routed to `SECURITY.md`, lean
       `CONTRIBUTING.md`.
-- Mechanics: post Tue/Wed ~7:30pm IST (US dev morning), reply in the first 90 min, cross-post HN/Reddit.
-  Accuracy nit: the cosign-signed base is **opt-in** (`SLUICE_BASE_IMAGE`); the default build is `FROM
-  cgr.dev/chainguard/wolfi-base` and doesn't verify a signature unless you opt in.
 
 ---
 

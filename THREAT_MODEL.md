@@ -31,6 +31,39 @@ Threats in scope: a poisoned dependency (npm/pip post-install script), a prompt-
 file or tool result steering an agent, or simply buggy agent code - any of which tries to
 **exfiltrate secrets, tamper outside the project, or pivot into your network**.
 
+### Data flow across the boundary
+
+```
+  HOST (trusted)                           |  CONTAINER (untrusted at runtime)
+  ---------------------------------------  |  ------------------------------------------
+  sluice.config.sh + build setup           |  image: deps baked pre-firewall (free egress)
+  SLUICE_ENV / _MOUNTS / _PRELAUNCH    --> |  forwarded creds + project dir (read-write mount)
+  SLUICE_POLICY_URL (fetched on host)  --> |  squid allowlist
+                                           |
+                                           |  app / agent / deps  (uid 1000, NET_ADMIN+NET_RAW)
+                                           |       |  all tcp 80/443 redirected to squid
+                                           |       v
+                                           |  squid: only uid with egress; allow by Host/SNI,
+                                           |  splice (never decrypt); IPv6 off, direct-IP/DoH dropped
+                                           |       |
+                                           |       v
+                                           |  allowed hosts only
+  =========================================+==========================================
+  Right of the bar is untrusted at runtime; it reaches the network only through squid.
+```
+
+## Assumptions
+
+The guarantees below hold only while these do:
+- The **host is trusted** and uncompromised; the container engine + kernel enforce the isolation
+  sluice configures.
+- You **author and review** `sluice.config.sh` and anything it points at (`SLUICE_PRELAUNCH`,
+  `SLUICE_POLICY_URL`) - these run host-side, pre-firewall, and are fully trusted.
+- The **allowlist stays tight**: no allowed host doubles as a writable exfil channel, and
+  `SLUICE_ALLOW_IPS` stays minimal (items 2-3 below).
+- For the default runtime, the **shared host kernel** has no unpatched escape; `SLUICE_RUNTIME=kata`
+  removes that assumption for the kernel-escape vector.
+
 ## What it defends against (today)
 
 - **Secret exfiltration to arbitrary endpoints** -> default-DROP egress, enforced by an
@@ -58,12 +91,13 @@ file or tool result steering an agent, or simply buggy agent code - any of which
   arch-invariant, only the purl arch qualifier differs.) The image carries no private key (the
   splice cert is generated per-container).
   Your declared `SLUICE_EXTRA_PKGS` are your own layer on top - `sluice lock` records a
-  committable inventory (every apk, npm, pip, gem, and go package with its version + digest) so you can
-  review and drift-detect exactly what's installed (`sluice doctor` flags drift; `sluice lock --check`
-  *enforces* it as a CI gate, and `sluice lock --sbom` emits a CycloneDX SBOM, with apk integrity
-  hashes, for scanners). It's an audit/drift aid, not a reproducibility guarantee (Wolfi apk is a
-  rolling repo). `sluice lock --scan` runs that SBOM through a **host** Grype/Trivy (never baked) and
-  can gate on severity - advisory, though: a clean result means "no *known* CVE in the scanner's DB,"
+  committable inventory (every apk, npm, pip, gem, go, and cargo package with its version + digest) so
+  you can review and drift-detect exactly what's installed (`sluice doctor` flags drift; `sluice lock
+  --check` gates CI on drift, `--enforce` the strict variant; `sluice lock --sbom` emits a deterministic
+  CycloneDX or SPDX SBOM (`--format`), with apk integrity hashes, for scanners). It's an audit/drift aid,
+  not a reproducibility guarantee (Wolfi apk is a rolling repo). `sluice lock --scan` runs that SBOM
+  through a **host** Grype/Trivy (never baked) and can gate on severity - advisory, though: a clean
+  result means "no *known* CVE in the scanner's DB,"
   not proof of safety.
 
 ## What it does NOT defend against (be explicit)
@@ -129,3 +163,8 @@ IP-rotation / direct-IP / DoH / v6 gaps are closed. The remaining sharp edge is
 **allowed-host laundering**: because we splice (never decrypt), data hidden in a request to
 an *allowed* host isn't inspected. Keep `SLUICE_ALLOW_DOMAINS`/`SLUICE_ALLOW_IPS` minimal and
 never allow a host an attacker can also write to.
+
+---
+
+_Last reviewed 2026-06-02 against sluice 0.7.0 (staged). Revisit when the egress path, mount model,
+or runtime options change._
