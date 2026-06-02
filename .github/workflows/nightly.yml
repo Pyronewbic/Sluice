@@ -25,3 +25,28 @@ jobs:
           RUNTIMES: ${{ github.event.inputs.runtimes }}   # empty on schedule -> all
           VERIFY_JOBS: 2   # conservative on the shared runner (script defaults to 3 for local dev)
         run: ./test/verify-runtimes.sh   # docker is preinstalled on GH runners
+
+  # Each verify-* suite builds + tears down its own box, so CI just calls it. Heavy (image builds)
+  # -> nightly, not the PR gate. One matrix leg per suite so a failure points at the right feature.
+  feature-suites:
+    name: feature (${{ matrix.suite }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [lock, learn, audit, seams, ls]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify ${{ matrix.suite }}
+        run: ./test/verify-${{ matrix.suite }}.sh   # python3 (for seams) + docker preinstalled
+
+  # Nix builds a ~1.5GB image, so it gets its own job + a longer budget.
+  nix:
+    name: nix example (Docker)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify the Nix example
+        run: ./test/verify-nix.sh

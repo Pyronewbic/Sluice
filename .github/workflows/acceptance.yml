@@ -19,6 +19,24 @@ jobs:
       - name: Unit tests (sluice init stack detection, no Docker)
         run: ./test/init-detection.sh
 
+  install:
+    name: installer smoke (no Docker)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: install.sh symlinks + runs the CLI
+        run: ./test/verify-install.sh
+
+  cli:
+    name: CLI surface (unit, no Docker)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: version --json, per-command --help, parent_of, completions
+        run: ./test/verify-cli.sh
+
   docker:
     name: Linux, Docker
     runs-on: ubuntu-latest
@@ -27,6 +45,15 @@ jobs:
       - uses: actions/checkout@v4
       - name: Acceptance tests (Docker)
         run: ./test/acceptance.sh   # docker is preinstalled and group-accessible on GH runners
+
+  security:
+    name: security escape-hatches (Docker)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify the danger knobs (ALLOW_IPS, PRELAUNCH, STATE_DIRS, worktree, MOUNTS, config_hash)
+        run: ./test/verify-security.sh
 
   podman:
     name: Linux, Podman (rootful, best-effort)
