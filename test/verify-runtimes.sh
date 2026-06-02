@@ -10,7 +10,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SLUICE="$ROOT/bin/sluice"
 ENG="${SLUICE_ENGINE:-docker}"
 JOBS="${VERIFY_JOBS:-3}"
-EXAMPLES="${RUNTIMES:-deno ruby rust go bun poetry uv}"
+EXAMPLES="${RUNTIMES:-node python deno ruby rust go bun poetry uv}"
 RESULTS="$(mktemp -d)"
 trap 'rm -rf "$RESULTS" 2>/dev/null || true' EXIT
 
