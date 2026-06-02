@@ -60,6 +60,9 @@ ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 FROM ${BASE_IMAGE} AS project
 
 # Per-project config (sourced at build, boot, and on the host). 0644: the sluice user sources it.
+# mkdir first: Docker 29.5.x's COPY --chmod also chmods the auto-created parent (0644 -> no execute,
+# so the non-root user can't traverse /usr/local/share to read the config). Pre-creating it stays 0755.
+RUN mkdir -p /usr/local/share
 COPY --chmod=0644 sluice.config.sh /usr/local/share/sluice.config.sh
 
 # --- SLUICE_EXTRA_PKGS: the project's declared Wolfi packages (its own layer on the base) ---
