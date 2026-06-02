@@ -80,13 +80,17 @@ CFG
 ( cd "$pre" && "$SLUICE" run true ) >/dev/null 2>&1
 [ -f "$marker" ] && ok "prelaunch: host hook ran (marker created)" || bad "prelaunch: hook did not run"
 ( cd "$pre" && "$SLUICE" stop ) >/dev/null 2>&1
-printf 'SLUICE_NAME="sectest-pre"\nSLUICE_RUN_CMD="bash"\nSLUICE_PRELAUNCH="definitely_not_a_function_xyz"\n' > "$pre/sluice.config.sh"
-if ( cd "$pre" && "$SLUICE" run true ) >/dev/null 2>&1; then
+# Negative case in a FRESH dir: after the run above, the entrypoint chowned $pre to uid 1000 (on Linux),
+# so rewriting its config in place would hit "Permission denied". A new dir stays host-owned. The
+# non-function value is rejected host-side in start() (before any docker run), so the dir's image is moot.
+prebad="$BASE/pre-bad"; mkdir -p "$prebad"
+printf 'SLUICE_NAME="sectest-pre"\nSLUICE_RUN_CMD="bash"\nSLUICE_PRELAUNCH="definitely_not_a_function_xyz"\n' > "$prebad/sluice.config.sh"
+if ( cd "$prebad" && "$SLUICE" run true ) >/dev/null 2>&1; then
   bad "prelaunch: a non-function value was NOT rejected"
 else
   ok "prelaunch: a non-function value is rejected (die)"
 fi
-( cd "$pre" && "$SLUICE" stop ) >/dev/null 2>&1
+( cd "$prebad" && "$SLUICE" stop ) >/dev/null 2>&1
 
 # --- SLUICE_STATE_DIRS: a persisted dir survives container recreation; abs/.. entries are rejected --
 st="$BASE/state"; mkdir -p "$st"
@@ -98,13 +102,16 @@ got="$( cd "$st" && "$SLUICE" run cat /home/sluice/.cache/marker.txt 2>/dev/null
 [ "$got" = persisted-ok ] && ok "state-dirs: file survived container recreation" || bad "state-dirs: not persisted (got '$got')"
 [ -f "$STORE/.cache/marker.txt" ] && ok "state-dirs: host store lives outside the project ($STORE)" || bad "state-dirs: host store missing at $STORE"
 ( cd "$st" && "$SLUICE" stop ) >/dev/null 2>&1
-printf 'SLUICE_NAME="sectest-state"\nSLUICE_STATE_DIRS="/etc"\nSLUICE_RUN_CMD="bash"\n' > "$st/sluice.config.sh"
-if ( cd "$st" && "$SLUICE" run true ) >/dev/null 2>&1; then
+# Negative case in a FRESH dir (same reason as prelaunch: $st is now uid-1000-owned on Linux). The
+# absolute path is rejected host-side in start() before any mount, so STORE/the image are untouched.
+statebad="$BASE/state-bad"; mkdir -p "$statebad"
+printf 'SLUICE_NAME="sectest-state"\nSLUICE_STATE_DIRS="/etc"\nSLUICE_RUN_CMD="bash"\n' > "$statebad/sluice.config.sh"
+if ( cd "$statebad" && "$SLUICE" run true ) >/dev/null 2>&1; then
   bad "state-dirs: an absolute path was NOT rejected"
 else
   ok "state-dirs: an absolute path is rejected (die)"
 fi
-( cd "$st" && "$SLUICE" stop ) >/dev/null 2>&1
+( cd "$statebad" && "$SLUICE" stop ) >/dev/null 2>&1
 
 # --- worktree: the git common dir is mounted, so git resolves inside the box ------------------------
 repo="$BASE/repo"; mkdir -p "$repo"
