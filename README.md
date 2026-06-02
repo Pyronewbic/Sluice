@@ -186,13 +186,24 @@ and can only reach its own model API - so running it in YOLO mode is defensible:
 export ANTHROPIC_API_KEY=sk-ant-...     # forwarded into the sluice, never baked into the image
 cd my-repo
 sluice agent claude                     # Claude Code, --dangerously-skip-permissions, sandboxed
+sluice agent claude -p "fix the test"   # one-shot: args after the name are forwarded to the agent
 ```
 
 Presets ship for **claude**, **codex**, **gemini**, **aider**, **cursor**, **opencode**, **amp**,
 **qwen**, and **crush** (see [`agents/`](agents/)); each is a normal `sluice.config.sh` declaring the
 tool, its API hosts, and which auth env var to forward - so adding an agent is just adding a file. Run
-`sluice agent` with no name to list them. If the agent hits a blocked host, `sluice learn`
-surfaces it.
+`sluice agent` with no name to list them (each with its auth var and whether it's set on your host).
+If the agent hits a blocked host, `sluice learn` surfaces it.
+
+Each agent runs in the project's box (named for the directory), so a repo holds **one agent at a
+time** - `sluice agent codex` in a repo already set up for claude reuses the claude config (sluice
+says so). To run several agents in parallel, give each its own checkout or a **git worktree** (sluice
+mounts the git common dir, so each worktree gets an isolated box):
+
+```bash
+git worktree add ../myrepo-codex
+cd ../myrepo-codex && sluice agent codex   # isolated box + branch, separate from the claude one
+```
 
 Sessions persist across runs (via `SLUICE_STATE_DIRS`, kept in a per-project host store under
 `~/.local/state/sluice/`), so `sluice agent claude` resumes where you left off and survives a

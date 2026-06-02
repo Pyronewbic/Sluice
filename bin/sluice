@@ -75,7 +75,7 @@ Usage: sluice [-b <name>] [command]
 
 Common:
   (no command)     build (if needed) + run SLUICE_RUN_CMD; scaffold a config if there's none
-  agent [name]     run a coding agent (claude/codex/gemini/aider/cursor/opencode/amp)
+  agent [name] [args]  run a coding agent; trailing args run it one-shot; no name lists them
   init [--force]   scaffold a sluice.config.sh by detecting the project's stack
   learn            review the hosts the proxy blocked and allowlist the ones you pick, live
                    (per-host, last run by default; offers .domain wildcards; no rebuild)
@@ -115,7 +115,7 @@ help_for() {
   case "$1" in
     run)     echo "sluice run <cmd...>     - run an ad-hoc command in the sandbox (builds/starts if needed)." ;;
     shell)   echo "sluice shell            - a bash shell in the sandbox (non-root sluice user)." ;;
-    agent)   echo "sluice agent [name]     - scaffold + run a coding-agent preset; no name lists them." ;;
+    agent)   echo "sluice agent [name] [args] - scaffold + run a coding-agent preset; args after the name run it one-shot; no name lists them." ;;
     init)    echo "sluice init [--force]   - scaffold a sluice.config.sh by detecting the stack." ;;
     learn)   echo "sluice learn [--all] [--print|--apply|--audit] - review blocked hosts, allowlist your picks." ;;
     build)   echo "sluice build            - build the image if missing or the config changed." ;;
@@ -1323,23 +1323,44 @@ if [ "${1:-}" = prune ]; then
   case "${2:-}" in ""|--orphans) cmd_prune "${2:-}"; exit $? ;; *) die "usage: sluice prune [--orphans]" ;; esac
 fi
 
-# `sluice agent [name]`: write the agents/<name>.config.sh preset, then build+run
+# `sluice agent [name] [args...]`: write the agents/<name>.config.sh preset, then build+run.
+# Trailing args after the name are forwarded to the agent (one-shot), e.g. `sluice agent claude -p '...'`.
+AGENT_EXTRA_ARGS=()
 if [ "${1:-}" = agent ]; then
   banner
   shift
   agents_dir="$ROOT/agents"
   if [ -z "${1:-}" ]; then
-    echo "[sluice] available agents (use: sluice agent <name>):"
-    for f in "$agents_dir"/*.config.sh; do [ -f "$f" ] && echo "  $(basename "$f" .config.sh)"; done
+    echo "[sluice] coding agents (use: sluice agent <name> [args...]):"
+    for f in "$agents_dir"/*.config.sh; do
+      [ -f "$f" ] || continue
+      nm="$(basename "$f" .config.sh)"
+      desc="$(. "$f"; printf '%s' "${SLUICE_DESC:-}")"
+      v1="$(. "$f"; printf '%s' "${SLUICE_ENV:-}")"; v1="${v1%% *}"
+      if   [ -z "$v1" ];            then auth=""
+      elif [ -n "${!v1:-}" ];       then auth="$v1 ${C_GRN}(set)${C_RST}"
+      else                               auth="$v1 ${C_DIM}(unset)${C_RST}"; fi
+      printf "  %-10s %-26s %s\n" "$nm" "$desc" "$auth"
+    done
     exit 0
   fi
   preset="$agents_dir/$1.config.sh"
   [ -f "$preset" ] || die "unknown agent '$1' - run 'sluice agent' to list available presets."
+  agent_name="$1"; shift
+  [ "$#" -gt 0 ] && AGENT_EXTRA_ARGS=("$@")   # forward trailing args to the agent (one-shot)
   if cfg="$(find_config)"; then
+    # If that config is verbatim a DIFFERENT agent's preset, the requested one is being ignored -
+    # the box is keyed to the project dir, so a repo holds one agent at a time. Flag it (don't block).
+    for af in "$agents_dir"/*.config.sh; do
+      cmp -s "$cfg" "$af" || continue
+      other="$(basename "$af" .config.sh)"
+      [ "$other" = "$agent_name" ] || echo "[sluice] ${E_YEL}note${E_RST}: this project is set up for the '$other' agent - to run '$agent_name', use a separate dir or 'git worktree add', or remove $cfg." >&2
+      break
+    done
     echo "[sluice] using existing config: $cfg"
   else
     cp "$preset" "$PWD/sluice.config.sh"
-    echo "[sluice] wrote $PWD/sluice.config.sh from the '$1' agent preset."
+    echo "[sluice] wrote $PWD/sluice.config.sh from the '$agent_name' agent preset."
     echo "[sluice] export the agent's auth env var on your host first (see the file's header)."
   fi
   set -- run-default     # continue into the normal build + run flow below
@@ -1877,18 +1898,19 @@ case "${1:-run-default}" in
   run-default)
     banner
     ensure_up
-    # Warn if SLUICE_ENV auth vars are declared but unset on the host (agents fail otherwise).
-    if [ -n "${SLUICE_ENV:-}" ]; then
-      _any=0; for _v in $SLUICE_ENV; do [ -n "${!_v:-}" ] && _any=1; done
-      [ "$_any" = 1 ] || echo "[sluice] ${E_YEL}note${E_RST}: none of [$SLUICE_ENV] is set on the host - auth may fail; export it and re-run." >&2
-    fi
+    # (auth-unset warning already emitted once by warn_auth_unset above; state-aware, no duplicate here)
     # Snapshot the proxy log position so the receipt reports THIS run's egress, not the box's whole
     # boot. Then run SLUICE_RUN_CMD; the EXIT trap prints the receipt (reached + blocked). run_in
     # (not exec_in) so the trap fires after the session, even on Ctrl-C.
     _RCPT_OFFSET="$("$RUNNER" exec "$container" sh -c 'wc -c < /var/log/squid/access.log' 2>/dev/null | tr -dc 0-9)"
     mark_run_start   # so a later `sluice learn` can scope to this run
     trap show_egress_receipt EXIT
-    run_in sh -lc "${SLUICE_RUN_CMD:-bash}"
+    if [ "${#AGENT_EXTRA_ARGS[@]}" -gt 0 ]; then
+      # one-shot agent run: forward trailing args as positional params (no re-quoting needed)
+      run_in sh -lc "${SLUICE_RUN_CMD:-bash} \"\$@\"" sh "${AGENT_EXTRA_ARGS[@]}"
+    else
+      run_in sh -lc "${SLUICE_RUN_CMD:-bash}"
+    fi
     ;;
   *) die "unknown command: $1 - run 'sluice help' for usage." ;;
 esac

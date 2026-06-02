@@ -9,6 +9,7 @@ SLUICE_EXTRA_NPM="@charmland/crush"
 # api.anthropic.com / api.openai.com cover the common providers; catwalk.charm.sh is Crush's
 # model catalog. For another provider, add its host (or run `sluice learn`).
 SLUICE_ALLOW_DOMAINS="api.anthropic.com api.openai.com catwalk.charm.sh"
+SLUICE_DESC="Crush (Charm)"
 SLUICE_ENV="ANTHROPIC_API_KEY OPENAI_API_KEY"
 # Persist Crush's sessions/db across runs (its data dir). NOT .config/crush - that's just config.
 SLUICE_STATE_DIRS=".local/share/crush"

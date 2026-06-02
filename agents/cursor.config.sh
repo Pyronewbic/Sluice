@@ -10,6 +10,7 @@
 SLUICE_SETUP_CMDS='curl https://cursor.com/install -fsS | bash && mkdir -p "$HOME/.npm-global/bin" && ln -sf "$HOME/.local/bin/cursor-agent" "$HOME/.npm-global/bin/cursor-agent"'
 # Cursor proxies models through its own backend; downloads.cursor.com is the binary self-update.
 SLUICE_ALLOW_DOMAINS="cursor.com api2.cursor.sh api.cursor.com downloads.cursor.com"
+SLUICE_DESC="Cursor CLI (cursor-agent)"
 SLUICE_ENV="CURSOR_API_KEY"
 # Persist cursor-agent's config/auth across runs (.cursor holds cli-config.json). NOT .local -
 # that's where the installed binary lives, and a mount would shadow it.

@@ -10,6 +10,7 @@ SLUICE_EXTRA_NPM="@qwen-code/qwen-code"
 # DashScope's OpenAI-compatible API. The intl endpoint is the default; for mainland China swap
 # OPENAI_BASE_URL to dashscope.aliyuncs.com (drop -intl). Both hosts are allowlisted.
 SLUICE_ALLOW_DOMAINS="dashscope-intl.aliyuncs.com dashscope.aliyuncs.com"
+SLUICE_DESC="Qwen Code (Alibaba)"
 SLUICE_ENV="OPENAI_API_KEY DASHSCOPE_API_KEY"
 # Persist Qwen Code's sessions/settings across runs (host-side, per project).
 SLUICE_STATE_DIRS=".qwen"
