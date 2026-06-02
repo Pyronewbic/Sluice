@@ -292,7 +292,6 @@ agents/                   coding-agent presets (run `sluice agent` to list)
 examples/                 self-contained gallery demos
 test/                     acceptance + init-detection (the CI gate) and per-feature verify harnesses
 completion/               bash + zsh shell completion
-packaging/                Homebrew formula
 install.sh                curl|sh + local installer
 sluice.config.example.sh  documented config template (every knob)
 ```
