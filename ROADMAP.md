@@ -114,12 +114,13 @@ from the planks' deferred notes + the threat model + the isolation spike (nothin
 rough effort (S/M/L) and the gap each closes.
 
 **Next (build-ready):**
-- **`SLUICE_RUNTIME` micro-VM isolation - M.** Run the box under an own-kernel runtime (Kata, via
-  containerd/nerdctl) so a kernel escape can't reach the host - closing the **#1 admitted THREAT_MODEL
-  gap** (shared kernel) as an opt-in. The spike **proved sluice's firewall/squid stack runs unchanged**
-  in a Kata zone (egress matrix passes, sysctls apply in-guest); the work is a non-Docker run path in
-  `bin/sluice` (Docker can't drive Kata 3.x). Runbook + Terraform: [`spike/terraform/`](spike/terraform/README.md).
-  Edera is Track B (its `protect` launch interface, pending the access key).
+- **`SLUICE_RUNTIME` micro-VM isolation - ✅ LANDED (opt-in).** `SLUICE_RUNTIME=kata` runs the box under an
+  own-kernel runtime (Kata, via containerd/nerdctl) so a kernel escape can't reach the host - closing the
+  **#1 admitted THREAT_MODEL gap** (shared kernel) as an opt-in. `$ENGINE` still builds the image; the box
+  runs under nerdctl and the image is loaded across (the `$RUNNER` split, default unset = unchanged). Verified
+  on the spike VM 2026-06-02: the firewall/squid stack comes up unchanged (guest kernel distinct from host,
+  egress matrix holds). Edera is Track B (its `protect` launch interface, pending the access key). Runbook +
+  Terraform: [`spike/terraform/`](spike/terraform/README.md).
 - **More agent presets - S.** The wedge; a preset is "just a file" (tool + API hosts + auth var). Cheap
   adoption, and the preset library is community moat.
 

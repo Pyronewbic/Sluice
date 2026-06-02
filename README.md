@@ -280,7 +280,8 @@ sluice.config.example.sh  documented config template (every knob)
 Shell completion (commands, flags, agent names) auto-installs via `brew install` / `install.sh`.
 Manual: `source completion/sluice.bash` (bash), or add `completion/` to your `fpath` before `compinit` (zsh).
 
-Runs on **docker** or **podman** (auto-detected; override with `SLUICE_ENGINE`). CI
+Runs on **docker** or **podman** (auto-detected; override with `SLUICE_ENGINE`). For own-kernel
+isolation, `SLUICE_RUNTIME=kata` runs the box as a Kata micro-VM (Linux + containerd/nerdctl). CI
 ([`.github/workflows/acceptance.yml`](.github/workflows/acceptance.yml)) runs the harness
 on Linux Docker; the Linux/Podman legs are validated there rather than on macOS.
 

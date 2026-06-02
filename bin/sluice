@@ -206,7 +206,9 @@ config_hash() {
     | shasum | awk '{print $1}' | cut -c1-12
 }
 
-running() { [ "$("$ENGINE" inspect -f '{{.State.Running}}' "$container" 2>/dev/null || true)" = "true" ]; }
+# ps-filter (not `inspect .State.Running`) so it works on both docker and nerdctl - nerdctl's native
+# inspect has no docker-style .State key. grep -qx pins the exact name (not the -audit sibling).
+running() { "$RUNNER" ps --filter "name=$container" --filter status=running --format '{{.Names}}' 2>/dev/null | grep -qx "$container"; }
 
 # True when the HOST enforces SELinux (Fedora/RHEL/CentOS default). On such a host a bind mount is
 # inaccessible to the box without a label, so sluice runs it label=disable (see the run paths).
@@ -216,9 +218,9 @@ selinux_enforcing() { [ -r /sys/fs/selinux/enforce ] && [ "$(cat /sys/fs/selinux
 # when set, so the run-default egress receipt is scoped to just that run, not the box's whole boot.
 _squid_log() {
   if [ -n "${_RCPT_OFFSET:-}" ]; then
-    "$ENGINE" exec "${1:-$container}" sh -c "tail -c +$(( _RCPT_OFFSET + 1 )) /var/log/squid/access.log" 2>/dev/null
+    "$RUNNER" exec "${1:-$container}" sh -c "tail -c +$(( _RCPT_OFFSET + 1 )) /var/log/squid/access.log" 2>/dev/null
   else
-    "$ENGINE" exec "${1:-$container}" cat /var/log/squid/access.log 2>/dev/null
+    "$RUNNER" exec "${1:-$container}" cat /var/log/squid/access.log 2>/dev/null
   fi
 }
 
@@ -298,8 +300,8 @@ _human_bytes() {
 
 # The proxy-log byte offset captured at the start of the last `sluice` run (written to /run by the run
 # arms). Lets `sluice learn` scope to that run instead of the whole boot; empty if no run / box rebooted.
-last_run_offset() { "$ENGINE" exec "$container" cat /run/sluice-run-offset 2>/dev/null | tr -dc 0-9; }
-mark_run_start()  { "$ENGINE" exec "$container" sh -c 'wc -c < /var/log/squid/access.log | tr -dc 0-9 > /run/sluice-run-offset' 2>/dev/null || true; }
+last_run_offset() { "$RUNNER" exec "$container" cat /run/sluice-run-offset 2>/dev/null | tr -dc 0-9; }
+mark_run_start()  { "$RUNNER" exec "$container" sh -c 'wc -c < /var/log/squid/access.log | tr -dc 0-9 > /run/sluice-run-offset' 2>/dev/null || true; }
 
 # This project's effective egress allowlist: config domains + the always-on base.
 allowed_domains() { printf '%s %s' "${SLUICE_ALLOW_DOMAINS:-}" "$(base_domains)"; }
@@ -629,7 +631,7 @@ cmd_doctor() {
   elif command -v docker >/dev/null 2>&1; then eng=docker
   elif command -v podman >/dev/null 2>&1; then eng=podman; fi
   if [ -n "$eng" ] && command -v "$eng" >/dev/null 2>&1; then
-    ENGINE="$eng"
+    ENGINE="$eng"; resolve_runner
     if "$eng" info >/dev/null 2>&1; then
       _doc engine "$("$eng" --version 2>/dev/null | head -1)"
     else
@@ -796,10 +798,9 @@ cmd_ls() {
     proj="$( "$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.project" }}' "$name" 2>/dev/null || true)"
     stack="$("$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.stack" }}'   "$name" 2>/dev/null || true)"
     desc="$( "$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.desc" }}'    "$name" 2>/dev/null || true)"
-    run="$(  "$ENGINE" container inspect -f '{{.State.Running}}' "$name" 2>/dev/null || true)"
-    if   [ "$run" = true ]; then status=running
-    elif [ -n "$run" ];     then status=stopped
-    else                         status=built; fi
+    if   "$RUNNER" ps    --filter "name=$name" --filter status=running --format '{{.Names}}' 2>/dev/null | grep -qx "$name"; then status=running
+    elif "$RUNNER" ps -a --filter "name=$name" --format '{{.Names}}' 2>/dev/null | grep -qx "$name"; then status=stopped
+    else status=built; fi
     cur=false; [ -n "$here" ] && [ "$proj" = "$here" ] && cur=true
     names+=("$name"); stats+=("$status"); projs+=("$proj"); stacks+=("$stack"); descs+=("$desc"); curs+=("$cur")
   done <<EOF
@@ -876,7 +877,10 @@ ART
   printf '%s' "$r" >&2
 }
 
-# container engine (docker, else podman; override SLUICE_ENGINE)
+# container engine (docker, else podman; override SLUICE_ENGINE). $ENGINE always BUILDS the image; $RUNNER
+# runs/execs the box. They're the same binary unless SLUICE_RUNTIME asks for an own-kernel micro-VM (Kata),
+# which Docker can't drive - then the box runs under nerdctl/containerd while $ENGINE still builds it and
+# the image is loaded across. Default (unset SLUICE_RUNTIME): RUNNER==ENGINE, so every run path is unchanged.
 resolve_engine() {
   ENGINE="${SLUICE_ENGINE:-}"
   if [ -z "$ENGINE" ]; then
@@ -885,6 +889,41 @@ resolve_engine() {
     else die "no container engine found - install docker or podman, or set SLUICE_ENGINE"; fi
   fi
   command -v "$ENGINE" >/dev/null 2>&1 || die "SLUICE_ENGINE=$ENGINE not found on PATH"
+  # SLUICE_RUNTIME=kata: preflight the containerd/nerdctl/Kata stack (run commands need it working).
+  if [ "${SLUICE_RUNTIME:-}" = kata ]; then
+    command -v nerdctl >/dev/null 2>&1 || die "SLUICE_RUNTIME=kata needs nerdctl (containerd) on PATH - install nerdctl + Kata Containers (Linux only)"
+    nerdctl info >/dev/null 2>&1 || die "SLUICE_RUNTIME=kata: nerdctl/containerd is not reachable - is containerd running, and do you have privileges? (Kata wants a rootful containerd; try running sluice as root)"
+    command -v containerd-shim-kata-v2 >/dev/null 2>&1 || echo "[sluice] note: containerd-shim-kata-v2 not on PATH - SLUICE_RUNTIME=kata needs the Kata shim installed for containerd" >&2
+  fi
+  resolve_runner
+}
+
+# $RUNNER (the run/exec engine) + Kata run opts from SLUICE_RUNTIME, given $ENGINE (the build engine).
+# Shared by resolve_engine (which preflights first) and the lenient `doctor` probe. Default -> RUNNER==ENGINE.
+resolve_runner() {
+  RUNNER="$ENGINE"; RUNTIME_RUN_OPTS=()
+  case "${SLUICE_RUNTIME:-}" in
+    kata) RUNNER=nerdctl; RUNTIME_RUN_OPTS=(--runtime io.containerd.kata.v2) ;;
+    ""|docker|podman|"$ENGINE") ;;
+    *) die "SLUICE_RUNTIME='${SLUICE_RUNTIME:-}' is not supported (use 'kata', or leave it unset for docker/podman)" ;;
+  esac
+}
+
+# SLUICE_RUNTIME=kata builds with $ENGINE but runs under nerdctl/containerd, which keeps its own image
+# store; cross the built image over. No-op when builder == runner. $1=force reloads even if present (after
+# a rebuild the runtime's copy is stale).
+runtime_sync_image() {
+  [ "$RUNNER" = "$ENGINE" ] && return 0
+  if [ "${1:-}" != force ] && "$RUNNER" image inspect "$tag" >/dev/null 2>&1; then return 0; fi
+  echo "[sluice] loading $tag into the $RUNNER runtime ..." >&2
+  "$ENGINE" save "$tag" | "$RUNNER" load >/dev/null 2>&1 \
+    || die "SLUICE_RUNTIME=${SLUICE_RUNTIME:-} - failed to load $tag into $RUNNER (check containerd privileges)"
+}
+
+# Launch a detached box under $RUNNER with the runtime's extra run flags (Kata's --runtime). Empty-array
+# expansion is guarded so it stays set -u-safe on bash 3.2 (macOS), where SLUICE_RUNTIME is never kata.
+runtime_run() {
+  if [ "${#RUNTIME_RUN_OPTS[@]}" -gt 0 ]; then "$RUNNER" run -d "${RUNTIME_RUN_OPTS[@]}" "$@"; else "$RUNNER" run -d "$@"; fi
 }
 
 # Per-command help (sluice <cmd> --help) + hidden helpers - before config (they need none).
@@ -1132,7 +1171,7 @@ cmd_prune() {
   elif [ "${SLUICE_YES:-}" != 1 ]; then
     echo "[sluice] non-interactive: re-run with SLUICE_YES=1 to confirm pruning."; return 0
   fi
-  for i in $imgs; do "$ENGINE" rm -f "$i" >/dev/null 2>&1 || true; "$ENGINE" rmi -f "$i" >/dev/null 2>&1 || true; done
+  for i in $imgs; do "$RUNNER" rm -f "$i" >/dev/null 2>&1 || true; "$ENGINE" rmi -f "$i" >/dev/null 2>&1 || true; done
   echo "[sluice] ${C_GRN}pruned $(printf '%s\n' "$imgs" | grep -c .) box(es).${C_RST}"
 }
 if [ "${1:-}" = prune ]; then cmd_prune; exit $?; fi
@@ -1256,7 +1295,8 @@ build() {
   else
     rm -rf "$tmp"; die "image build failed"
   fi
-  "$ENGINE" rm -f "$container" >/dev/null 2>&1 || true   # rebuilt image -> fresh container
+  "$RUNNER" rm -f "$container" >/dev/null 2>&1 || true   # rebuilt image -> fresh container
+  runtime_sync_image force
 }
 
 # Build only if the image is missing or its baked config hash is stale.
@@ -1279,7 +1319,7 @@ image_stale() {
 
 # start: run the idle container (firewall comes up in the entrypoint)
 start() {
-  "$ENGINE" rm -f "$container" >/dev/null 2>&1 || true
+  "$RUNNER" rm -f "$container" >/dev/null 2>&1 || true
 
   # Optional host-side hook to stage credentials/secrets before launch.
   if [ -n "${SLUICE_PRELAUNCH:-}" ]; then
@@ -1369,15 +1409,16 @@ EOF
   done
 
   echo "[sluice] starting $container ..."
-  "$ENGINE" run -d --name "$container" "${run_args[@]}" "$tag" >/dev/null
-  for _ in $(seq 1 60); do
-    "$ENGINE" logs "$container" 2>&1 | grep -q "\[sluice\] ready" && break
+  runtime_run --name "$container" "${run_args[@]}" "$tag" >/dev/null
+  local tries=60; [ "$RUNNER" != "$ENGINE" ] && tries=120   # a Kata micro-VM takes longer to boot
+  for _ in $(seq 1 "$tries"); do
+    "$RUNNER" logs "$container" 2>&1 | grep -q "\[sluice\] ready" && break
     sleep 0.5
   done
   running || die "container failed to come up - see: sluice logs"
 }
 
-ensure_up() { maybe_build; running || start; }
+ensure_up() { maybe_build; runtime_sync_image; running || start; }
 
 # Build the `<engine> exec` arg vector (sluice user, SLUICE_ENV forwarded, TTY only when attached).
 _exec_args() {
@@ -1388,8 +1429,8 @@ _exec_args() {
   done
 }
 # exec_in replaces this process (shell/run); run_in waits so an EXIT trap can fire after (run-default).
-exec_in() { _exec_args; exec "$ENGINE" exec "${_EXEC_ARGS[@]}" "$container" "$@"; }
-run_in()  { _exec_args; "$ENGINE" exec "${_EXEC_ARGS[@]}" "$container" "$@"; }
+exec_in() { _exec_args; exec "$RUNNER" exec "${_EXEC_ARGS[@]}" "$container" "$@"; }
+run_in()  { _exec_args; "$RUNNER" exec "${_EXEC_ARGS[@]}" "$container" "$@"; }
 
 # After a run-default session, print an egress receipt: hosts the box reached (hit counts, most-hit
 # first) and hosts the firewall blocked (review these). stderr-only so it never pollutes the app's
@@ -1453,7 +1494,7 @@ merge_allow() {
 reload_allowlist() {
   [ "$#" -gt 0 ] || return 0
   running || return 1
-  printf '%s\n' "$@" | "$ENGINE" exec -i "$container" sh -c \
+  printf '%s\n' "$@" | "$RUNNER" exec -i "$container" sh -c \
     'cat >> /etc/squid/allowlist.txt && sort -u /etc/squid/allowlist.txt -o /etc/squid/allowlist.txt && pkill -HUP -x squid' \
     >/dev/null 2>&1
 }
@@ -1577,10 +1618,10 @@ EOF
 
   maybe_build
   local audit_container="$container-audit"
-  "$ENGINE" rm -f "$audit_container" >/dev/null 2>&1 || true
+  "$RUNNER" rm -f "$audit_container" >/dev/null 2>&1 || true
   # Bake the names into the trap now (the local is gone by the time EXIT fires) so the ephemeral
   # container is always torn down - normal exit, die, or Ctrl-C. It never leaves audit mode.
-  trap "'$ENGINE' rm -f '$audit_container' >/dev/null 2>&1 || true" EXIT
+  trap "'$RUNNER' rm -f '$audit_container' >/dev/null 2>&1 || true" EXIT
 
   # Credential-stripped run args: project mount + git common dir + the proxy sysctls + SLUICE_AUDIT.
   # Deliberately NO prelaunch, state-dir mounts, SLUICE_ENV, or published ports (see start()).
@@ -1601,19 +1642,20 @@ EOF
   fi
 
   echo "[sluice] starting ephemeral audit container $audit_container ..."
-  "$ENGINE" run -d --name "$audit_container" "${run_args[@]}" "$tag" >/dev/null
-  local up=""
-  for _ in $(seq 1 60); do
-    "$ENGINE" logs "$audit_container" 2>&1 | grep -q "\[sluice\] ready" && { up=1; break; }
+  runtime_sync_image
+  runtime_run --name "$audit_container" "${run_args[@]}" "$tag" >/dev/null
+  local up="" tries=60; [ "$RUNNER" != "$ENGINE" ] && tries=120
+  for _ in $(seq 1 "$tries"); do
+    "$RUNNER" logs "$audit_container" 2>&1 | grep -q "\[sluice\] ready" && { up=1; break; }
     sleep 0.5
   done
-  [ -n "$up" ] || die "audit container failed to come up - see: $ENGINE logs $audit_container"
+  [ -n "$up" ] || die "audit container failed to come up - see: $RUNNER logs $audit_container"
 
   # Run the command with NO credential forwarding (no -e for SLUICE_ENV vars).
   local exec_args=(-i --user sluice -w "$PROJECT_DIR")
   [ -t 0 ] && [ -t 1 ] && exec_args+=(-t)
   echo "[sluice] running SLUICE_RUN_CMD with egress open (discovering reached hosts)..."
-  "$ENGINE" exec "${exec_args[@]}" "$audit_container" sh -lc "${SLUICE_RUN_CMD:-true}" || true
+  "$RUNNER" exec "${exec_args[@]}" "$audit_container" sh -lc "${SLUICE_RUN_CMD:-true}" || true
 
   # Review the hosts it reached (egress was open), minus base/allowlist + the example.* canary, with
   # per-host selection - then persist + hot-reload onto the real (enforcing) box.
@@ -1634,9 +1676,9 @@ EOF
 case "${1:-run-default}" in
   build)   build; exit 0 ;;
   rebuild) build; start; exit 0 ;;
-  stop)    "$ENGINE" rm -f "$container" >/dev/null 2>&1 || true; echo "[sluice] $container stopped"; exit 0 ;;
-  rm)      "$ENGINE" rm -f "$container" >/dev/null 2>&1 || true; "$ENGINE" rmi -f "$tag" >/dev/null 2>&1 || true; echo "[sluice] removed $container (container + image)"; exit 0 ;;
-  logs)    "$ENGINE" logs -f "$container" ;;
+  stop)    "$RUNNER" rm -f "$container" >/dev/null 2>&1 || true; echo "[sluice] $container stopped"; exit 0 ;;
+  rm)      "$RUNNER" rm -f "$container" >/dev/null 2>&1 || true; "$ENGINE" rmi -f "$tag" >/dev/null 2>&1 || true; echo "[sluice] removed $container (container + image)"; exit 0 ;;
+  logs)    "$RUNNER" logs -f "$container" ;;
   smoke)
     maybe_build
     "$ENGINE" run --rm --user sluice --entrypoint bash "$tag" /usr/local/bin/smoke-test.sh
@@ -1684,7 +1726,7 @@ case "${1:-run-default}" in
     # Snapshot the proxy log position so the receipt reports THIS run's egress, not the box's whole
     # boot. Then run SLUICE_RUN_CMD; the EXIT trap prints the receipt (reached + blocked). run_in
     # (not exec_in) so the trap fires after the session, even on Ctrl-C.
-    _RCPT_OFFSET="$("$ENGINE" exec "$container" sh -c 'wc -c < /var/log/squid/access.log' 2>/dev/null | tr -dc 0-9)"
+    _RCPT_OFFSET="$("$RUNNER" exec "$container" sh -c 'wc -c < /var/log/squid/access.log' 2>/dev/null | tr -dc 0-9)"
     mark_run_start   # so a later `sluice learn` can scope to this run
     trap show_egress_receipt EXIT
     run_in sh -lc "${SLUICE_RUN_CMD:-bash}"

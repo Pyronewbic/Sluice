@@ -68,8 +68,10 @@ file or tool result steering an agent, or simply buggy agent code - any of which
 
 ## What it does NOT defend against (be explicit)
 
-1. **Kernel escape / multi-tenant adversary.** Shared kernel. Out of scope by design;
-   stronger isolation is a roadmap opt-in, not a current claim.
+1. **Kernel escape / multi-tenant adversary.** The default box shares the host kernel. For the
+   kernel-escape vector there is now an **opt-in** own-kernel runtime (`SLUICE_RUNTIME=kata`, Linux +
+   containerd/nerdctl) that runs the box as a Kata micro-VM with the same firewall + non-root + mount
+   guarantees. Hostile multi-tenant isolation remains a non-goal.
 2. **Exfil through an *allowed* host.** The allowlist is **host-granular**. If you allow
    a shared host - `raw.githubusercontent.com`, a cloud storage endpoint, an LLM API -
    data can be laundered through it. Keep the list minimal; never allow a host an

@@ -98,4 +98,36 @@ for name in $EXAMPLES; do
 done
 
 echo "== $PASS passed, $FAIL failed =="
-[ "$FAIL" -eq 0 ]
+
+# Kata micro-VM smoke (SLUICE_RUNTIME=kata): only on a host with a usable nerdctl + the Kata shim (a
+# normal dev box skips, like verify-lock's grype gate). Proves sluice's firewall/squid stack comes up
+# UNCHANGED under an own-kernel runtime - the box reaches ready, runs a kernel distinct from the host,
+# and the egress firewall still holds. Kata wants a rootful containerd, so run this harness as root on a
+# kata host (see spike/terraform/ for a ready VM).
+KFAIL=0
+if command -v nerdctl >/dev/null 2>&1 && command -v containerd-shim-kata-v2 >/dev/null 2>&1 && nerdctl info >/dev/null 2>&1; then
+  echo "== Kata micro-VM smoke (SLUICE_RUNTIME=kata) =="
+  kwork="$(mktemp -d)/kata"; mkdir -p "$kwork"
+  printf 'SLUICE_NAME="kata-smoke"\nSLUICE_RUN_CMD="true"\n' > "$kwork/sluice.config.sh"
+  if ( cd "$kwork" && "$SLUICE" build ) >"$RESULTS/kata.log" 2>&1; then
+    gk="$( cd "$kwork" && SLUICE_RUNTIME=kata "$SLUICE" run sh -lc 'uname -r' 2>/dev/null | tr -d '\r\n' )"
+    hk="$(uname -r)"
+    if [ -n "$gk" ] && [ "$gk" != "$hk" ]; then echo "  ok   own-kernel micro-VM (guest $gk != host $hk)"
+    else echo "  FAIL kata box kernel '$gk' not distinct from host '$hk' (did it boot?)"; KFAIL=$((KFAIL+1)); fi
+    nk="$( cd "$kwork" && SLUICE_RUNTIME=kata "$SLUICE" run sh -lc 'curl -sS -o /dev/null -w %{http_code} --max-time 25 https://registry.npmjs.org/ 2>/dev/null' 2>/dev/null )"
+    if [ "$nk" = 200 ]; then echo "  ok   egress allow reached under Kata (npmjs $nk)"
+    else echo "  FAIL allowlisted host not reachable under Kata (got '$nk')"; KFAIL=$((KFAIL+1)); fi
+    if ( cd "$kwork" && SLUICE_RUNTIME=kata "$SLUICE" run sh -lc 'curl -sS -o /dev/null --max-time 12 https://example.com 2>/dev/null' ) >/dev/null 2>&1; then
+      echo "  FAIL non-allowlisted host NOT blocked under Kata"; KFAIL=$((KFAIL+1))
+    else echo "  ok   egress deny blocked under Kata (example.com)"; fi
+    ( cd "$kwork" && SLUICE_RUNTIME=kata "$SLUICE" rm ) >/dev/null 2>&1 || true
+  else
+    echo "  FAIL kata-smoke image build failed"; KFAIL=$((KFAIL+1)); tail -15 "$RESULTS/kata.log"
+  fi
+  rm -rf "$(dirname "$kwork")" 2>/dev/null || true
+  echo "== kata smoke: $([ "$KFAIL" -eq 0 ] && echo passed || echo "$KFAIL failed") =="
+else
+  echo "== Kata micro-VM smoke: skipped (no usable nerdctl + Kata shim on this host) =="
+fi
+
+[ "$FAIL" -eq 0 ] && [ "$KFAIL" -eq 0 ]
