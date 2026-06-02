@@ -23,11 +23,13 @@ probe_cmd() {
     codex)    echo 'codex exec "reply with the single word OK"' ;;
     gemini)   echo 'gemini -p "reply with the single word OK"' ;;
     aider)    echo 'aider --yes-always --no-auto-commits --message "reply with OK"' ;;
+    qwen)     echo 'qwen --yolo -p "reply with the single word OK"' ;;
+    crush)    echo 'crush run --yolo "reply with the single word OK"' ;;
     *)        echo '' ;;
   esac
 }
 
-AGENTS="${AGENTS:-claude codex gemini aider cursor opencode amp}"
+AGENTS="${AGENTS:-claude codex gemini aider cursor opencode amp qwen crush}"
 
 echo "== sluice agent preset verification (cred-free + optional live probe) =="
 for name in $AGENTS; do
