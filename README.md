@@ -161,7 +161,7 @@ sluice lock --sbom > sbom.cdx.json   # CycloneDX inventory (apk/npm/pip/gem/go p
 sluice lock --scan --fail-on high    # vuln-scan the box; non-zero exit on a high+ CVE (needs host grype/trivy)
 ```
 
-<p align="center"><img src="assets/lock-demo.gif" width="700" alt="sluice lock --check reports the inventory in sync; after a dependency is added and the box rebuilt, lock --check catches the drift (classified: + apk tree, exit 1); re-lock records the supply-chain delta, then a CycloneDX SBOM carries the new package with its purl and SHA-1 integrity hash"></p>
+<p align="center"><img src="assets/lock-demo.gif" width="700" alt="sluice lock --check reports the inventory in sync; after a dependency is added and the box rebuilt, lock --check catches the drift (classified: + apk tree, exit 1); re-lock records the supply-chain delta, then a CycloneDX SBOM carries the new package with its purl and SHA-1 integrity hash; finally lock --scan --fail-on high runs that SBOM through a host grype and gates the build on the lodash CVEs (non-zero exit)"></p>
 
 Image and container are named per project (`sluice-<dir>`, or `SLUICE_NAME`), and the image
 auto-rebuilds when `sluice.config.sh` or the core changes.
