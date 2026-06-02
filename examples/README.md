@@ -9,8 +9,7 @@ slice of what sluice does - read the "shows" column to pick one.
 | preset | shows | copy & run |
 |---|---|---|
 | [firewall](firewall.config.sh) | the **egress firewall as a security control** - a fetch to an allowlisted host succeeds, an exfil attempt to a non-allowlisted host (and a raw IP) is **blocked**; surfaced by `sluice doctor`. Runs to completion, no server. | `mkdir d && cp examples/firewall.config.sh d/sluice.config.sh && cd d && sluice` |
-| [strudel](strudel.config.sh) | **serving a web app** (a live-coding music REPL on `:4321`) + the runtime egress allow-gotcha: a host the app needs at play time must be on the allowlist. | `mkdir d && cp examples/strudel.config.sh d/sluice.config.sh && cd d && sluice` |
-| [jupyter](jupyter.config.sh) | a **different stack** (Python/pip, JupyterLab on `:8888`) that needs **no** runtime egress at all - the contrast to strudel. | `mkdir d && cp examples/jupyter.config.sh d/sluice.config.sh && cd d && sluice` |
+| [jupyter](jupyter.config.sh) | **serving a web app** (Python/pip, JupyterLab on `:8888`) that needs **no** runtime egress at all - the firewall stays fully locked while it serves. | `mkdir d && cp examples/jupyter.config.sh d/sluice.config.sh && cd d && sluice` |
 | [nix](nix.config.sh) | **Nix composed with sluice**: a reproducible, pinned toolchain fetched + baked at **build** time, then run at **runtime** with the firewall fully locked (no egress). Heavy (~1.5GB image). | `mkdir d && cp examples/nix.config.sh d/sluice.config.sh && cd d && sluice` |
 | [database](database.config.sh) | the **`SLUICE_ALLOW_IPS` escape hatch** for a non-HTTP service: a reviewed fixed IP gets direct egress on any port (Postgres/Redis/MySQL), while every other IP stays default-DROP. Made visible with a raw TCP probe; no server. | `mkdir d && cp examples/database.config.sh d/sluice.config.sh && cd d && sluice` |
 

@@ -271,17 +271,17 @@ and dependency downloads have free egress; the *running* container is locked dow
 
 ## Examples
 
-A quick taste - serve the [Strudel](https://strudel.cc) live-coding music REPL from the
-sluice on `http://localhost:4321`:
+A quick taste - serve JupyterLab from the sluice on `http://localhost:8888` (a Python/pip
+stack that needs no runtime egress at all):
 
 ```bash
-mkdir strudel && cp examples/strudel.config.sh strudel/sluice.config.sh
-cd strudel && sluice            # build + serve; then open http://localhost:4321
+mkdir lab && cp examples/jupyter.config.sh lab/sluice.config.sh
+cd lab && sluice                # build + serve; then open http://localhost:8888
 ```
 
 The full **[gallery](examples/)** has more self-contained demos - a **firewall/exfil** demo
-(the egress block, made visible), **Jupyter** (a no-egress Python stack), and **Nix** (a
-reproducible toolchain baked at build, contained at runtime) - plus the coding-agent presets. It shows the one runtime gotcha: a host the app needs at runtime must be in
+(the egress block, made visible) and **Nix** (a reproducible toolchain baked at build,
+contained at runtime) - plus the coding-agent presets. It shows the one runtime gotcha: a host the app needs at runtime must be in
 `SLUICE_ALLOW_DOMAINS` (or `sluice learn` it), or the firewall blocks it - sluice flags which
 host at exit (and in `sluice doctor`) so you can allow it. For any other stack, `sluice init`
 scaffolds the config.

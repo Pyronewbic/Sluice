@@ -134,9 +134,8 @@ granted direct egress), squid allows by **Host / TLS-SNI** and splices (never de
 IPv6 is disabled and direct-IP/DoH blocked; the boot self-test fails closed.
 **Verified.** Allow/deny is by hostname (squid access log shows `TCP_TUNNEL` for
 allowlisted SNIs, `NONE_NONE/000` terminate for the rest); allowed hosts survive IP
-rotation; denied host, direct-IP, and HTTP-by-Host all fail closed; Strudel still serves
-on 4321 with samples spliced through `raw.githubusercontent.com` and `unpkg` blocked at
-runtime. (Required `--sysctl route_localnet=1` + IPv6 off at `docker run`.)
+rotation; denied host, direct-IP, and HTTP-by-Host all fail closed. (Required `--sysctl
+route_localnet=1` + IPv6 off at `docker run`.)
 **Out of scope (held).** TLS interception / per-URL filtering - host-granular is the
 contract. Non-HTTP egress is now default-denied except `SLUICE_ALLOW_IPS`.
 
@@ -145,7 +144,7 @@ contract. Non-HTTP egress is now default-denied except `SLUICE_ALLOW_IPS`.
 **Done.** `bin/sluice` is engine-agnostic (`SLUICE_ENGINE`; docker->podman fallback). The DNS
 rule already derives the resolver from `/etc/resolv.conf`, so the Docker-Desktop vs
 Linux-Docker difference is handled. `test/acceptance.sh` is an automated pass/fail harness
-(12 checks: egress matrix, non-root, IPv6-off, Strudel serve + sample/block);
+(egress matrix, non-root, IPv6-off, scoped TLS bump);
 `.github/workflows/acceptance.yml` runs it on Linux Docker (gate) + rootful Podman
 (best-effort). All 12 pass locally on macOS/Docker.
 **Linux write-access fixed.** The nightly runtime build-smoke surfaced a real Linux gap: a
@@ -217,7 +216,7 @@ saved session, instead of failing confusingly inside the box.
 away (run the harness with the key, or add a repo secret) - the only remaining #3 loose end.
 
 ### 4. Observability + learn-mode - ✅ learn + passive surfacing + audit hatch landed
-**Problem.** Blocks were **silent** - the Strudel "you get silence" gotcha.
+**Problem.** Blocks were **silent** - an app that needs a runtime host just hangs/fails with no clue why.
 **Done.** squid's log now records the **SNI/Host** of every blocked connection (a custom
 logformat - a terminated TLS connection otherwise logs only the IP). `sluice learn` reads
 that log, extracts the blocked hostnames (excluding base-allowed hosts and raw IPs),
@@ -322,7 +321,7 @@ interpreter version from `.python-version`/`requires-python`. Also added **deno*
 manifests are present. Every generated config is POSIX-clean (verified `sh`-sourceable), and
 `sluice init` now needs no container engine (pure scaffolding).
 **Build-verified end-to-end** (init -> build -> run, with a dependency pulled through the
-egress proxy): node(npm/astro via the CI strudel box), python(pip via fastapi), **deno**,
+egress proxy): node(npm via the node fixture), python(pip via fastapi/flask), **deno**,
 **ruby** (Sinatra+Puma), **bun**, **go**, **poetry**, **uv**, **rust**. Two preset bugs the
 verification caught and fixed: ruby (`gem`'s `--bindir` needs `mkdir -p`; native-extension
 gems need `ruby-3.3-dev build-base linux-headers`) and rust (`cargo` needs a C linker, so
@@ -337,8 +336,8 @@ scaffolds those configs now, so they moved to `test/` - they're fixtures, not ga
 **Gallery curated by capability (commit 0b343ff).** `examples/` is now three self-contained
 demos that each show a *different* slice: **firewall** (the egress block made visible - reaches
 an allowlisted host, blocked exfiltrating a fake secret to a non-allowlisted host + a raw IP,
-surfaced by `sluice doctor`), **strudel** (serve a web app + the runtime allow-gotcha), **jupyter**
-(an alt stack with no runtime egress), and **nix** (Nix composed inside a sluice - a reproducible
+surfaced by `sluice doctor`), **jupyter** (serve a web app - a Python stack with no runtime
+egress), and **nix** (Nix composed inside a sluice - a reproducible
 pinned toolchain fetched + baked at build, run locked at runtime; added 2026-06-01 with a new
 general `SLUICE_SETUP_ROOT_CMDS` build hook + `test/verify-nix.sh`). The README is a capability
 matrix and elevates the coding-agent wedge. The vite/next/fastapi starters were trimmed (redundant

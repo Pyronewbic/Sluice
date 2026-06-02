@@ -87,5 +87,5 @@ jobs:
       - name: Acceptance tests (rootless Podman)
         # No sudo: runs in the user namespace. The egress proxy needs route_localnet /
         # disable_ipv6 sysctls + in-netns iptables - this job reports whether rootless allows
-        # them. QUICK skips Strudel; the egress allow/deny/IPv6/non-root matrix is the signal.
-        run: ACCEPTANCE_QUICK=1 SLUICE_ENGINE=podman ./test/acceptance.sh
+        # them. The egress allow/deny/IPv6/non-root matrix is the signal.
+        run: SLUICE_ENGINE=podman ./test/acceptance.sh

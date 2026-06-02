@@ -24,9 +24,9 @@ CI's gate is two scripts - run them before opening a PR:
 ./test/acceptance.sh         # end-to-end security invariants (needs docker/podman)
 ```
 
-`ACCEPTANCE_QUICK=1 ./test/acceptance.sh` skips the slow Strudel build. The `test/verify-*.sh`
-harnesses cover individual features (lock, learn, ls, seams, agents, runtimes) - run the one your
-change touches, and extend it when you change behavior.
+The `test/verify-*.sh` harnesses cover individual features (security, lock, learn, control-plane,
+agents, runtimes, nix; all share `test/lib.sh`) - run the one your change touches, and extend it
+when you change behavior.
 
 ## Pull requests
 

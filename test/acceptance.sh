@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# sluice acceptance tests: build the example sluices, assert the security + serving invariants
-# end-to-end (the CI gate). Engine-agnostic (SLUICE_ENGINE). ACCEPTANCE_QUICK=1 skips Strudel.
+# sluice acceptance tests: build an empty sluice, assert the egress + isolation invariants
+# end-to-end (the CI gate). Engine-agnostic (SLUICE_ENGINE).
 set -u
 
 . "$(dirname "$0")/lib.sh"
@@ -9,7 +9,7 @@ WORK="$(mktemp -d)"
 cleanup() {
   # The entrypoint chowns each mount to the sandbox uid (1000); chown it back to the host uid
   # (while the container is still up) so the host can remove $WORK without "Permission denied".
-  for d in empty strudel; do
+  for d in empty; do
     "${SLUICE_ENGINE:-docker}" exec --user root "sluice-$d" \
       chown -R "$(id -u):$(id -g)" "$WORK/$d" >/dev/null 2>&1 || true
     ( cd "$WORK/$d" 2>/dev/null && "$SLUICE" stop ) >/dev/null 2>&1 || true
@@ -83,30 +83,5 @@ printf '%s\n' "$blog" | grep -q "TCP_TUNNEL/[0-9]* CONNECT registry.npmjs.org" \
   || bad "bump: non-bumped host still spliced (TCP_TUNNEL)"
 unset SLUICE_BUMP_DOMAINS SLUICE_BUMP_URLS
 ( cd "$WORK/empty" && "$SLUICE" stop ) >/dev/null 2>&1
-
-if [ -n "${ACCEPTANCE_QUICK:-}" ]; then
-  echo "-- strudel sluice -- (skipped: ACCEPTANCE_QUICK)"
-else
-  echo "-- strudel sluice --"
-  mkdir -p "$WORK/strudel"; cp "$ROOT/examples/strudel.config.sh" "$WORK/strudel/sluice.config.sh"
-  if ( cd "$WORK/strudel" && "$SLUICE" build ) >/dev/null 2>&1; then ok "builds (bakes @strudel/repl)"; else bad "builds"; fi
-  ( cd "$WORK/strudel" && "$SLUICE" ) >/dev/null 2>&1 &   # serve in the background
-
-  code=000
-  for _ in $(seq 1 40); do
-    code="$(curl -fsS -o /dev/null -w '%{http_code}' --max-time 3 http://localhost:4321/ 2>/dev/null || echo 000)"
-    [ "$code" = 200 ] && break; sleep 0.5
-  done
-  [ "$code" = 200 ] && ok "serves on localhost:4321 (port published + firewall-opened)" || bad "serves on localhost:4321 (got $code)"
-
-  retry bxrun "$WORK/strudel" curl -sS --max-time 15 -o /dev/null \
-    https://raw.githubusercontent.com/tidalcycles/dirt-samples/master/bd/BT0A0D0.wav \
-    && ok "runtime: sample host raw.githubusercontent.com reachable (sound loads)" \
-    || bad "runtime: sample host raw.githubusercontent.com reachable"
-  bxrun "$WORK/strudel" curl -fsS --max-time 8 -o /dev/null https://unpkg.com/@strudel/repl@1.3.0 \
-    && bad "runtime: unpkg.com (was reachable - should be build-only!)" \
-    || ok "runtime: unpkg.com blocked (bundle was baked at build)"
-  ( cd "$WORK/strudel" && "$SLUICE" stop ) >/dev/null 2>&1
-fi
 
 finish

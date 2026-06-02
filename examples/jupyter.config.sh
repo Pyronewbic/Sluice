@@ -7,9 +7,9 @@
 # notebooks you create are saved on the host. Token auth is disabled for easy localhost
 # access - fine because the port is published to 127.0.0.1 only.
 #
-# Contrast with the Strudel example: a totally different stack (Python/pip, not npm),
-# and it needs NO runtime egress - the lab UI assets are served locally, so
-# SLUICE_ALLOW_DOMAINS stays empty. The only network use is pip at BUILD time (free egress).
+# A Python/pip stack that serves a web UI but needs NO runtime egress - the lab UI assets are
+# served locally, so SLUICE_ALLOW_DOMAINS stays empty. The only network use is pip at BUILD
+# time (free egress).
 
 # --- software (build time) ------------------------------------------------------
 # Wolfi's Python + pip. (Wolfi is glibc-based, so pip pulls manylinux wheels - no
