@@ -134,8 +134,11 @@ The guarantees below hold only while these do:
    the hosts you chose - it never weakens the non-HTTP/IPv6/non-root/direct-IP guarantees. (squid
    runs as its own uid; only that uid is granted direct egress, so app code can't reach the network
    except through it.)
-5. **Destruction within the project dir.** It's mounted read-write by design; the sluice
-   can corrupt/delete your working tree (git history on the host is your backstop).
+5. **Destruction within the project dir.** By default it's mounted read-write, so the sluice
+   can corrupt/delete your working tree (git history on the host is your backstop). Opt into
+   `SLUICE_WORKSPACE=overlay` to mount the repo **read-only** and have the box edit a throwaway
+   copy instead: the agent can't touch your files, and you review (`sluice diff`) and explicitly
+   write back (`sluice apply`) - or discard by just stopping the box.
 6. **Whatever `SLUICE_PRELAUNCH` does.** It runs on the **host** and is fully trusted - a
    malicious config is out of scope (you author it).
 7. **Host-side Claude/editor hooks, side channels, timing.** Not addressed.

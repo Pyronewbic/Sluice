@@ -132,6 +132,13 @@ fi
 
 /usr/local/bin/init-firewall.sh
 
+# SLUICE_WORKSPACE=overlay: the host repo is mounted READ-ONLY at /mnt/sluice-orig; seed the writable
+# working copy (an anon volume at SLUICE_WORKDIR) from it. The agent works on the copy; the host repo
+# is untouched until `sluice apply`. The chown loop below then hands the copy to the sluice user.
+if [ "${SLUICE_WORKSPACE:-}" = overlay ] && [ -d /mnt/sluice-orig ] && [ -n "${SLUICE_WORKDIR:-}" ]; then
+  cp -a /mnt/sluice-orig/. "$SLUICE_WORKDIR"/ 2>/dev/null || true
+fi
+
 # User-writable npm prefix (NPM_CONFIG_PREFIX=/home/sluice/.npm-global) for runtime installs.
 mkdir -p /home/sluice/.npm-global
 chown sluice:sluice /home/sluice/.npm-global 2>/dev/null || true

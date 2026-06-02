@@ -10,7 +10,7 @@ set -u
 
 BASE="$(mktemp -d)"
 STORE="${XDG_STATE_HOME:-$HOME/.local/state}/sluice/sectest-state"   # host-side, OUTSIDE the temp tree
-CONTAINERS="sluice-sectest-ips sluice-sectest-hash sluice-sectest-pre sluice-sectest-state sluice-sectest-wt sluice-sectest-mnt sluice-sectest-harden sluice-sectest-doh sluice-sectest-seccomp sluice-sectest-ro"
+CONTAINERS="sluice-sectest-ips sluice-sectest-hash sluice-sectest-pre sluice-sectest-state sluice-sectest-wt sluice-sectest-mnt sluice-sectest-harden sluice-sectest-doh sluice-sectest-seccomp sluice-sectest-ro sluice-sectest-ws"
 cleanup() {
   # The entrypoint chowns the project + state mounts to uid 1000; chown the host tree back (via a
   # root container off a built sectest image - wolfi-base may lack chown) so the host can rm it.
@@ -228,5 +228,20 @@ fi
 "$ENG" exec sluice-sectest-ro sh -c 'grep -q registry.npmjs.org /etc/squid/allowlist.txt' 2>/dev/null \
   && ok "readonly: firewall/DNS came up under read-only (allowlist live)" || bad "readonly: firewall/DNS failed under read-only"
 ( cd "$ro" && "$SLUICE" stop ) >/dev/null 2>&1   # rm -v cleans the anon volumes
+
+# --- SLUICE_WORKSPACE=overlay: host repo protected (read-only), box edits a copy, diff/apply -------
+ws="$BASE/ws"; mkdir -p "$ws"
+printf 'SLUICE_NAME="sectest-ws"\nSLUICE_WORKSPACE=overlay\nSLUICE_RUN_CMD="bash"\n' > "$ws/sluice.config.sh"
+echo original > "$ws/file.txt"
+( cd "$ws" && "$SLUICE" run sh -c 'echo MODIFIED > file.txt; echo NEWFILE > added.txt' ) >/dev/null 2>&1   # box edits its copy
+[ "$(cat "$ws/file.txt")" = original ] \
+  && ok "workspace: host repo protected (box edit didn't reach it)" || bad "workspace: host file.txt changed ($(cat "$ws/file.txt"))"
+[ ! -f "$ws/added.txt" ] && ok "workspace: box's new file stayed in the copy" || bad "workspace: box's added.txt leaked to the host"
+( cd "$ws" && "$SLUICE" diff 2>/dev/null ) | grep -q '^+MODIFIED' \
+  && ok "workspace: diff shows the box's change" || bad "workspace: diff missing the change"
+( cd "$ws" && SLUICE_YES=1 "$SLUICE" apply ) >/dev/null 2>&1
+{ [ "$(cat "$ws/file.txt")" = MODIFIED ] && [ -f "$ws/added.txt" ]; } \
+  && ok "workspace: apply wrote the changes back to the host" || bad "workspace: apply didn't update the host"
+( cd "$ws" && "$SLUICE" stop ) >/dev/null 2>&1
 
 finish

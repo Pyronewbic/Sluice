@@ -84,6 +84,10 @@ Common:
   shell            a bash shell in the sandbox (as the non-root sluice user)
   run <cmd...>     an ad-hoc command instead of SLUICE_RUN_CMD
 
+Protected workspace (SLUICE_WORKSPACE=overlay - host repo mounted read-only, box works on a copy):
+  diff             show what the box changed vs your repo (unified diff, .git excluded)
+  apply            write the box's changes back onto your repo (confirms first)
+
 Build & lifecycle:
   build            build the image (if missing or the config changed)
   rebuild          build + recreate the container - apply config/allowlist edits
@@ -111,6 +115,7 @@ Env: SLUICE_ENGINE  SLUICE_NO_BANNER  SLUICE_YES  SLUICE_NO_UPDATE_CHECK  NO_COL
      SLUICE_ALLOW_DOH=1 (permit DoH/DoT resolvers; blocked by default as an exfil channel)
      SLUICE_SECCOMP=hardened (block namespace/trace/keyctl syscalls; breaks browser sandboxes)
      SLUICE_READONLY_ROOT=1 (immutable rootfs; tmpfs + anon-volume the writable paths)
+     SLUICE_WORKSPACE=overlay (host repo read-only; box edits a copy - see 'diff'/'apply')
 Docs: https://github.com/Pyronewbic/Sluice
 EOF
 }
@@ -125,6 +130,8 @@ help_for() {
     build)   echo "sluice build            - build the image if missing or the config changed." ;;
     rebuild) echo "sluice rebuild          - build + recreate the container (apply config/allowlist edits)." ;;
     update)  echo "sluice update           - rebuild from scratch (re-resolve packages) + refresh sluice.lock." ;;
+    diff)    echo "sluice diff             - (SLUICE_WORKSPACE=overlay) show what the box changed vs your repo." ;;
+    apply)   echo "sluice apply            - (SLUICE_WORKSPACE=overlay) write the box's changes back onto your repo." ;;
     stop)    echo "sluice stop             - remove the project's container." ;;
     rm)      echo "sluice rm               - remove the project's container AND image." ;;
     prune)   echo "sluice prune [--orphans] - remove every sluice container + image (or only orphans); confirms." ;;
@@ -1422,7 +1429,7 @@ if ! PROJECT_CONFIG="$(find_config)"; then
   # no config: scaffold for build/run commands; others have nothing to act on.
   case "${1:-run-default}" in
     run-default|build|rebuild|shell|run|smoke) ;;
-    stop|logs|learn|egress|rm) die "no sluice.config.sh found in $PWD or any parent - nothing to ${1}." ;;
+    stop|logs|learn|egress|rm|diff|apply) die "no sluice.config.sh found in $PWD or any parent - nothing to ${1}." ;;
     *) die "unknown command: ${1:-} - run 'sluice help' for usage." ;;
   esac
   # zero-config: scaffold, preview, then confirm before build/run (CI stops unless SLUICE_YES=1).
@@ -1619,10 +1626,19 @@ start() {
   fi
 
   # Mount the project dir rw; SLUICE_WORKDIR tells the entrypoint to chown it to sluice (Linux uid).
-  run_args+=(-v "$PROJECT_DIR":"$PROJECT_DIR" -e "SLUICE_WORKDIR=$PROJECT_DIR")
+  # SLUICE_WORKSPACE=overlay: protect the host repo - mount it READ-ONLY at /mnt/sluice-orig and give
+  # the box a writable COPY at the same path (an anon volume the entrypoint fills from the orig). The
+  # agent can't touch the host repo; review with `sluice diff`, write back with `sluice apply`.
+  if [ "${SLUICE_WORKSPACE:-}" = overlay ]; then
+    run_args+=(-v "$PROJECT_DIR":/mnt/sluice-orig:ro -v "$PROJECT_DIR" \
+               -e "SLUICE_WORKDIR=$PROJECT_DIR" -e SLUICE_WORKSPACE=overlay)
+  else
+    run_args+=(-v "$PROJECT_DIR":"$PROJECT_DIR" -e "SLUICE_WORKDIR=$PROJECT_DIR")
+  fi
 
-  # git worktree: also mount the common dir (when outside the project) so refs resolve + write.
-  if git -C "$PROJECT_DIR" rev-parse --git-common-dir >/dev/null 2>&1; then
+  # git worktree: also mount the common dir (when outside the project) so refs resolve + write. Skipped
+  # in overlay mode - an rw common-dir mount would let the agent escape the read-only protection.
+  if [ "${SLUICE_WORKSPACE:-}" != overlay ] && git -C "$PROJECT_DIR" rev-parse --git-common-dir >/dev/null 2>&1; then
     local common; common="$(git -C "$PROJECT_DIR" rev-parse --git-common-dir)"
     case "$common" in /*) ;; *) common="$PROJECT_DIR/$common";; esac
     common="$(cd "$common" 2>/dev/null && pwd || true)"
@@ -1682,6 +1698,51 @@ _exec_args() {
 # exec_in replaces this process (shell/run); run_in waits so an EXIT trap can fire after (run-default).
 exec_in() { _exec_args; exec "$RUNNER" exec "${_EXEC_ARGS[@]}" "$container" "$@"; }
 run_in()  { _exec_args; "$RUNNER" exec "${_EXEC_ARGS[@]}" "$container" "$@"; }
+
+# --- overlay workspace (SLUICE_WORKSPACE=overlay) -------------------------------------------------
+# The host repo is mounted read-only at /mnt/sluice-orig; the box works on a writable copy at
+# $SLUICE_WORKDIR (== $PROJECT_DIR). The agent can't touch the host repo; these compare/apply the copy.
+workspace_is_overlay() { [ "${SLUICE_WORKSPACE:-}" = overlay ]; }
+
+# Echo "added modified deleted" counts between the protected orig and the working copy (0 0 0 if down).
+# The working-copy path is passed as $1 (docker exec does NOT inherit the run-time -e SLUICE_WORKDIR).
+workspace_counts() {
+  running || { echo "0 0 0"; return 0; }
+  "$RUNNER" exec "$container" sh -c '
+    O=/mnt/sluice-orig; W="$1"; [ -d "$O" ] || { echo "0 0 0"; exit 0; }
+    d="$(diff -rq "$O" "$W" 2>/dev/null)"
+    printf "%s %s %s\n" \
+      "$(printf "%s\n" "$d" | grep -c "^Only in $W")" \
+      "$(printf "%s\n" "$d" | grep -c " differ$")" \
+      "$(printf "%s\n" "$d" | grep -c "^Only in $O")"
+  ' _ "$PROJECT_DIR" 2>/dev/null || echo "0 0 0"
+}
+
+# `sluice diff`: a unified diff of the working copy vs the protected original (.git excluded for signal).
+cmd_workspace_diff() {
+  workspace_is_overlay || die "sluice diff needs SLUICE_WORKSPACE=overlay (the protected-copy workspace)"
+  ensure_up
+  "$RUNNER" exec "$container" sh -c 'diff -ruN --exclude=.git /mnt/sluice-orig "$1" 2>/dev/null' _ "$PROJECT_DIR" || true
+}
+
+# `sluice apply`: write the working copy back onto the host repo (adds/mods via tar, then deletions).
+cmd_workspace_apply() {
+  workspace_is_overlay || die "sluice apply needs SLUICE_WORKSPACE=overlay"
+  running || die "the box isn't running - nothing to apply (run 'sluice' first)"
+  local a m d; read -r a m d <<EOF
+$(workspace_counts)
+EOF
+  if [ "$((a + m + d))" -eq 0 ]; then echo "[sluice] working copy matches the repo - nothing to apply"; return 0; fi
+  if [ -t 0 ] && [ -t 1 ] && [ "${SLUICE_YES:-}" != 1 ]; then
+    printf '[sluice] write %s added, %s modified, %s deleted to %s? [y/N] ' "$a" "$m" "$d" "$PROJECT_DIR"
+    local ans; read -r ans || ans=n
+    case "$ans" in [yY]|[yY][eE][sS]) ;; *) echo "[sluice] not applied."; return 0 ;; esac
+  fi
+  "$RUNNER" exec "$container" sh -c 'cd "$1" && tar -cf - .' _ "$PROJECT_DIR" 2>/dev/null | tar -C "$PROJECT_DIR" -xf - 2>/dev/null
+  "$RUNNER" exec "$container" sh -c 'cd /mnt/sluice-orig && find . -mindepth 1 | sort > /tmp/o; cd "$1" && find . -mindepth 1 | sort > /tmp/w; comm -23 /tmp/o /tmp/w' _ "$PROJECT_DIR" 2>/dev/null \
+    | while IFS= read -r p; do [ -n "$p" ] && rm -rf "$PROJECT_DIR/${p#./}" 2>/dev/null; done
+  echo "[sluice] applied $a added, $m modified, $d deleted to $PROJECT_DIR."
+}
 
 # After a run-default session, print an egress receipt: hosts the box reached (hit counts, most-hit
 # first) and hosts the firewall blocked (review these). stderr-only so it never pollutes the app's
@@ -1931,6 +1992,8 @@ EOF
 
 case "${1:-run-default}" in
   build)   build; exit 0 ;;
+  diff)    cmd_workspace_diff; exit $? ;;
+  apply)   cmd_workspace_apply; exit $? ;;
   rebuild) build; start; exit 0 ;;
   stop)    "$RUNNER" rm -f -v "$container" >/dev/null 2>&1 || true; echo "[sluice] $container stopped"; exit 0 ;;
   rm)      "$RUNNER" rm -f -v "$container" >/dev/null 2>&1 || true; "$ENGINE" rmi -f "$tag" >/dev/null 2>&1 || true; echo "[sluice] removed $container (container + image)"; exit 0 ;;
@@ -1995,6 +2058,14 @@ case "${1:-run-default}" in
         echo "${E_DIM}[sluice]${E_RST} SLUICE_RUN_CMD is '${SLUICE_RUN_CMD}' - box is up, nothing to run." >&2
         echo "         try '$_shell_hint' or a subcommand (e.g. sluice lock)." >&2 ;;
     esac
+    # overlay workspace: nudge with the changeset; the host repo is untouched until `sluice apply`.
+    if workspace_is_overlay; then
+      _wsa=""; read -r _wsa _wsm _wsd <<EOF
+$(workspace_counts)
+EOF
+      [ "$(( ${_wsa:-0} + ${_wsm:-0} + ${_wsd:-0} ))" -gt 0 ] && \
+        echo "${E_DIM}[sluice]${E_RST} workspace: ${_wsa} added, ${_wsm} modified, ${_wsd} deleted (host repo untouched) - review: sluice diff | write back: sluice apply" >&2
+    fi
     ;;
   *) die "unknown command: $1 - run 'sluice help' for usage." ;;
 esac

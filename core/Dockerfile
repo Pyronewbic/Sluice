@@ -18,7 +18,7 @@ RUN apk add --no-cache curl \
 
 # --- Base tooling: node/git/gh + the firewall (iptables, squid, dnsmasq, openssl) ---------
 RUN apk add --no-cache \
-      bash coreutils ca-certificates-bundle curl git less vim procps shadow \
+      bash coreutils diffutils ca-certificates-bundle curl git less vim procps shadow \
       iptables bind-tools jq gh squid dnsmasq openssl \
       nodejs-24 npm
 
