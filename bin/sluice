@@ -1527,10 +1527,16 @@ start() {
   fi
 
   # route_localnet -> squid intercept; disable_ipv6 -> v4-only proxy (set at run; /proc/sys is ro).
+  # cap-drop ALL then add only what the root entrypoint needs: chown the mounted dir (CHOWN/
+  # DAC_OVERRIDE/FOWNER), drop squid to its uid (SETUID/SETGID), the firewall (NET_ADMIN/NET_RAW),
+  # dnsmasq on :53 (NET_BIND_SERVICE), SIGHUP squid on live reload (KILL). Sessions still run uid
+  # 1000 with no effective caps; this shrinks what a hypothetical in-box root could reach.
   # no-new-privileges: an unprivileged session can never gain privs via a setuid binary (defence in
-  # depth - sessions already run as uid 1000 with no effective caps). pids-limit: a runaway agent or
-  # build can't fork-bomb the host (override with SLUICE_PIDS_LIMIT; SLUICE_MEMORY caps RAM).
-  local run_args=(--cap-add NET_ADMIN --cap-add NET_RAW
+  # depth). pids-limit: a runaway agent or build can't fork-bomb the host (override with
+  # SLUICE_PIDS_LIMIT; SLUICE_MEMORY caps RAM).
+  local run_args=(--cap-drop ALL
+    --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER --cap-add SETUID --cap-add SETGID
+    --cap-add NET_ADMIN --cap-add NET_RAW --cap-add NET_BIND_SERVICE --cap-add KILL
     --security-opt no-new-privileges
     --pids-limit "${SLUICE_PIDS_LIMIT:-4096}"
     --sysctl net.ipv4.conf.all.route_localnet=1
@@ -1828,7 +1834,9 @@ EOF
 
   # Credential-stripped run args: project mount + git common dir + the proxy sysctls + SLUICE_AUDIT.
   # Deliberately NO prelaunch, state-dir mounts, SLUICE_ENV, or published ports (see start()).
-  local run_args=(--cap-add NET_ADMIN --cap-add NET_RAW
+  local run_args=(--cap-drop ALL
+    --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER --cap-add SETUID --cap-add SETGID
+    --cap-add NET_ADMIN --cap-add NET_RAW --cap-add NET_BIND_SERVICE --cap-add KILL
     --security-opt no-new-privileges
     --pids-limit "${SLUICE_PIDS_LIMIT:-4096}"
     --sysctl net.ipv4.conf.all.route_localnet=1

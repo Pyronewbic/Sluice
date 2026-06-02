@@ -10,7 +10,7 @@ set -u
 
 BASE="$(mktemp -d)"
 STORE="${XDG_STATE_HOME:-$HOME/.local/state}/sluice/sectest-state"   # host-side, OUTSIDE the temp tree
-CONTAINERS="sluice-sectest-ips sluice-sectest-hash sluice-sectest-pre sluice-sectest-state sluice-sectest-wt sluice-sectest-mnt"
+CONTAINERS="sluice-sectest-ips sluice-sectest-hash sluice-sectest-pre sluice-sectest-state sluice-sectest-wt sluice-sectest-mnt sluice-sectest-harden"
 cleanup() {
   # The entrypoint chowns the project + state mounts to uid 1000; chown the host tree back (via a
   # root container off a built sectest image - wolfi-base may lack chown) so the host can rm it.
@@ -137,5 +137,30 @@ else
   ok "mounts: a :ro bind is read-only (write rejected)"
 fi
 ( cd "$mnt" && "$SLUICE" stop ) >/dev/null 2>&1
+
+# --- container hardening: no-new-privileges, pids-limit, narrowed caps, no in-box sudo -------------
+hd="$BASE/harden"; mkdir -p "$hd"
+printf 'SLUICE_NAME="sectest-harden"\nSLUICE_RUN_CMD="bash"\n' > "$hd/sluice.config.sh"
+( cd "$hd" && "$SLUICE" run true ) >/dev/null 2>&1   # build + bring the box up
+secopt="$("$ENG" inspect sluice-sectest-harden --format '{{.HostConfig.SecurityOpt}}' 2>/dev/null)"
+printf '%s' "$secopt" | grep -q 'no-new-privileges' \
+  && ok "harden: no-new-privileges set" || bad "harden: no-new-privileges missing ($secopt)"
+pl="$("$ENG" inspect sluice-sectest-harden --format '{{.HostConfig.PidsLimit}}' 2>/dev/null)"
+[ "${pl:-0}" -gt 0 ] && ok "harden: pids-limit set ($pl)" || bad "harden: pids-limit missing ($pl)"
+ce="$("$ENG" exec --user sluice sluice-sectest-harden sh -c 'grep CapEff /proc/self/status | tr -d "\t "' 2>/dev/null)"
+[ "$ce" = "CapEff:0000000000000000" ] && ok "harden: session has zero effective caps" || bad "harden: session caps ($ce)"
+cb="$("$ENG" exec --user root sluice-sectest-harden sh -c 'grep CapBnd /proc/self/status | awk "{print \$2}"' 2>/dev/null)"
+na=$(( 0x${cb:-0} & 0x1000 )); sa=$(( 0x${cb:-0} & 0x200000 )); mk=$(( 0x${cb:-0} & 0x8000000 ))  # NET_ADMIN keep; SYS_ADMIN/MKNOD drop
+if [ "$na" -ne 0 ] && [ "$sa" -eq 0 ] && [ "$mk" -eq 0 ]; then
+  ok "harden: cap bounding set narrowed (CapBnd=0x$cb; net_admin kept, sys_admin/mknod dropped)"
+else
+  bad "harden: cap set not narrowed as expected (CapBnd=0x$cb)"
+fi
+if "$ENG" exec sluice-sectest-harden sh -c 'command -v sudo' >/dev/null 2>&1; then
+  bad "harden: setuid sudo still present in the image"
+else
+  ok "harden: no in-box sudo (privilege-escalation primitive removed)"
+fi
+( cd "$hd" && "$SLUICE" stop ) >/dev/null 2>&1
 
 finish

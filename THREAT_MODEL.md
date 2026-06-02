@@ -40,7 +40,7 @@ file or tool result steering an agent, or simply buggy agent code - any of which
   SLUICE_ENV / _MOUNTS / _PRELAUNCH    --> |  forwarded creds + project dir (read-write mount)
   SLUICE_POLICY_URL (fetched on host)  --> |  squid allowlist
                                            |
-                                           |  app / agent / deps  (uid 1000, NET_ADMIN+NET_RAW)
+                                           |  app / agent / deps  (uid 1000, no effective caps)
                                            |       |  all tcp 80/443 redirected to squid
                                            |       v
                                            |  squid: only uid with egress; allow by Host/SNI,
@@ -76,10 +76,15 @@ The guarantees below hold only while these do:
   proxy v4 only, so a dual-stack app can't slip out over v6).
 - **Reading/altering the rest of your machine** -> only the project dir (and its git
   common dir, for worktrees) is mounted. Nothing else is visible.
-- **Host privilege escalation** -> runs non-root (uid 1000), only `NET_ADMIN`/`NET_RAW`,
-  no Docker socket, no Docker-in-Docker. (On SELinux-enforcing hosts the box runs
+- **Host privilege escalation** -> sessions run non-root (uid 1000) with **no effective
+  capabilities**; no Docker socket, no Docker-in-Docker, no in-box `sudo` (setuid). The container
+  drops ALL capabilities and adds back only what the root entrypoint needs at boot (chown the mount,
+  drop squid to its uid, run the firewall, bind DNS, reload squid); `no-new-privileges` blocks any
+  setuid path to root. So even a compromised in-box process has no route to the capabilities or to
+  root. `--pids-limit` (`SLUICE_PIDS_LIMIT`) and optional `--memory` (`SLUICE_MEMORY`) keep a runaway
+  agent or build from exhausting the host. (On SELinux-enforcing hosts the box runs
   `--security-opt label=disable` so it can read the project mount; that drops the SELinux layer, but
-  the non-root / caps / firewall / dir-only guarantees above are unaffected.)
+  the guarantees above are unaffected.)
 - **Supply-chain fetch vs. runtime** -> deps are pulled at build (pre-firewall); the
   *running* container is locked to the allowlist.
 - **Tampered sandbox core** -> the generic core (proxy, firewall, entrypoint, non-root user)
