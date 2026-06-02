@@ -12,7 +12,7 @@ set -u
 work="$(mktemp -d)/lock"; mkdir -p "$work"
 cat > "$work/sluice.config.sh" <<'CFG'
 SLUICE_EXTRA_PKGS="ripgrep python-3.12 py3.12-pip go"
-SLUICE_EXTRA_NPM="cowsay"
+SLUICE_EXTRA_NPM="cowsay lodash@4.17.4"
 SLUICE_SETUP_ROOT_CMDS="pip3 install --break-system-packages --quiet requests && go install rsc.io/2fa@latest"
 SLUICE_RUN_CMD="bash"
 CFG
@@ -100,6 +100,22 @@ printf '%s' "$s1" | grep -q 'pkg:apk/wolfi/ripgrep@' && ok "--sbom has the ripgr
 printf '%s' "$s1" | grep -q 'pkg:npm/cowsay@' && ok "--sbom has the cowsay npm purl" \
   || bad "--sbom missing cowsay npm purl"
 [ "$s1" = "$s2" ] && ok "--sbom is deterministic (two runs identical)" || bad "--sbom not deterministic"
+
+# 5. lock --scan: vuln-scan the SBOM via a host scanner. Gated on a scanner being present (so it's a
+# skip without one; the nightly lock job installs grype). The lodash@4.17.4 pin above carries CVEs.
+if command -v grype >/dev/null 2>&1 || command -v trivy >/dev/null 2>&1; then
+  sj="$( cd "$work" && "$SLUICE" lock --scan --json 2>/dev/null )"
+  printf '%s' "$sj" | python3 -m json.tool >/dev/null 2>&1 \
+    && ok "lock --scan --json is valid JSON" || bad "lock --scan --json invalid"
+  printf '%s' "$sj" | grep -qi 'lodash' \
+    && ok "lock --scan flagged the known-CVE package (lodash) from the SBOM" \
+    || bad "lock --scan did not flag the planted CVE (scanner DB stale?)"
+  ( cd "$work" && "$SLUICE" lock --scan --fail-on high ) >/dev/null 2>&1 \
+    && bad "lock --scan --fail-on high did NOT gate on the lodash CVEs" \
+    || ok "lock --scan --fail-on high gates (non-zero) on the planted CVEs"
+else
+  ok "lock --scan: no host scanner - soft-skip path (install grype to exercise the scan)"
+fi
 
 teardown_box "$container" "$work"; rm -rf "$(dirname "$work")" 2>/dev/null || true
 finish

@@ -38,6 +38,9 @@ jobs:
         suite: [lock, learn, control-plane]   # learn folds in audit; control-plane folds in ls + seams
     steps:
       - uses: actions/checkout@v4
+      - name: Install grype (for the lock --scan leg)
+        if: matrix.suite == 'lock'
+        run: curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sudo sh -s -- -b /usr/local/bin
       - name: Verify ${{ matrix.suite }}
         run: ./test/verify-${{ matrix.suite }}.sh   # python3 (for control-plane) + docker preinstalled
 

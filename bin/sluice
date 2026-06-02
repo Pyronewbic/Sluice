@@ -96,7 +96,8 @@ Inspect:
   egress           show what this box reached vs. was blocked (--json)
   logs             follow firewall + readiness logs
   lock             record installed apk+npm+pip+gem+go versions to sluice.lock (supply-chain audit)
-                   --check fails on drift (CI gate, --json); --diff shows it; --sbom emits CycloneDX
+                   --check fails on drift (CI gate, --json); --diff shows it; --sbom emits CycloneDX;
+                   --scan vuln-checks via a host Grype/Trivy (--fail-on <sev> to gate)
   smoke            build (if needed) + run the image smoke test
 
 Meta:
@@ -125,7 +126,7 @@ help_for() {
     ls)      echo "sluice ls [--json]      - list all sluice boxes on this machine." ;;
     egress)  echo "sluice egress [--json]  - show what this box reached vs. was blocked." ;;
     logs)    echo "sluice logs             - follow firewall + readiness logs." ;;
-    lock)    echo "sluice lock [--check [--json] | --diff [--json] | --sbom] - record/verify the supply-chain inventory." ;;
+    lock)    echo "sluice lock [--check [--json] | --diff [--json] | --sbom | --scan [--json] [--fail-on <sev>]] - record/verify/vuln-scan the supply-chain inventory." ;;
     smoke)   echo "sluice smoke            - build (if needed) + run the image smoke test." ;;
     version) echo "sluice version [--json] - show version + host runtime." ;;
     *)       usage ;;
@@ -525,6 +526,60 @@ SBOM_ARCH="$(apk --print-arch 2>/dev/null || uname -m)"; export SBOM_ARCH
                     properties:[ { name:"sluice:base", value:env.SBOM_BASE } ] } },
       components: . }'
 SBOM
+}
+
+# `sluice lock --scan [--json] [--fail-on <sev>]`: vuln-scan the box's SBOM with a HOST scanner (grype,
+# else trivy - never baked, same as cosign-verify). Report-only by default; --fail-on <severity>
+# (negligible|low|medium|high|critical) makes it a CI gate (non-zero on a finding at/above it).
+cmd_scan() {
+  local json=0 failon=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --json)      json=1 ;;
+      --fail-on)   failon="${2:-}"; [ -n "$failon" ] || die "usage: sluice lock --scan [--json] [--fail-on <severity>]"; shift ;;
+      --fail-on=*) failon="${1#--fail-on=}" ;;
+      *)           die "usage: sluice lock --scan [--json] [--fail-on <negligible|low|medium|high|critical>]" ;;
+    esac
+    shift
+  done
+  if [ -n "$failon" ]; then
+    case "$failon" in negligible|low|medium|high|critical) ;; *) die "invalid --fail-on '$failon' (negligible|low|medium|high|critical)" ;; esac
+  fi
+
+  # Prefer grype (CycloneDX-native); trivy had a 2026 supply-chain compromise, so only as a fallback.
+  local scanner=""
+  if   command -v grype >/dev/null 2>&1; then scanner=grype
+  elif command -v trivy >/dev/null 2>&1; then scanner=trivy; fi
+  if [ -z "$scanner" ]; then
+    if [ -n "$failon" ]; then die "no vulnerability scanner found but --fail-on was given - install grype to gate on CVEs (https://github.com/anchore/grype)"; fi
+    echo "[sluice] ${E_YEL}note${E_RST}: no scanner found - install grype to enable 'lock --scan' (https://github.com/anchore/grype)" >&2
+    return 0
+  fi
+
+  maybe_build
+  local tmp rc; tmp="$(mktemp)"
+  cmd_sbom > "$tmp"   # reuse the CycloneDX SBOM; the inner maybe_build is a no-op now, so $tmp is clean
+  if [ "$scanner" = grype ]; then
+    local ga=(sbom:"$tmp")
+    if [ "$json" = 1 ]; then ga+=(-o json); else ga+=(-o table); fi
+    if [ -n "$failon" ]; then ga+=(--fail-on "$failon"); fi
+    grype "${ga[@]}" && rc=0 || rc=$?
+  else
+    local sev=""
+    case "$failon" in
+      critical)   sev=CRITICAL ;;
+      high)       sev=HIGH,CRITICAL ;;
+      medium)     sev=MEDIUM,HIGH,CRITICAL ;;
+      low)        sev=LOW,MEDIUM,HIGH,CRITICAL ;;
+      negligible) sev=UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL ;;
+    esac
+    local ta=(sbom)
+    if [ "$json" = 1 ]; then ta+=(--format json); else ta+=(--format table); fi
+    if [ -n "$failon" ]; then ta+=(--severity "$sev" --exit-code 1); fi
+    trivy "${ta[@]}" "$tmp" && rc=0 || rc=$?
+  fi
+  rm -f "$tmp"
+  return "$rc"
 }
 
 # `sluice doctor`: one-shot health + why-egress-is-blocked report
@@ -1555,8 +1610,9 @@ case "${1:-run-default}" in
       --check) cmd_lock_check "${2:-}"; exit $? ;;
       --diff)  cmd_lock_diff  "${2:-}"; exit $? ;;
       --sbom)  cmd_sbom; exit $? ;;
+      --scan)  shift; cmd_scan "$@"; exit $? ;;
       "")      write_lock; exit 0 ;;
-      *)       die "usage: sluice lock [--check [--json] | --diff [--json] | --sbom]" ;;
+      *)       die "usage: sluice lock [--check [--json] | --diff [--json] | --sbom | --scan [--json] [--fail-on <sev>]]" ;;
     esac
     ;;
   update)  build --no-cache; write_lock; exit 0 ;;

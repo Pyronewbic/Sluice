@@ -58,7 +58,9 @@ file or tool result steering an agent, or simply buggy agent code - any of which
   review and drift-detect exactly what's installed (`sluice doctor` flags drift; `sluice lock --check`
   *enforces* it as a CI gate, and `sluice lock --sbom` emits a CycloneDX SBOM, with apk integrity
   hashes, for scanners). It's an audit/drift aid, not a reproducibility guarantee (Wolfi apk is a
-  rolling repo).
+  rolling repo). `sluice lock --scan` runs that SBOM through a **host** Grype/Trivy (never baked) and
+  can gate on severity - advisory, though: a clean result means "no *known* CVE in the scanner's DB,"
+  not proof of safety.
 
 ## What it does NOT defend against (be explicit)
 

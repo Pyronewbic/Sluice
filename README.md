@@ -111,7 +111,7 @@ sluice init [--force]  # scaffold a sluice.config.sh by detecting the repo's sta
 sluice learn           # propose the egress allowlist from blocked hosts (--print | --apply | --audit)
 sluice run <cmd...>    # an ad-hoc command instead of SLUICE_RUN_CMD
 sluice doctor          # health check: engine, image, allowlist, blocked egress (--json)
-sluice lock            # inventory apk+npm+pip+gem+go to sluice.lock (--check | --diff | --sbom)
+sluice lock            # inventory apk+npm+pip+gem+go to sluice.lock (--check | --diff | --sbom | --scan)
 ```
 
 Plus `build` / `rebuild` / `update` / `stop` / `rm` / `prune` for lifecycle and `shell` / `ls` /
@@ -152,12 +152,13 @@ emits the box's reached-vs-blocked hosts as a machine-readable audit record.
 pip, gem, and go package with its version and digest) so what's in your sandbox is reviewable in a
 diff, and `sluice doctor` flags drift. It's an audit artifact, not a reproducibility guarantee
 (Wolfi's apk repo is rolling). `--check` turns drift into a **CI gate**, `--diff` reviews it locally,
-and `--sbom` emits a deterministic **CycloneDX 1.6** SBOM for scanners (Grype/Trivy/Dependency-Track):
+`--sbom` emits a deterministic **CycloneDX 1.6** SBOM, and **`--scan`** vuln-checks the box with a host
+**Grype/Trivy** (`--fail-on <severity>` to gate CI):
 
 ```bash
-sluice lock --check              # fail the build if the sandbox drifted from sluice.lock
-sluice lock --diff               # show the drift without failing (local review)
+sluice lock --check                  # fail the build if the sandbox drifted from sluice.lock
 sluice lock --sbom > sbom.cdx.json   # CycloneDX inventory (apk/npm/pip/gem/go purls), byte-stable
+sluice lock --scan --fail-on high    # vuln-scan the box; non-zero exit on a high+ CVE (needs host grype/trivy)
 ```
 
 <p align="center"><img src="assets/lock-demo.gif" width="700" alt="sluice lock --check reports the inventory in sync; after a dependency is added and the box rebuilt, lock --check catches the drift (classified: + apk tree, exit 1); re-lock records the supply-chain delta, then a CycloneDX SBOM carries the new package with its purl and SHA-1 integrity hash"></p>
