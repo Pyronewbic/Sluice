@@ -18,7 +18,7 @@ hasnt(){ if grep -qF -- "$3" "$1/sluice.config.sh"; then bad "$2  [unexpected: $
 
 echo "== sluice init detection =="
 
-# ---- node: package manager, framework, the real dev-script port, flag spelling ----
+# node: package manager, framework, the real dev-script port, flag spelling
 d="$(dir node-vite)"
 printf '{"scripts":{"dev":"vite"},"devDependencies":{"vite":"^5"}}\n' > "$d/package.json"; init "$d"
 has "$d" "node/vite port"        'SLUICE_PORTS="5173"'
@@ -52,7 +52,7 @@ has   "$d" "node/bound honors port" 'SLUICE_PORTS="7777"'
 has   "$d" "node/bound runs as-is"  'npm install && npm run dev"'
 hasnt "$d" "node/bound no dup flags" 'npm run dev -- '
 
-# ---- python: manager, framework + entry, interpreter version ----
+# python: manager, framework + entry, interpreter version
 d="$(dir py-fastapi)"
 printf 'fastapi\nuvicorn\n' > "$d/requirements.txt"; : > "$d/main.py"; init "$d"
 has "$d" "py pkgs"               'SLUICE_EXTRA_PKGS="python-3.12 py3.12-pip"'
@@ -84,13 +84,13 @@ has "$d" "py/pipenv setup"       'SLUICE_SETUP_CMDS="pip install --user pipenv"'
 has "$d" "py/pipenv run cmd"     'pipenv install && pipenv run flask --app app run'
 has "$d" "py/pipenv detected"    'detected: python-3.12/pipenv (flask)'
 
-# ---- deno ----
+# deno
 d="$(dir deno)"
 printf '{"tasks":{"dev":"deno run -A main.ts"}}\n' > "$d/deno.json"; init "$d"
 has "$d" "deno apk"              'SLUICE_EXTRA_PKGS="deno"'
 has "$d" "deno run cmd"          'SLUICE_RUN_CMD="deno task dev"'
 
-# ---- ruby (locks in the native-extension toolchain + bindir mkdir fixes) ----
+# ruby (locks in the native-extension toolchain + bindir mkdir fixes)
 d="$(dir ruby)"
 printf 'source "https://rubygems.org"\ngem "sinatra"\n' > "$d/Gemfile"; init "$d"
 has "$d" "ruby build pkgs"       'SLUICE_EXTRA_PKGS="ruby-3.3 ruby-3.3-dev build-base linux-headers"'
@@ -102,7 +102,7 @@ printf 'source "https://rubygems.org"\ngem "rails", "~> 7"\n' > "$d/Gemfile"; in
 has "$d" "ruby/rails port"       'SLUICE_PORTS="3000"'
 has "$d" "ruby/rails server"     'bundle exec rails server -b 0.0.0.0 -p 3000'
 
-# ---- rust (locks in the C-linker fix) / go ----
+# rust (locks in the C-linker fix) / go
 d="$(dir rust)"
 printf '[package]\nname="x"\n' > "$d/Cargo.toml"; init "$d"
 has "$d" "rust build pkgs"       'SLUICE_EXTRA_PKGS="rust build-base"'
@@ -113,7 +113,7 @@ printf 'module x\ngo 1.22\n' > "$d/go.mod"; init "$d"
 has "$d" "go apk"                'SLUICE_EXTRA_PKGS="go"'
 has "$d" "go run cmd"            'SLUICE_RUN_CMD="go run ."'
 
-# ---- generic + polyglot ----
+# generic + polyglot
 d="$(dir generic)"; init "$d"
 has "$d" "generic bash"          'SLUICE_RUN_CMD="bash"'
 has "$d" "generic note"          'no known stack detected'
@@ -124,7 +124,7 @@ printf 'fastapi\n' > "$d/requirements.txt"; init "$d"
 has "$d" "polyglot targets node" 'detected: node/npm (vite)'
 has "$d" "polyglot flags python" 'also saw manifests for: python'
 
-# ---- --force ----
+# --force
 d="$(dir force)"
 printf '{"scripts":{"dev":"vite"},"devDependencies":{"vite":"^5"}}\n' > "$d/package.json"; init "$d"
 if ( cd "$d" && "$SLUICE" init )        >/dev/null 2>&1; then bad "force: refuses without --force"; else ok "force: refuses without --force"; fi

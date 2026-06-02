@@ -13,13 +13,11 @@ SQUID_UID="$(id -u squid)"
 HTTP_PORT=3129
 HTTPS_PORT=3130
 
-# --- reset (v4) ----------------------------------------------------------------
 iptables -F
 iptables -X 2>/dev/null || true
 iptables -t nat -F 2>/dev/null || true
 iptables -t nat -X 2>/dev/null || true
 
-# --- INPUT (v4) ----------------------------------------------------------------
 iptables -A INPUT -i lo -j ACCEPT
 iptables -A INPUT -s 127.0.0.11 -j ACCEPT                              # docker embedded DNS
 iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
@@ -28,12 +26,10 @@ for p in ${SLUICE_PORTS:-}; do
   iptables -A INPUT -p tcp --dport "$p" -j ACCEPT
 done
 
-# --- redirect all HTTP/HTTPS egress to squid (v4 nat) --------------------------
 # Everyone but squid: tcp/80 -> 3129, tcp/443 -> 3130 (the owner exclusion avoids a loop).
 iptables -t nat -A OUTPUT -p tcp --dport 80  -m owner ! --uid-owner "$SQUID_UID" -j REDIRECT --to-ports "$HTTP_PORT"
 iptables -t nat -A OUTPUT -p tcp --dport 443 -m owner ! --uid-owner "$SQUID_UID" -j REDIRECT --to-ports "$HTTPS_PORT"
 
-# --- OUTPUT (v4) ---------------------------------------------------------------
 iptables -A OUTPUT -o lo -j ACCEPT                                     # loopback
 iptables -A OUTPUT -d 127.0.0.0/8 -j ACCEPT                            # REDIRECT'd pkts (dst rewritten to localhost -> squid)
 iptables -A OUTPUT -m owner --uid-owner "$SQUID_UID" -j ACCEPT         # squid's own egress (enforces the allowlist)
@@ -54,7 +50,7 @@ iptables -P INPUT   DROP
 iptables -P FORWARD DROP
 iptables -P OUTPUT  DROP
 
-# --- IPv6: default-drop everything (no v6 proxying in this prototype) -----------
+# IPv6: default-drop everything (we proxy v4 only).
 if command -v ip6tables >/dev/null 2>&1; then
   ip6tables -F 2>/dev/null || true
   ip6tables -t nat -F 2>/dev/null || true
@@ -65,10 +61,9 @@ if command -v ip6tables >/dev/null 2>&1; then
   ip6tables -P OUTPUT  DROP 2>/dev/null || true
 fi
 
-# --- verify (fail closed on the deny tests) ------------------------------------
-# Audit mode (learn --audit) opens all HTTP/HTTPS via squid (splice all / allow all), so the two
-# enforce-mode deny asserts below would fail closed - skip them. Non-HTTP ports + IPv6 stay
-# default-DROP (iptables, above); the audit container is ephemeral + credential-stripped.
+# Audit mode (learn --audit) opens all HTTP/HTTPS via squid, so the enforce-mode deny asserts below
+# would fail closed - skip them. Non-HTTP ports + IPv6 stay default-DROP above; the audit container
+# is ephemeral + credential-stripped.
 if [ "${SLUICE_AUDIT:-}" = 1 ]; then
   echo "[firewall] AUDIT MODE: egress OPEN to all HTTP/HTTPS hosts - deny self-tests skipped" >&2
 else
@@ -96,8 +91,7 @@ fi
 curl -sS -o /dev/null --max-time 12 https://registry.npmjs.org 2>/dev/null \
   || echo "[firewall] WARN: registry.npmjs.org unreachable via proxy - check 'docker exec <sluice> cat /var/log/squid/cache.log'" >&2
 
-# The self-tests above (deny-canary + this allow-check) ran through squid and are now in its
-# access log. Truncate it so `sluice egress` / the egress receipt show the session's real traffic,
-# not sluice's own boot checks. squid appends, so it keeps logging cleanly from here.
+# Boot self-tests (deny-canary + allow-check) are now in squid's access log; truncate it so
+# `sluice egress` / the receipt show the session's real traffic, not boot checks. squid keeps appending.
 squid -k rotate 2>/dev/null || : > /var/log/squid/access.log 2>/dev/null || true
 echo "[firewall] hostname-filtered egress active (proxy: squid)."
