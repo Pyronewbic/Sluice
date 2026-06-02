@@ -3,7 +3,7 @@
 #   fpath=(/path/to/completion $fpath); autoload -Uz compinit; compinit
 
 _sluice() {
-  local -a cmds
+  local -a cmds globals
   cmds=(
     'agent:run a coding-agent preset'
     'init:scaffold a sluice.config.sh from the detected stack'
@@ -25,16 +25,49 @@ _sluice() {
     'version:show version + host runtime'
     'help:show help'
   )
+  globals=(
+    '-b:target a box by name (before the command)'
+    '--box:target a box by name (before the command)'
+  )
 
-  if (( CURRENT == 2 )); then
-    _describe -t commands 'sluice command' cmds
+  # Built box names (sluice-* image repos, prefix stripped) for -b/--box completion.
+  _sluice_boxes() {
+    local eng=""
+    if   [[ -n "${SLUICE_ENGINE:-}" ]]; then eng="$SLUICE_ENGINE"
+    elif (( $+commands[docker] )); then eng=docker
+    elif (( $+commands[podman] )); then eng=podman; fi
+    [[ -n "$eng" ]] || return 0
+    "$eng" image ls --filter label=sluice.confighash --format '{{.Repository}}' 2>/dev/null \
+      | grep '^sluice-' | sed 's/^sluice-//' | sort -u
+  }
+
+  # A box name right after the leading -b/--box.
+  if [[ "${words[CURRENT-1]}" == (-b|--box) ]]; then
+    local -a boxes; boxes=(${(f)"$(_sluice_boxes)"})
+    _describe -t boxes 'box' boxes
     return
   fi
 
+  # Command index: 2 normally, shifted past a leading -b/--box <name>.
+  local ci=2
   case "${words[2]}" in
+    -b|--box) ci=4 ;;
+    --box=*)  ci=3 ;;
+  esac
+
+  if (( CURRENT == ci )); then
+    _describe -t commands 'sluice command' cmds
+    (( ci == 2 )) && _describe -t globals 'global flag' globals
+    return
+  fi
+  (( CURRENT < ci )) && return
+
+  case "${words[ci]}" in
     learn)   _arguments '--all[since boot]' '--print[emit the list]' '--apply[allow all]' '--audit[open-egress discovery]' '--help[usage]' ;;
     lock)    _arguments '--check[fail on drift]' '--diff[show drift]' '--sbom[emit CycloneDX]' '--json[machine-readable]' '--help[usage]' ;;
-    doctor|ls|egress|version) _arguments '--json[machine-readable]' '--help[usage]' ;;
+    ls)      _arguments '--running[running boxes only]' '--orphans[orphan boxes only]' '--stack[filter by stack]:stack:' '--egress[live blocked-egress counts]' '--json[machine-readable]' '--help[usage]' ;;
+    prune)   _arguments '--orphans[remove only orphans]' '--help[usage]' ;;
+    doctor|egress|version) _arguments '--json[machine-readable]' '--help[usage]' ;;
     init)    _arguments '--force[overwrite]' '--help[usage]' ;;
     agent)
       local d names

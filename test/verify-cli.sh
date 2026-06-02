@@ -18,10 +18,16 @@ sys.exit(0 if all(k in d for k in ('version','engine','os','install')) and d['ve
   && ok "version --json has version/engine/os/install" || bad "version --json missing keys ($vj)"
 
 # Per-command --help: prints that command's synopsis, not the generic 'unknown command'.
-for c in run lock learn rm prune; do
+for c in run lock learn rm prune ls; do
   h="$("$SLUICE" "$c" --help 2>/dev/null)"
   printf '%s' "$h" | grep -q "sluice $c" && ok "$c --help prints its synopsis" || bad "$c --help wrong: $h"
 done
+
+# Box-selector + ls/prune flags surface in help (control-plane additions).
+"$SLUICE" help 2>/dev/null      | grep -q -- '--box'     && ok "usage documents -b/--box"        || bad "usage missing -b/--box"
+"$SLUICE" ls --help 2>/dev/null | grep -q -- '--egress'  && ok "ls --help mentions --egress"      || bad "ls --help missing --egress"
+"$SLUICE" ls --help 2>/dev/null | grep -q -- '--orphans' && ok "ls --help mentions --orphans"     || bad "ls --help missing --orphans"
+"$SLUICE" prune --help 2>/dev/null | grep -q -- '--orphans' && ok "prune --help mentions --orphans" || bad "prune --help missing --orphans"
 
 # parent_of (public-suffix aware): registrable parent below the longest matching suffix.
 parent_is() { local got; got="$("$SLUICE" __parent "$1" 2>/dev/null)"; [ "$got" = "$2" ] && ok "parent_of($1) = $2" || bad "parent_of($1) = '$got' (want $2)"; }

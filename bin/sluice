@@ -69,7 +69,9 @@ usage() {
   cat <<EOF
 sluice $(sluice_version) - run any project in a sandboxed, egress-firewalled container.
 
-Usage: sluice [command]
+Usage: sluice [-b <name>] [command]
+
+  -b, --box <name>  target any box by name from anywhere (before the command; see 'sluice ls')
 
 Common:
   (no command)     build (if needed) + run SLUICE_RUN_CMD; scaffold a config if there's none
@@ -88,11 +90,11 @@ Build & lifecycle:
   update           rebuild from scratch (re-resolve packages to latest) + refresh sluice.lock
   stop             remove the project's container
   rm               remove the project's container AND image
-  prune            remove every sluice container + image on this machine (confirms)
+  prune            remove every sluice container + image (or only orphans: --orphans); confirms
 
 Inspect:
   doctor           health check: engine, image, allowlist, blocked egress (--json)
-  ls               list all sluice boxes on this machine (name, status, stack, path; --json)
+  ls               list all boxes + posture (status, stack, allow/ports/lock, path); --running/--orphans/--stack <name>/--egress/--json
   egress           show what this box reached vs. was blocked (--json)
   logs             follow firewall + readiness logs
   lock             record installed apk+npm+pip+gem+go versions to sluice.lock (supply-chain audit)
@@ -121,9 +123,9 @@ help_for() {
     update)  echo "sluice update           - rebuild from scratch (re-resolve packages) + refresh sluice.lock." ;;
     stop)    echo "sluice stop             - remove the project's container." ;;
     rm)      echo "sluice rm               - remove the project's container AND image." ;;
-    prune)   echo "sluice prune            - remove every sluice container + image on this machine (confirms)." ;;
+    prune)   echo "sluice prune [--orphans] - remove every sluice container + image (or only orphans); confirms." ;;
     doctor)  echo "sluice doctor [--json]  - health check: engine, image, allowlist, blocked egress." ;;
-    ls)      echo "sluice ls [--json]      - list all sluice boxes on this machine." ;;
+    ls)      echo "sluice ls [--running|--orphans|--stack <name>|--egress|--json] - list boxes + posture (allow/ports/lock; --egress adds live blocked counts). Posture populates after rebuild." ;;
     egress)  echo "sluice egress [--json]  - show what this box reached vs. was blocked." ;;
     logs)    echo "sluice logs             - follow firewall + readiness logs." ;;
     lock)    echo "sluice lock [--check [--json] | --diff [--json] | --enforce [--json] | --sbom [--format cyclonedx|spdx] | --scan [--json] [--fail-on <sev>]] - record/verify/vuln-scan the supply-chain inventory." ;;
@@ -316,6 +318,16 @@ blocked_new() {
     case "$h" in example.com|example.net|example.org) continue;; esac   # boot deny-canary, not an app host
     case "$cur" in *" $h "*) ;; *) printf '%s\n' "$h";; esac
   done
+}
+
+# Count of genuinely-denied hosts for a running box, WITHOUT sourcing its config (for `ls --egress`).
+# Reuses blocked_new wholesale: a subshell overrides the two globals it reads - $container (which
+# box's log to exec) and $SLUICE_ALLOW_DOMAINS (the box's live allowlist, read from the container).
+# base_domains() is still added by allowed_domains(), so base hosts never count as blocked.
+box_blocked_count() {
+  local al
+  al="$("$RUNNER" exec "$1" cat /etc/squid/allowlist.txt 2>/dev/null | tr '\n' ' ' || true)"
+  ( container="$1"; SLUICE_ALLOW_DOMAINS="$al"; blocked_new 2>/dev/null | grep -c . ) || true
 }
 
 # `sluice egress [--json]`: the box's egress audit record (reached vs. blocked)
@@ -775,7 +787,20 @@ cmd_doctor_json() {
 # Boxes are identified by the sluice.confighash label (baked since early versions); path/stack/desc
 # come from labels baked at build, so nothing is sourced here. The box matching $PWD is marked '*'.
 cmd_ls() {
-  local mode="${1:-}" imgs here=""
+  local mode="" only_running="" only_orphans="" stack_filter="" egress="" imgs here=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --json)    mode=--json ;;
+      --running) only_running=1 ;;
+      --orphans) only_orphans=1 ;;
+      --egress)  egress=1 ;;
+      --stack)   [ -n "${2:-}" ] || die "usage: sluice ls --stack <name>"; stack_filter="$2"; shift ;;
+      --stack=*) stack_filter="${1#--stack=}" ;;
+      *)         die "usage: sluice ls [--running] [--orphans] [--stack <name>] [--egress] [--json]" ;;
+    esac
+    shift
+  done
+
   imgs="$("$ENGINE" image ls --filter label=sluice.confighash --format '{{.Repository}}' 2>/dev/null | grep -v '^<none>$' | sort -u || true)"   # grep exits 1 on no-match; tolerate it so the empty-state branch is reachable under set -e
   if [ -z "$imgs" ]; then
     if ! "$ENGINE" info >/dev/null 2>&1; then   # binary exists (dispatch checked), so empty == daemon down
@@ -790,59 +815,126 @@ cmd_ls() {
   # Current box = the project dir for $PWD's config (no sourcing), matched on the sluice.project label.
   if here="$(find_config 2>/dev/null)"; then here="$(cd "$(dirname "$here")" && pwd)"; else here=""; fi
 
-  # Gather raw label values per box; display transforms (~, -, widths) happen at render.
-  local names=() stats=() projs=() stacks=() descs=() curs=()
-  local name proj stack desc run status cur
+  # Gather labels + container state into parallel arrays, applying filters as we go. (Kept as a plain
+  # while-loop, NOT a $(...) capture: a case pattern's ) inside command substitution mis-parses on bash 3.2.)
+  local names=() stats=() projs=() stacks=() descs=() curs=() orphs=() allows=() ports_=() locks=() blocks=()
+  local name proj stack desc status cur orphan allowcount portslbl lock blocked
   while IFS= read -r name; do
     [ -n "$name" ] || continue
     proj="$( "$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.project" }}' "$name" 2>/dev/null || true)"
     stack="$("$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.stack" }}'   "$name" 2>/dev/null || true)"
     desc="$( "$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.desc" }}'    "$name" 2>/dev/null || true)"
+    allowcount="$("$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.allowcount" }}' "$name" 2>/dev/null || true)"
+    portslbl="$(  "$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.ports" }}'      "$name" 2>/dev/null || true)"
+    case "$proj"       in "<no value>") proj=""       ;; esac
+    case "$stack"      in "<no value>") stack=""      ;; esac
+    case "$desc"       in "<no value>") desc=""       ;; esac
+    case "$allowcount" in "<no value>") allowcount="" ;; esac
+    case "$portslbl"   in "<no value>") portslbl=""   ;; esac
+    orphan=false; [ -n "$proj" ] && [ ! -d "$proj" ] && orphan=true
     if   "$RUNNER" ps    --filter "name=$name" --filter status=running --format '{{.Names}}' 2>/dev/null | grep -qx "$name"; then status=running
     elif "$RUNNER" ps -a --filter "name=$name" --format '{{.Names}}' 2>/dev/null | grep -qx "$name"; then status=stopped
+    elif [ "$orphan" = true ]; then status=orphan
     else status=built; fi
     cur=false; [ -n "$here" ] && [ "$proj" = "$here" ] && cur=true
-    names+=("$name"); stats+=("$status"); projs+=("$proj"); stacks+=("$stack"); descs+=("$desc"); curs+=("$cur")
+    [ -n "$only_running" ] && [ "$status" != running ] && continue
+    [ -n "$only_orphans" ] && [ "$orphan" != true ]    && continue
+    [ -n "$stack_filter" ] && case "$stack" in *"$stack_filter"*) ;; *) continue ;; esac
+    lock="-"; [ -n "$proj" ] && [ -f "$proj/sluice.lock" ] && lock=locked
+    blocked=""; [ -n "$egress" ] && [ "$status" = running ] && blocked="$(box_blocked_count "$name")"   # opt-in: execs into the box
+    names+=("$name"); stats+=("$status"); projs+=("$proj"); stacks+=("$stack"); descs+=("$desc"); curs+=("$cur"); orphs+=("$orphan")
+    allows+=("$allowcount"); ports_+=("$portslbl"); locks+=("$lock"); blocks+=("$blocked")
   done <<EOF
 $imgs
 EOF
 
-  local i
+  if [ "${#names[@]}" -eq 0 ]; then
+    [ "$mode" = --json ] && { echo '[]'; return 0; }
+    echo "[sluice] no sluice boxes match the given filters."
+    return 0
+  fi
+
+  # Render order: current first, then running, then name. Build "ckey<TAB>rkey<TAB>name<TAB>idx",
+  # sort, read the indices back (this $(...) holds no case pattern, so it's bash-3.2-safe).
+  local TAB; TAB="$(printf '\t')"
+  local order=() ckey rkey idx sorted
+  sorted="$(
+    for idx in "${!names[@]}"; do
+      ckey=1; [ "${curs[$idx]}" = true ]     && ckey=0
+      rkey=1; [ "${stats[$idx]}" = running ] && rkey=0
+      printf '%s\t%s\t%s\t%s\n' "$ckey" "$rkey" "${names[$idx]}" "$idx"
+    done | sort -t"$TAB" -k1,1 -k2,2 -k3,3
+  )"
+  while IFS="$TAB" read -r ckey rkey name idx; do
+    [ -n "$idx" ] && order+=("$idx")
+  done <<EOF
+$sorted
+EOF
+
+  local i j ac lk pjson bjson
   if [ "$mode" = --json ]; then
     printf '['
-    for i in "${!names[@]}"; do
-      [ "$i" -gt 0 ] && printf ','
-      printf '{"name":"%s","status":"%s","stack":"%s","path":"%s","description":"%s","current":%s}' \
+    for j in "${!order[@]}"; do
+      i="${order[$j]}"
+      [ "$j" -gt 0 ] && printf ','
+      ac="${allows[$i]}"; [ -n "$ac" ] || ac=null              # null = un-rebuilt box (label absent), not 0
+      lk=false; [ "${locks[$i]}" = locked ] && lk=true
+      # shellcheck disable=SC2086
+      pjson="$(printf '%s\n' ${ports_[$i]} | _json_arr)"
+      bjson=""; if [ -n "$egress" ]; then
+        if [ "${stats[$i]}" = running ]; then bjson=",\"blocked\":${blocks[$i]:-0}"; else bjson=',"blocked":null'; fi
+      fi
+      printf '{"name":"%s","status":"%s","stack":"%s","path":"%s","description":"%s","current":%s,"orphan":%s,"allow_count":%s,"ports":%s,"locked":%s%s}' \
         "$(_json_esc "${names[$i]}")" "$(_json_esc "${stats[$i]}")" "$(_json_esc "${stacks[$i]}")" \
-        "$(_json_esc "${projs[$i]}")" "$(_json_esc "${descs[$i]}")" "${curs[$i]}"
+        "$(_json_esc "${projs[$i]}")" "$(_json_esc "${descs[$i]}")" "${curs[$i]}" "${orphs[$i]}" \
+        "$ac" "$pjson" "$lk" "$bjson"
     done
     printf ']\n'; return 0
   fi
 
-  # human table: compute display values + column widths
-  local wname=4 wstat=6 wstack=5 wpath=4
-  local dpaths=() dstacks=() ddescs=() marks=() dpath dstack ddesc mark
+  # human table: compute display values + column widths (indexed by original position)
+  local wname=4 wstat=6 wstack=5 wallow=5 wports=5 wlock=4 wblk=7 wpath=4
+  local vpaths=() cpaths=() dstacks=() ddescs=() marks=() dallows=() dports=() dlocks=() dblks=()
+  local dpath vpath cpath dstack ddesc mark dallow dport dlock dblk
   for i in "${!names[@]}"; do
     dpath="${projs[$i]}"; case "$dpath" in "$HOME"/*) dpath="~${dpath#"$HOME"}";; "$HOME") dpath="~";; esac
     [ -n "$dpath" ] || dpath="-"
+    if [ "${orphs[$i]}" = true ]; then vpath="$dpath (gone)"; cpath="$dpath ${C_DIM}(gone)${C_RST}"; else vpath="$dpath"; cpath="$dpath"; fi
     dstack="${stacks[$i]}"; [ -n "$dstack" ] || dstack="-"
     ddesc="${descs[$i]}";   [ -n "$ddesc" ]  || ddesc="-"
+    dallow="${allows[$i]}"; [ -n "$dallow" ] || dallow="-"
+    dport="${ports_[$i]}";  [ -n "$dport" ]  || dport="-"
+    dlock="${locks[$i]}"
+    dblk="${blocks[$i]}";   [ -n "$dblk" ]   || dblk="-"
     mark=" "; [ "${curs[$i]}" = true ] && mark="*"
-    dpaths+=("$dpath"); dstacks+=("$dstack"); ddescs+=("$ddesc"); marks+=("$mark")
+    vpaths[$i]="$vpath"; cpaths[$i]="$cpath"; dstacks[$i]="$dstack"; ddescs[$i]="$ddesc"; marks[$i]="$mark"
+    dallows[$i]="$dallow"; dports[$i]="$dport"; dlocks[$i]="$dlock"; dblks[$i]="$dblk"
     [ ${#names[$i]} -gt "$wname"  ] && wname=${#names[$i]}
     [ ${#stats[$i]} -gt "$wstat"  ] && wstat=${#stats[$i]}
     [ ${#dstack}    -gt "$wstack" ] && wstack=${#dstack}
-    [ ${#dpath}     -gt "$wpath"  ] && wpath=${#dpath}
+    [ ${#dallow}    -gt "$wallow" ] && wallow=${#dallow}
+    [ ${#dport}     -gt "$wports" ] && wports=${#dport}
+    [ ${#dlock}     -gt "$wlock"  ] && wlock=${#dlock}
+    [ ${#dblk}      -gt "$wblk"   ] && wblk=${#dblk}
+    [ ${#vpath}     -gt "$wpath"  ] && wpath=${#vpath}
   done
 
   echo "${C_BLD}sluice boxes${C_RST}"
-  printf '  %s%-*s  %-*s  %-*s  %-*s  %s%s\n' "$C_DIM" "$wname" NAME "$wstat" STATUS "$wstack" STACK "$wpath" PATH DESCRIPTION "$C_RST"
-  local st sc stcol
-  for i in "${!names[@]}"; do
+  printf '  %s' "$C_DIM"
+  printf '%-*s  %-*s  %-*s  %-*s  %-*s  %-*s' "$wname" NAME "$wstat" STATUS "$wstack" STACK "$wallow" ALLOW "$wports" PORTS "$wlock" LOCK
+  [ -n "$egress" ] && printf '  %-*s' "$wblk" BLOCKED
+  printf '  %-*s  %s%s\n' "$wpath" PATH DESCRIPTION "$C_RST"
+  local st sc stcol pad pcell
+  for j in "${!order[@]}"; do
+    i="${order[$j]}"
     st="${stats[$i]}"; case "$st" in running) sc="$C_GRN";; *) sc="$C_DIM";; esac
     stcol="${sc}$(printf '%-*s' "$wstat" "$st")${C_RST}"   # pad first, then color, so columns stay aligned
-    printf '%s %-*s  %s  %-*s  %-*s  %s\n' "${marks[$i]}" \
-      "$wname" "${names[$i]}" "$stcol" "$wstack" "${dstacks[$i]}" "$wpath" "${dpaths[$i]}" "${ddescs[$i]}"
+    pad=$(( wpath - ${#vpaths[$i]} )); [ "$pad" -lt 0 ] && pad=0
+    pcell="${cpaths[$i]}$(printf '%*s' "$pad" '')"         # color the (gone) suffix, then pad on visible width
+    printf '%s %-*s  %s  %-*s  %-*s  %-*s  %-*s' "${marks[$i]}" \
+      "$wname" "${names[$i]}" "$stcol" "$wstack" "${dstacks[$i]}" "$wallow" "${dallows[$i]}" "$wports" "${dports[$i]}" "$wlock" "${dlocks[$i]}"
+    [ -n "$egress" ] && printf '  %-*s' "$wblk" "${dblks[$i]}"
+    printf '  %s  %s\n' "$pcell" "${ddescs[$i]}"
   done
 }
 
@@ -926,6 +1018,30 @@ runtime_run() {
   if [ "${#RUNTIME_RUN_OPTS[@]}" -gt 0 ]; then "$RUNNER" run -d "${RUNTIME_RUN_OPTS[@]}" "$@"; else "$RUNNER" run -d "$@"; fi
 }
 
+# Map a -b/--box <name> to a built box: accept the short slug (qwen) or the full image (sluice-qwen),
+# verify it's a real sluice box, and stash its recorded project dir for the box-aware find_config below.
+resolve_box_target() {
+  local name="$1" img hash
+  case "$name" in sluice-*) img="$name" ;; *) img="sluice-$name" ;; esac
+  hash="$("$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.confighash" }}' "$img" 2>/dev/null || true)"
+  case "$hash" in ""|"<no value>") die "no sluice box named '$name' - run 'sluice ls'" ;; esac
+  SLUICE_BOX_IMAGE="$img"
+  SLUICE_BOX_SLUG="${img#sluice-}"
+  BOX_PROJECT="$("$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.project" }}' "$img" 2>/dev/null || true)"
+  case "$BOX_PROJECT" in "<no value>") BOX_PROJECT="" ;; esac
+}
+
+# Leading global -b/--box <name>: explicit, per-invocation targeting of any box from anywhere. Parsed
+# ONLY before the subcommand, so a --box that's an argument to `sluice run` is never swallowed.
+SLUICE_BOX_TARGET=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -b|--box) [ -n "${2:-}" ] || die "--box needs a box name - run 'sluice ls'"; SLUICE_BOX_TARGET="$2"; shift 2 ;;
+    --box=*)  SLUICE_BOX_TARGET="${1#--box=}"; [ -n "$SLUICE_BOX_TARGET" ] || die "--box needs a box name - run 'sluice ls'"; shift ;;
+    *)        break ;;
+  esac
+done
+
 # Per-command help (sluice <cmd> --help) + hidden helpers - before config (they need none).
 case "${2:-}" in -h|--help) help_for "${1:-}"; exit 0 ;; esac
 case "${1:-}" in
@@ -939,6 +1055,17 @@ case "${1:-}" in
   init|help|-h|--help|version|-v|--version|doctor) ;;
   *) resolve_engine ;;
 esac
+
+# --box targeting: resolve the named box up front so every config lookup below routes to it. Reject
+# the commands that have no single-box meaning; explicit by design - echo the target to stderr.
+if [ -n "$SLUICE_BOX_TARGET" ]; then
+  case "${1:-}" in
+    init|help|-h|--help|version|-v|--version|ls|prune|agent) die "--box doesn't apply to '${1:-}'" ;;
+  esac
+  resolve_engine   # idempotent; doctor skipped it in the case above
+  resolve_box_target "$SLUICE_BOX_TARGET"
+  echo "${E_DIM}[sluice]${E_RST} targeting ${SLUICE_BOX_SLUG} (${BOX_PROJECT:-<dir gone>})" >&2
+fi
 
 # `sluice init` helpers: best-effort manifest parsing (no jq), each returns 0
 _init_json_str()  { printf '%s' "$(grep -oE "\"$2\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" "$1" 2>/dev/null | head -1 | sed -E 's/^.*:[[:space:]]*"([^"]*)".*$/\1/')"; }
@@ -1139,6 +1266,10 @@ esac
 
 # locate the project by walking cwd upward for sluice.config.sh
 find_config() {
+  if [ -n "${SLUICE_BOX_TARGET:-}" ]; then   # -b/--box: the targeted box's recorded dir, not $PWD's
+    [ -n "${BOX_PROJECT:-}" ] && [ -f "$BOX_PROJECT/sluice.config.sh" ] && { echo "$BOX_PROJECT/sluice.config.sh"; return 0; }
+    return 1   # config gone (orphan): the caller's no-config path fires
+  fi
   d="$PWD"
   while [ "$d" != / ]; do
     [ -f "$d/sluice.config.sh" ] && { echo "$d/sluice.config.sh"; return 0; }
@@ -1153,16 +1284,30 @@ if [ "${1:-}" = doctor ]; then
 fi
 
 # `sluice ls`: global box listing (resolves its own engine above; no project config needed).
-if [ "${1:-}" = ls ]; then
-  case "${2:-}" in ""|--json) cmd_ls "${2:-}"; exit 0 ;; *) die "usage: sluice ls [--json]" ;; esac
-fi
+if [ "${1:-}" = ls ]; then shift; cmd_ls "$@"; exit $?; fi
 
-# `sluice prune`: global cleanup - remove every sluice container + image on this machine (confirms).
+# `sluice prune`: global cleanup - remove every sluice box (or only orphans with --orphans); confirms.
 cmd_prune() {
-  local imgs i a
+  local only_orphans="" imgs i a proj kept
+  [ "${1:-}" = --orphans ] && only_orphans=1
   imgs="$("$ENGINE" image ls --filter label=sluice.confighash --format '{{.Repository}}' 2>/dev/null | grep -v '^<none>$' | sort -u || true)"
   [ -n "$imgs" ] || { echo "[sluice] no sluice boxes to prune."; return 0; }
-  echo "[sluice] sluice images to remove (+ their containers):"
+  if [ -n "$only_orphans" ]; then   # keep only boxes whose recorded project dir is gone
+    kept=""
+    while IFS= read -r i; do
+      [ -n "$i" ] || continue
+      proj="$("$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.project" }}' "$i" 2>/dev/null || true)"
+      case "$proj" in "<no value>") proj="" ;; esac
+      [ -n "$proj" ] && [ ! -d "$proj" ] && kept="$kept$i"$'\n'
+    done <<EOF
+$imgs
+EOF
+    imgs="$(printf '%s' "$kept" | grep -v '^$' || true)"
+    [ -n "$imgs" ] || { echo "[sluice] no orphan boxes to prune (every box's project dir still exists)."; return 0; }
+    echo "[sluice] orphan sluice images to remove (project dir gone):"
+  else
+    echo "[sluice] sluice images to remove (+ their containers):"
+  fi
   # shellcheck disable=SC2086
   printf '  %s\n' $imgs
   if [ -t 0 ] && [ -t 1 ]; then
@@ -1174,7 +1319,9 @@ cmd_prune() {
   for i in $imgs; do "$RUNNER" rm -f "$i" >/dev/null 2>&1 || true; "$ENGINE" rmi -f "$i" >/dev/null 2>&1 || true; done
   echo "[sluice] ${C_GRN}pruned $(printf '%s\n' "$imgs" | grep -c .) box(es).${C_RST}"
 }
-if [ "${1:-}" = prune ]; then cmd_prune; exit $?; fi
+if [ "${1:-}" = prune ]; then
+  case "${2:-}" in ""|--orphans) cmd_prune "${2:-}"; exit $? ;; *) die "usage: sluice prune [--orphans]" ;; esac
+fi
 
 # `sluice agent [name]`: write the agents/<name>.config.sh preset, then build+run
 if [ "${1:-}" = agent ]; then
@@ -1199,6 +1346,16 @@ if [ "${1:-}" = agent ]; then
 fi
 
 if ! PROJECT_CONFIG="$(find_config)"; then
+  # --box <orphan>: the project dir is gone, so there's no config to source and nothing to mount.
+  # Teardown (stop/rm) still works by image/container name alone; everything else can't run.
+  if [ -n "$SLUICE_BOX_TARGET" ]; then
+    container="$SLUICE_BOX_IMAGE"; tag="$SLUICE_BOX_IMAGE"
+    case "${1:-run-default}" in
+      stop) "$RUNNER" rm -f "$container" >/dev/null 2>&1 || true; echo "[sluice] $container stopped"; exit 0 ;;
+      rm)   "$RUNNER" rm -f "$container" >/dev/null 2>&1 || true; "$ENGINE" rmi -f "$tag" >/dev/null 2>&1 || true; echo "[sluice] removed $container (container + image)"; exit 0 ;;
+      *)    die "box '$SLUICE_BOX_SLUG' is an orphan (project dir ${BOX_PROJECT:-?} is gone) - 'sluice -b $SLUICE_BOX_SLUG rm' to remove it" ;;
+    esac
+  fi
   # no config: scaffold for build/run commands; others have nothing to act on.
   case "${1:-run-default}" in
     run-default|build|rebuild|shell|run|smoke) ;;
@@ -1284,6 +1441,8 @@ build() {
   local args=(--label "sluice.confighash=$(config_hash)"
     --label "sluice.project=$PROJECT_DIR"
     --label "sluice.stack=$(config_stack)"
+    --label "sluice.allowcount=$(printf '%s' "${SLUICE_ALLOW_DOMAINS:-}" | wc -w | tr -d ' ')"
+    --label "sluice.ports=${SLUICE_PORTS:-}"
     --label "sluice.desc=${SLUICE_DESC:-}" "$@")   # extra flags, e.g. --no-cache
   if [ -n "${SLUICE_BASE_IMAGE:-}" ]; then
     verify_base "$SLUICE_BASE_IMAGE"

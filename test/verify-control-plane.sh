@@ -54,6 +54,11 @@ printf '%s' "$ls_json" | python3 -c "import sys,json
 d=json.load(sys.stdin); m=[x for x in d if x['name']=='$ca']
 sys.exit(0 if m and m[0]['current'] and m[0]['description']=='alpha control-plane box' else 1)" \
   && ok "ls --json has the box (current + description)" || bad "ls --json box/fields wrong"
+# posture columns (Phase 2): allow_count from SLUICE_ALLOW_DOMAINS="pypi.org" (1), no ports, not locked.
+printf '%s' "$ls_json" | python3 -c "import sys,json
+d=json.load(sys.stdin); m=[x for x in d if x['name']=='$ca']
+sys.exit(0 if m and m[0]['allow_count']==1 and m[0]['ports']==[] and m[0]['locked']==False else 1)" \
+  && ok "ls --json posture: allow_count/ports/locked" || bad "ls --json posture fields wrong (got: $ls_json)"
 
 dj="$( cd "$a" && "$SLUICE" doctor --json 2>/dev/null )"
 valid_json "$dj" && ok "doctor --json is valid JSON" || bad "doctor --json invalid: $dj"
@@ -68,6 +73,40 @@ printf '%s' "$ej" | python3 -c "import sys,json
 d=json.load(sys.stdin)
 sys.exit(0 if 'pypi.org' in d['allowed'] and 'files.pythonhosted.org' in d['blocked'] else 1)" \
   && ok "egress --json: pypi reached, pythonhosted blocked" || bad "egress --json record wrong (got: $ej)"
+
+# `sluice ls --egress` (Phase 2): A blocked files.pythonhosted.org -> a non-zero BLOCKED count. Run
+# from the suite cwd (not A's dir): --egress is global. Must precede the policy section below, which
+# allowlists pythonhosted on A (dropping the count).
+eg_json="$( "$SLUICE" ls --egress --json 2>/dev/null )"
+valid_json "$eg_json" && ok "ls --egress --json is valid JSON" || bad "ls --egress --json invalid: $eg_json"
+printf '%s' "$eg_json" | python3 -c "import sys,json
+d=json.load(sys.stdin); m=[x for x in d if x['name']=='$ca']
+sys.exit(0 if m and isinstance(m[0].get('blocked'), int) and m[0]['blocked']>=1 else 1)" \
+  && ok "ls --egress: box A shows a live blocked-host count" || bad "ls --egress blocked count wrong (got: $eg_json)"
+
+# --- orphan flagging + -b/--box targeting (Phase 1/2) -----------------------------------------------
+orph="$base/orph"; mkdir -p "$orph"
+printf 'SLUICE_NAME="control-orphan"\nSLUICE_RUN_CMD=true\n' > "$orph/sluice.config.sh"
+co="sluice-control-orphan"
+( cd "$orph" && "$SLUICE" build ) >/tmp/verify-cp-orph.log 2>&1 && ok "orphan: box built" || { bad "orphan build"; tail -10 /tmp/verify-cp-orph.log; }
+# -b targeting from outside any box dir routes doctor --json to the named box.
+odj="$( "$SLUICE" -b control-orphan doctor --json 2>/dev/null )"
+printf '%s' "$odj" | python3 -c "import sys,json; sys.exit(0 if json.load(sys.stdin)['name']=='$co' else 1)" \
+  && ok "-b <name> doctor routes to the targeted box from outside its dir" || bad "-b targeting wrong (got: $odj)"
+rm -rf "$orph"   # delete the project dir -> the box is now an orphan
+printf '%s' "$( "$SLUICE" ls --json 2>/dev/null )" | python3 -c "import sys,json
+d=json.load(sys.stdin); m=[x for x in d if x['name']=='$co']
+sys.exit(0 if m and m[0]['orphan'] and m[0]['status']=='orphan' else 1)" \
+  && ok "ls marks the dir-gone box as orphan" || bad "orphan not flagged"
+# -b <orphan> shell can't run (no config to source); it dies with the orphan pointer.
+( "$SLUICE" -b control-orphan shell ) >/dev/null 2>&1 && bad "-b <orphan> shell should refuse" || ok "-b <orphan> shell refuses with the orphan pointer"
+# prune --orphans SELECTS it (lists it) but removes nothing without SLUICE_YES - so it can't nuke
+# unrelated orphan boxes on a dev machine; the targeted -b rm below does the actual cleanup.
+"$SLUICE" prune --orphans </dev/null 2>/dev/null | grep -q "$co" && ok "prune --orphans lists the orphan" || bad "prune --orphans did not list the orphan"
+"$ENG" image inspect "$co" >/dev/null 2>&1 && ok "prune --orphans (no confirm) removed nothing" || bad "orphan vanished without confirmation"
+"$SLUICE" -b control-orphan rm >/dev/null 2>&1 || true
+"$ENG" image inspect "$co" >/dev/null 2>&1 && bad "-b <orphan> rm did not remove it" || ok "-b <orphan> rm removed the orphan"
+"$ENG" image inspect "$ca" >/dev/null 2>&1 && ok "orphan cleanup left the live box (A) intact" || bad "orphan cleanup removed live box A"
 
 # --- SLUICE_POLICY_URL: a local-file policy adds a host to the box's live allowlist on the next run --
 polfile="$base/policy.txt"

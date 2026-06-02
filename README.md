@@ -138,14 +138,24 @@ sluice doctor
              cdn.tracking.example
 ```
 
-`sluice ls` shows every box on this machine, and which one you're in (`*`):
+`sluice ls` shows every box on this machine, which one you're in (`*`), and its security posture -
+allowlist size, published ports, and whether it's locked:
 
 ```
 sluice boxes
-  NAME         STATUS    STACK       PATH         DESCRIPTION
-* sluice-blog  running   node/astro  ~/code/blog  personal blog
-  sluice-api   built     python      ~/code/api   internal API
+  NAME         STATUS    STACK       ALLOW  PORTS  LOCK    PATH         DESCRIPTION
+* sluice-blog  running   node/astro  3      4321   locked  ~/code/blog  personal blog
+  sluice-api   built     python      7      8000   -       ~/code/api   internal API
 ```
+
+ALLOW/PORTS come from build-time labels, so they show `-` until the box is next rebuilt
+(`sluice rebuild`/`update`). `sluice ls --egress` adds a BLOCKED column - a live count of
+denied-but-unallowed hosts per running box (it execs into each, so it's opt-in and slower).
+
+Filter with `sluice ls --running`, `--orphans` (boxes whose project dir was deleted, marked `(gone)`),
+or `--stack <name>`. `sluice prune --orphans` removes just the orphans. To act on a box from anywhere
+without `cd`-ing into its project, put `-b <name>` (the short slug or full `sluice-<name>`) before the
+command, e.g. `sluice -b api egress` or `sluice -b api shell`; it echoes the target to stderr.
 
 `ls`, `doctor`, and `egress` all take `--json` for scripting and CI - e.g. `sluice egress --json`
 emits the box's reached-vs-blocked hosts as a machine-readable audit record.
