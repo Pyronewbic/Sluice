@@ -70,8 +70,9 @@ release notes with Highlights + Install + Docs links (the x.0 release-notes styl
       `test/lib.sh`; the manual ones gated in nightly).
 - [ ] Docs current + consistent: README, THREAT_MODEL, examples/, sluice.config.example.sh, and help
       all match the locked surface (knob table = the frozen knobs; command list = the frozen verbs).
-- [ ] Distribution intact (already done): signed GHCR base + cosign-verify, tap, install.sh,
-      SECURITY.md, LICENSE, SBOM, the version + opt-out update notice.
+- [ ] Distribution intact (already done): signed GHCR base + cosign-verify, signed release tarballs
+      (cosign keyless + SHA256SUMS), tap, install.sh, SECURITY.md, LICENSE, SBOM, the version + opt-out
+      update notice.
 
 **D. Cut 1.0.0:** bump `SLUICE_VERSION`, signed tag, publish-base + release (the Highlights + Install +
 Docs format), tap bump. The README then no longer says "pre-1.0."
@@ -175,8 +176,10 @@ blocked; THREAT_MODEL #9).
 
 ### 5. Distribution & trust - ✅ landed
 **Apache-2.0** (open-core; the control plane is the moat), `SECURITY.md`, `install.sh` (curl|sh or
-checkout), a sha-pinned Homebrew tap (+ a `--HEAD` dev stream), and `release.yml` cutting a draft GitHub
-release on a `v*` tag. Released through **v0.6.0** (v0.7.0 staged). A **signed GHCR base image**
+checkout), and a Homebrew tap (+ a `--HEAD` dev stream) pinning the **cosign-signed release tarball**.
+`release.yml` cuts a draft GitHub release on a `v*` tag carrying a deterministic source tarball +
+`SHA256SUMS` + a **cosign keyless** signature bundle (sign-blob via GitHub OIDC; verify steps in
+`SECURITY.md`). Released through **v0.7.0**. A **signed GHCR base image**
 (`publish-base.yml`, amd64+arm64, cosign keyless via GitHub OIDC, **keyless** - the splice cert is
 per-container) is opt-in via `SLUICE_BASE_IMAGE` (`SLUICE_REQUIRE_SIGNED=1` to enforce); CI also attests
 its **CycloneDX SBOM** to the signed digest, which `sluice` soft-verifies with the signature. **Supply
