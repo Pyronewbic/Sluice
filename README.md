@@ -43,7 +43,7 @@ defensible:
 brew install Pyronewbic/tap/sluice     # needs docker or podman
 export ANTHROPIC_API_KEY=sk-ant-...     # forwarded into the sandbox, never baked into the image
 cd your-project
-sluice agent claude                     # also: codex, gemini, cursor, aider, opencode, amp
+sluice agent claude                     # also: codex, gemini, cursor, aider, opencode, amp, qwen, crush
 ```
 
 Or run any project sandboxed, then see where its egress hit a wall:
@@ -129,10 +129,12 @@ sluice doctor
   engine     Docker version 27.4.0
   config     ~/code/blog/sluice.config.sh
   desc       personal blog
+  mount      ~/code/blog
   image      sluice-blog built (config current)
+  lock       in sync (142 pkgs)
   allowlist  api.anthropic.com
              base: github.com api.github.com registry.npmjs.org ...
-  egress     1 host(s) blocked - run 'sluice learn' to allow:
+  egress     1 host(s) blocked (last run) - run 'sluice learn' to allow:
              cdn.tracking.example
 ```
 
@@ -177,9 +179,9 @@ cd my-repo
 sluice agent claude                     # Claude Code, --dangerously-skip-permissions, sandboxed
 ```
 
-Presets ship for **claude**, **codex**, **gemini**, **aider**, **cursor**, **opencode**, and **amp** (see
-[`agents/`](agents/)); each is a normal `sluice.config.sh` declaring the tool, its API
-hosts, and which auth env var to forward - so adding an agent is just adding a file. Run
+Presets ship for **claude**, **codex**, **gemini**, **aider**, **cursor**, **opencode**, **amp**,
+**qwen**, and **crush** (see [`agents/`](agents/)); each is a normal `sluice.config.sh` declaring the
+tool, its API hosts, and which auth env var to forward - so adding an agent is just adding a file. Run
 `sluice agent` with no name to list them. If the agent hits a blocked host, `sluice learn`
 surfaces it.
 

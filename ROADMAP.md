@@ -59,8 +59,10 @@ release notes with Highlights + Install + Docs links (the x.0 release-notes styl
 **B. Close for confidence (or consciously accept the gap):**
 - [ ] #3 live agent round-trips for amp/cursor/codex/gemini (credential-gated; claude/aider/opencode
       are already live) - so the wedge is "verified end-to-end," not just cred-free.
-- [ ] #2 real Linux dev-box run (CI-green on Docker + rootful/rootless Podman, but never on a physical
-      Linux dev machine; most target users are on Linux).
+- [x] #2 real Linux dev-box run (done 2026-06-02). On a stock Ubuntu 24.04 / Docker 29.5.2 box, non-sudo
+      (docker group): `install.sh` curl|sh from main -> `sluice build` on the **unpatched** Dockerfile ->
+      egress matrix holds (registry.npmjs.org reached, example.com DROP) -> `doctor` clean. The live
+      `sluice agent <name>` round-trip stays the cred-gated item above (#3), not this.
 
 **C. Quality bar (should already mostly hold - audit before cutting):**
 - [ ] All tests green: acceptance, init-detection, the no-Docker CLI + installer units, and the
@@ -81,10 +83,10 @@ it's the stability commitment.
 ### Pre-launch readiness (before the LinkedIn / HN push)
 No new features needed - every claim in the launch post is backed by shipped code. This is about not
 fumbling first contact when the post drives a skeptical, Linux-heavy dev/security crowd to the repo.
-- [ ] **Linux dev-box smoke (the real risk).** Most of the audience is on Linux; sluice is CI-green on
-      Linux Docker + rootful/rootless Podman but **never run on a physical Linux dev box**. Do a ~15-min
-      smoke on a throwaway cloud Linux VM: `brew`/`install.sh` -> `sluice agent claude` -> confirm the
-      firewall blocks a host. A first-try failure in public is the worst outcome. (Also closes #2.)
+- [x] **Linux dev-box smoke (landed 2026-06-02).** Ran the real first-try path on a throwaway cloud
+      Linux VM (Ubuntu 24.04 / Docker 29.5.2): `install.sh` curl|sh from main, `sluice build` on the
+      stock Dockerfile, the egress matrix (npmjs reached, example.com blocked), and `doctor`, all
+      credential-free and non-sudo. No first-try surprises; the stock build needs no manual patch. (Closes #2.)
 - [x] **Demo assets (landed 2026-06-02).** Three capability GIFs in the README (real pasted commands):
       **cage** (the hero - non-root + no host secrets, the egress receipt's firewall block, `learn`
       collapsing subdomains to a wildcard live/no-rebuild), **doctor** (the one-screen health panel),
@@ -105,9 +107,11 @@ fumbling first contact when the post drives a skeptical, Linux-heavy dev/securit
 ## Candidate features (next cuts)
 
 The forward backlog. Everything here is **additive** (semver-minor), so it fits 0.8.x / 1.x without
-disturbing the 1.0 stability lock above - 1.0 is the freeze, these ride the minors around it. Tiered by
-sequencing; all consolidated from the planks' deferred notes + the threat model + the isolation spike
-(nothing new invented), with rough effort (S/M/L) and the gap each closes.
+disturbing the 1.0 stability lock above - 1.0 is the freeze, these ride the minors around it. Each item
+rides the lowest extension rung that fits (preset / knob / flag, not a new verb); see
+[EXTENDING.md](EXTENDING.md) for the ladder and the in-scope test. Tiered by sequencing; all consolidated
+from the planks' deferred notes + the threat model + the isolation spike (nothing new invented), with
+rough effort (S/M/L) and the gap each closes.
 
 **Next (build-ready):**
 - **`SLUICE_RUNTIME` micro-VM isolation - M.** Run the box under an own-kernel runtime (Kata, via
@@ -123,8 +127,8 @@ sequencing; all consolidated from the planks' deferred notes + the threat model 
 - **Hosted control plane / fleet - L.** The OSS seams already shipped (`ls`/`doctor --json`, `egress
   --json`, `SLUICE_POLICY_URL`). The SaaS aggregator/dashboard + fleet `ls` + richer policy bundles +
   credential brokering wait on adoption pull - the monetization (open-core), not first.
-- **Supply-chain depth - M.** cargo/rust-crate inventory, pinned-version enforce/replay,
-  APKINDEX-snapshot pinning, SPDX output (CycloneDX + cosign SBOM attestation shipped).
+- **Supply-chain depth - M.** APKINDEX-snapshot pinning + full pinned-version replay (CycloneDX + cosign
+  SBOM attestation + cargo inventory + SPDX output + `lock --enforce` strict gate shipped).
 
 **Deferred (on real demand / not now):** Windows/WSL2, GPU passthrough, PHP + more stack detection
 (scope is frozen at the current 6 - the generic base + `SLUICE_EXTRA_PKGS`/`SLUICE_RUN_CMD` already run
@@ -151,12 +155,12 @@ egress + isolation matrix on Linux Docker (the gate) + both Podman modes (best-e
 nightly surfaced and fixed: (1) bind mounts keep the host uid, so the root entrypoint chowns the mount to
 1000 when needed (no-op on Docker Desktop); (2) rotating-CDN hosts 409'd because squid's Host-forgery
 check saw a different pool IP than the client - fixed with an in-box caching **dnsmasq** both point at, so
-a name pins to one IP set per session. **Remaining:** a real physical-Linux-dev-box smoke (the only gap;
-tracked in the 1.0 checklist).
+a name pins to one IP set per session. The real physical-Linux-dev-box smoke (the last gap) ran clean on
+2026-06-02: stock `install.sh` -> build -> egress matrix -> `doctor` on Ubuntu 24.04 / Docker 29.5.2.
 
-### 3. Agent-native wrapping (the wedge) - ✅ 7 presets cred-free verified, sessions persist
-`sluice agent <name>` scaffolds a preset (if there's no config) and drops you in. Seven ship - **claude,
-codex, gemini, aider, cursor, opencode, amp** - each a normal `sluice.config.sh` declaring the tool, its
+### 3. Agent-native wrapping (the wedge) - ✅ 9 presets cred-free verified, sessions persist
+`sluice agent <name>` scaffolds a preset (if there's no config) and drops you in. Nine ship - **claude,
+codex, gemini, aider, cursor, opencode, amp, qwen, crush** - each a normal `sluice.config.sh` declaring the tool, its
 API hosts, and the auth var forwarded via `SLUICE_ENV` (never baked); all default to **YOLO**
 (skip-approvals), since the sandbox is the gate. A harness (`verify-agents.sh` + a weekly drift smoke)
 checks cred-free that each CLI installs, its hosts are reachable, a non-allowlisted host is blocked, and
@@ -181,11 +185,13 @@ release on a `v*` tag. Released through **v0.6.0** (v0.7.0 staged). A **signed G
 (`publish-base.yml`, amd64+arm64, cosign keyless via GitHub OIDC, **keyless** - the splice cert is
 per-container) is opt-in via `SLUICE_BASE_IMAGE` (`SLUICE_REQUIRE_SIGNED=1` to enforce); CI also attests
 its **CycloneDX SBOM** to the signed digest, which `sluice` soft-verifies with the signature. **Supply
-chain:** `sluice lock` writes a committable inventory (apk+npm+pip+gem+go with versions+digests); `sluice
-doctor` flags drift; `lock --check` is a CI gate; `lock --sbom` emits a deterministic **CycloneDX 1.6** SBOM
-(purls + apk integrity hashes), and `lock --scan` vuln-checks it through a **host** Grype/Trivy
-(`--fail-on` to gate). Honest scope: audit/drift, **not** reproducibility (Wolfi apk is rolling). Depth
-items (cargo inventory, SPDX) are in the backlog above.
+chain:** `sluice lock` writes a committable inventory (apk+npm+pip+gem+go+cargo with versions+digests);
+`sluice doctor` flags drift; `lock --check` is a CI gate and `lock --enforce` a stricter one (refuses to
+build or to pass against a stale image); `lock --sbom [--format cyclonedx|spdx]` emits a deterministic
+**CycloneDX 1.6** or **SPDX 2.3** SBOM (purls + apk integrity hashes) from one introspection codepath, and
+`lock --scan` vuln-checks it through a **host** Grype/Trivy (`--fail-on` to gate). Honest scope: audit/drift,
+**not** reproducibility (Wolfi apk is rolling). Remaining depth (APKINDEX-snapshot pinning, full replay) is
+in the backlog above.
 
 ### 6. `sluice init` + a preset gallery - ✅ landed
 `sluice init` detects the stack and scaffolds a working config: **node** (npm/pnpm/yarn/bun + framework

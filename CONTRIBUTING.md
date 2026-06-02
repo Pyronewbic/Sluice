@@ -30,7 +30,8 @@ when you change behavior.
 
 ## Pull requests
 
-- Keep the verb surface small and behavior predictable; a new knob needs a real use case.
+- Keep the verb surface small and behavior predictable; a new knob needs a real use case. See
+  [EXTENDING.md](EXTENDING.md) for which mechanism a new capability should use (prefer the lowest rung).
 - Match the [Conventional Commits](https://www.conventionalcommits.org) style already in the log
   (`feat:`, `fix:`, `docs:`, `chore:`, with a scope when it helps).
 - Keep docs lean - link to a single source of truth instead of duplicating it.
