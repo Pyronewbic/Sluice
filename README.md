@@ -88,53 +88,34 @@ blocked from - even before anything is built.
 
 <p align="center"><img src="assets/doctor-demo.gif" width="680" alt="sluice doctor prints a one-screen health panel: the container engine, the mounted project dir (the box's only host path), image freshness (config current), the published port, the auth env var (set), and the hosts the last run was blocked from (api.openai.com) with a 'sluice learn' hint - green for ok, red for blocked"></p>
 
-`learn` is a **per-host review**, not a rubber-stamp: it lists the hosts the proxy blocked during
-the last run (with request counts + bytes; `--all` for everything since boot) and, for each, you
-**allow / skip / collapse to a `.domain` wildcard** - so a telemetry or exfil host can stay blocked
-while the real dependency goes through. Your picks are written to the config **and applied live**
-(squid reloads in place, no rebuild). `--apply` allows them all non-interactively; `--print` emits the
-list for CI. It works in enforce mode (it never opens egress). For the one case that can't reach -
-trusted code whose fetcher aborts on the *first* blocked host - `sluice learn --audit` runs the command
-once in a throwaway, **credential-stripped** container with egress open to all HTTP/HTTPS hosts, then
-offers the same per-host review from everything it reached. It's loudly warned and confirm-gated; see
-[`THREAT_MODEL.md`](THREAT_MODEL.md).
+`learn` is a **per-host review**, not a rubber-stamp: for each blocked host you **allow / skip /
+collapse to a `.domain` wildcard**, so a telemetry or exfil host stays blocked while the real
+dependency goes through. Picks are written to the config and applied live (no rebuild); `--apply`
+takes them all, `--print` emits the list for CI. For trusted code whose fetcher aborts on the *first*
+blocked host, `sluice learn --audit` discovers the full list in one **credential-stripped**,
+egress-open run (loudly warned; see [`THREAT_MODEL.md`](THREAT_MODEL.md)). Full walkthrough in the
+[gallery](examples/README.md).
 
-`sluice init` does just the scaffold step (no prompt, no run) if you'd rather review the
-config first; in CI, a bare `sluice` scaffolds and stops unless `SLUICE_YES=1`. `init` infers
-the stack, run command, and ports; `learn` fills the one thing you can't guess statically -
-the egress allowlist - by observing what the app reached. It covers **Node**
-(npm/pnpm/yarn/bun + framework port), **Python** (pip/poetry/uv + framework), **Deno**,
-**Ruby/Rails**, **Rust**, and **Go**. Any other language runs too, just without
-auto-detection: set `SLUICE_EXTRA_PKGS` (the toolchain's Wolfi apk packages) and
-`SLUICE_RUN_CMD`, and the generic base handles the rest.
+`sluice init` does just the scaffold step (no prompt, no run); in CI, a bare `sluice` scaffolds and
+stops unless `SLUICE_YES=1`. It infers the stack, run command, and ports for **Node, Python, Deno,
+Ruby/Rails, Rust, and Go**; `learn` then fills the one thing you can't guess statically - the egress
+allowlist. Any other language runs too: set `SLUICE_EXTRA_PKGS` + `SLUICE_RUN_CMD` and the generic
+base handles the rest.
 
-The full command set:
+The commands you'll reach for:
 
 ```bash
-# Common
 sluice                 # build (if needed) + run SLUICE_RUN_CMD in the sandbox
 sluice agent <name>    # run a coding agent (run `sluice agent` with no name to list them)
 sluice init [--force]  # scaffold a sluice.config.sh by detecting the repo's stack
 sluice learn           # propose the egress allowlist from blocked hosts (--print | --apply | --audit)
-sluice shell           # a bash shell in the sandbox (as the non-root sluice user)
 sluice run <cmd...>    # an ad-hoc command instead of SLUICE_RUN_CMD
-
-# Build & lifecycle
-sluice build           # build the image (if missing or the config changed)
-sluice rebuild         # build + recreate the container - apply config/allowlist edits
-sluice update          # rebuild from scratch (re-resolve packages) + refresh sluice.lock
-sluice stop            # remove the project's container
-sluice rm              # remove the project's container AND image
-sluice prune           # remove every sluice container + image on this machine (confirms)
-
-# Inspect
 sluice doctor          # health check: engine, image, allowlist, blocked egress (--json)
-sluice ls              # list all sluice boxes on this machine (name, status, stack, path; --json)
-sluice egress          # show what this box reached vs. was blocked (--json)
-sluice logs            # follow firewall/readiness logs
 sluice lock            # inventory apk+npm+pip+gem+go to sluice.lock (--check | --diff | --sbom)
-sluice smoke           # build (if needed) + run the image smoke test
 ```
+
+Plus `build` / `rebuild` / `update` / `stop` / `rm` / `prune` for lifecycle and `shell` / `ls` /
+`egress` / `logs` / `smoke` to inspect - **`sluice help`** lists them all.
 
 > Pre-1.0: the command surface is still stabilizing and may change before the 1.0 lock.
 
@@ -169,14 +150,9 @@ emits the box's reached-vs-blocked hosts as a machine-readable audit record.
 
 `sluice lock` writes a committable `sluice.lock` — a full inventory of the image (every apk, npm,
 pip, gem, and go package with its version and digest) so what's in your sandbox is reviewable in a
-diff, and `sluice doctor` flags drift. Re-locking (and `sluice update`) prints the supply-chain
-delta — what was added, removed, or version-bumped — so you review the change before committing.
-It's an audit artifact, not a reproducibility guarantee: Wolfi's apk repo is rolling, so
-`sluice update` re-resolves to current versions on demand. `sluice lock --check` turns drift into
-a **CI gate** (exits non-zero, `--json` for parsing); it checks the image as built (noting, not
-fixing, a stale image), so the gate never rebuilds, and `sluice lock --diff` shows the same view
-read-only; `sluice lock --sbom` emits a deterministic **CycloneDX 1.6** SBOM (purls + apk integrity
-hashes) for scanners (Grype/Trivy/Dependency-Track):
+diff, and `sluice doctor` flags drift. It's an audit artifact, not a reproducibility guarantee
+(Wolfi's apk repo is rolling). `--check` turns drift into a **CI gate**, `--diff` reviews it locally,
+and `--sbom` emits a deterministic **CycloneDX 1.6** SBOM for scanners (Grype/Trivy/Dependency-Track):
 
 ```bash
 sluice lock --check              # fail the build if the sandbox drifted from sluice.lock
@@ -186,9 +162,8 @@ sluice lock --sbom > sbom.cdx.json   # CycloneDX inventory (apk/npm/pip/gem/go p
 
 <p align="center"><img src="assets/lock-demo.gif" width="700" alt="sluice lock --check reports the inventory in sync; after a dependency is added and the box rebuilt, lock --check catches the drift (classified: + apk tree, exit 1); re-lock records the supply-chain delta, then a CycloneDX SBOM carries the new package with its purl and SHA-1 integrity hash"></p>
 
-Image and container are named per project (`sluice-<dir>`, or `SLUICE_NAME` to override), so
-projects never collide. The image auto-rebuilds when `sluice.config.sh` or the core changes
-(a config hash is baked as an image label and compared each run).
+Image and container are named per project (`sluice-<dir>`, or `SLUICE_NAME`), and the image
+auto-rebuilds when `sluice.config.sh` or the core changes.
 
 ### Run a coding agent
 
@@ -207,10 +182,9 @@ hosts, and which auth env var to forward - so adding an agent is just adding a f
 `sluice agent` with no name to list them. If the agent hits a blocked host, `sluice learn`
 surfaces it.
 
-Sessions persist across runs: each preset declares the home dir it keeps history/auth in
-(`SLUICE_STATE_DIRS`), bind-mounted to a per-project host store under `~/.local/state/sluice/`,
-so `sluice agent claude` resumes where you left off and survives a rebuild, `sluice stop`, or
-reboot. `sluice doctor` shows what's persisted; wipe it with `rm -rf ~/.local/state/sluice/<name>`.
+Sessions persist across runs (via `SLUICE_STATE_DIRS`, kept in a per-project host store under
+`~/.local/state/sluice/`), so `sluice agent claude` resumes where you left off and survives a
+rebuild or reboot; `sluice doctor` shows what's persisted.
 
 Each preset runs the agent in **YOLO mode by default** (its skip-approvals flag), since the
 sluice is the point of the per-action gate being unnecessary. Honest caveat: the sandbox
