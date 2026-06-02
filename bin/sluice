@@ -4,7 +4,7 @@
 # commands. Per-project image/container, auto-rebuilt when the config or core changes.
 set -euo pipefail
 
-# --- resolve our install dir (bin/sluice is symlinked onto PATH; follow the chain) ----
+# resolve our install dir (bin/sluice is symlinked onto PATH; follow the chain)
 SELF="$0"
 while [ -h "$SELF" ]; do
   link="$(readlink "$SELF")"
@@ -15,13 +15,13 @@ CORE="$ROOT/core"
 
 die() { echo "${E_RED:-}[sluice]${E_RST:-} $*" >&2; exit 1; }
 
-# --- minimal JSON emit (host jq is not assumed; fields here are short/flat) ------
+# minimal JSON emit (host jq is not assumed; fields here are short/flat)
 # Escape a string for a JSON value: backslash + doublequote, and flatten stray control chars.
 _json_esc() { local s="$1"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; s="${s//$'\t'/ }"; s="${s//$'\n'/ }"; s="${s//$'\r'/}"; printf '%s' "$s"; }
 # Emit a JSON array of strings from newline-separated stdin (blank lines skipped).
 _json_arr() { local first=1 line; printf '['; while IFS= read -r line; do [ -n "$line" ] || continue; [ "$first" = 1 ] && first=0 || printf ','; printf '"%s"' "$(_json_esc "$line")"; done; printf ']'; }
 
-# --- color: gated on a stdout TTY + NO_COLOR, so piped/redirected output stays plain ASCII -------
+# color: gated on a stdout TTY + NO_COLOR, so piped/redirected output stays plain ASCII
 # (the --json paths print no color regardless; the TTY gate also blanks these when piped.)
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
   C_GRN=$'\033[32m'; C_RED=$'\033[31m'; C_YEL=$'\033[33m'; C_DIM=$'\033[2m'; C_BLD=$'\033[1m'; C_RST=$'\033[0m'
@@ -36,7 +36,7 @@ else
   E_GRN=''; E_RED=''; E_YEL=''; E_DIM=''; E_BLD=''; E_RST=''
 fi
 
-# --- version + help ------------------------------------------------------------
+# version + help
 SLUICE_VERSION="0.7.0"   # fallback when not a git checkout
 sluice_version() {       # git tag if $ROOT is our own checkout, else the baked constant
   local v
@@ -46,10 +46,9 @@ sluice_version() {       # git tag if $ROOT is our own checkout, else the baked 
     printf '%s' "$SLUICE_VERSION"
   fi
 }
-# Passive "you're behind" notice for `sluice version` (like `terraform version`). Best-effort: a 2s
-# GitHub check, silent on any failure/offline/opt-out (SLUICE_NO_UPDATE_CHECK=1). Never aborts the
-# caller. Version compare is field-numeric (portable: BSD sort has no -V); a dev build ahead of its
-# tag (X.Y.Z-N-g...) compares by its X.Y.Z base, so it won't nag.
+# Passive "you're behind" notice for `sluice version`. Best-effort 2s GitHub check; silent on any
+# failure/offline/opt-out (SLUICE_NO_UPDATE_CHECK=1), never aborts. Field-numeric compare (BSD sort
+# has no -V); a dev build (X.Y.Z-N-g...) compares by its X.Y.Z base, so it won't nag.
 check_update_notice() {
   [ -z "${SLUICE_NO_UPDATE_CHECK:-}" ] || return 0
   command -v curl >/dev/null 2>&1 || return 0
@@ -88,6 +87,8 @@ Build & lifecycle:
   rebuild          build + recreate the container - apply config/allowlist edits
   update           rebuild from scratch (re-resolve packages to latest) + refresh sluice.lock
   stop             remove the project's container
+  rm               remove the project's container AND image
+  prune            remove every sluice container + image on this machine (confirms)
 
 Inspect:
   doctor           health check: engine, image, allowlist, blocked egress (--json)
@@ -106,7 +107,32 @@ Env: SLUICE_ENGINE  SLUICE_NO_BANNER  SLUICE_YES  SLUICE_NO_UPDATE_CHECK  NO_COL
 Docs: https://github.com/Pyronewbic/Sluice
 EOF
 }
+# Per-command help (sluice <cmd> --help). Synopses mirror usage(); keeps `sluice run --help` etc. useful.
+help_for() {
+  case "$1" in
+    run)     echo "sluice run <cmd...>     - run an ad-hoc command in the sandbox (builds/starts if needed)." ;;
+    shell)   echo "sluice shell            - a bash shell in the sandbox (non-root sluice user)." ;;
+    agent)   echo "sluice agent [name]     - scaffold + run a coding-agent preset; no name lists them." ;;
+    init)    echo "sluice init [--force]   - scaffold a sluice.config.sh by detecting the stack." ;;
+    learn)   echo "sluice learn [--all] [--print|--apply|--audit] - review blocked hosts, allowlist your picks." ;;
+    build)   echo "sluice build            - build the image if missing or the config changed." ;;
+    rebuild) echo "sluice rebuild          - build + recreate the container (apply config/allowlist edits)." ;;
+    update)  echo "sluice update           - rebuild from scratch (re-resolve packages) + refresh sluice.lock." ;;
+    stop)    echo "sluice stop             - remove the project's container." ;;
+    rm)      echo "sluice rm               - remove the project's container AND image." ;;
+    prune)   echo "sluice prune            - remove every sluice container + image on this machine (confirms)." ;;
+    doctor)  echo "sluice doctor [--json]  - health check: engine, image, allowlist, blocked egress." ;;
+    ls)      echo "sluice ls [--json]      - list all sluice boxes on this machine." ;;
+    egress)  echo "sluice egress [--json]  - show what this box reached vs. was blocked." ;;
+    logs)    echo "sluice logs             - follow firewall + readiness logs." ;;
+    lock)    echo "sluice lock [--check [--json] | --diff [--json] | --sbom] - record/verify the supply-chain inventory." ;;
+    smoke)   echo "sluice smoke            - build (if needed) + run the image smoke test." ;;
+    version) echo "sluice version [--json] - show version + host runtime." ;;
+    *)       usage ;;
+  esac
+}
 cmd_version() {
+  [ "${1:-}" = --json ] && { cmd_version_json; return 0; }
   printf 'sluice %s\n' "$(sluice_version)"
   local eng=""
   if   [ -n "${SLUICE_ENGINE:-}" ]; then eng="$SLUICE_ENGINE"
@@ -121,8 +147,18 @@ cmd_version() {
   printf '  install  %s\n' "$ROOT"
   check_update_notice
 }
+# Machine-readable version/runtime for scripts + the control plane.
+cmd_version_json() {
+  local eng=""
+  if   [ -n "${SLUICE_ENGINE:-}" ]; then eng="$SLUICE_ENGINE"
+  elif command -v docker >/dev/null 2>&1; then eng=docker
+  elif command -v podman >/dev/null 2>&1; then eng=podman; fi
+  [ -n "$eng" ] && command -v "$eng" >/dev/null 2>&1 && eng="$("$eng" --version 2>/dev/null | head -1)"
+  printf '{"version":"%s","engine":"%s","os":"%s","install":"%s"}\n' \
+    "$(_json_esc "$(sluice_version)")" "$(_json_esc "$eng")" "$(_json_esc "$(uname -s) $(uname -m)")" "$(_json_esc "$ROOT")"
+}
 
-# --- naming + diagnostics helpers (shared by run, learn, doctor) -----------------
+# naming + diagnostics helpers (shared by run, learn, doctor)
 derive_names() {
   slug="$(printf '%s' "${SLUICE_NAME:-$(basename "$PROJECT_DIR")}" | tr '[:upper:]' '[:lower:]' | tr -C 'a-z0-9' '-')"
   tag="sluice-$slug"; container="$tag"
@@ -131,9 +167,38 @@ derive_names() {
 # Always-on egress hosts (registries + GitHub); core/entrypoint.sh keeps its own in-container copy.
 base_domains() { printf '%s' "github.com api.github.com codeload.github.com objects.githubusercontent.com registry.npmjs.org registry.yarnpkg.com"; }
 
-# Hash of config + core (+ the base image ref), baked as an image label; rebuild when it changes.
-# SLUICE_ALLOW_DOMAINS is excluded: it's applied at runtime (SLUICE_RUNTIME_ALLOW), so an allowlist
-# edit (e.g. `sluice learn`) takes effect with no rebuild.
+# Public suffixes where the registrable domain sits one label below the last two - common second-level
+# ccTLDs + dev-platform hosts that show up in allowlists. Not the full PSL (that'd be vendored data);
+# the _collapsible guard makes an unlisted multi-part suffix fail "don't offer the wildcard", not over-allow.
+# ccTLD second-levels + flat app/dev platforms + cloud storage at its true (deeper) suffix, so a
+# multi-tenant host like a.s3.amazonaws.com collapses to a.s3... not the tenant-shared apex.
+_PUBLIC_SUFFIXES="co.uk org.uk gov.uk ac.uk me.uk net.uk com.au net.au org.au gov.au edu.au co.nz net.nz org.nz co.jp ne.jp or.jp co.kr co.in co.za com.br com.cn com.mx com.sg com.tr github.io gitlab.io pages.dev workers.dev r2.dev vercel.app netlify.app web.app firebaseapp.com herokuapp.com azurewebsites.net cloudfront.net s3.amazonaws.com blob.core.windows.net storage.googleapis.com"
+
+# Registrable parent (eTLD+1) of a host, public-suffix aware: the label just below the longest matching
+# suffix. Returns the host unchanged when it IS a suffix / has nothing below one, so `learn` never
+# offers a `.wildcard` equal to a public suffix. Wildcards stay offered, never forced.
+parent_of() {
+  local host="$1" s head
+  for s in $_PUBLIC_SUFFIXES; do
+    case "$host" in
+      "$s")  printf '%s\n' "$host"; return 0 ;;
+      *.$s)  head="${host%.$s}"; printf '%s.%s\n' "${head##*.}" "$s"; return 0 ;;
+    esac
+  done
+  printf '%s\n' "$host" | awk -F. 'NF>=2{print $(NF-1)"."$NF; next}{print}'
+}
+
+# True when collapsing to ".$1" is safe to offer: at least two labels AND not itself a public suffix.
+_collapsible() {
+  local p="$1" s
+  case "$p" in *.*) ;; *) return 1 ;; esac
+  for s in $_PUBLIC_SUFFIXES; do [ "$p" = "$s" ] && return 1; done
+  return 0
+}
+
+# Hash of config + core (+ base image ref), baked as an image label; rebuild when it changes.
+# SLUICE_ALLOW_DOMAINS is excluded - applied at runtime (SLUICE_RUNTIME_ALLOW), so an allowlist edit
+# (e.g. `sluice learn`) needs no rebuild.
 config_hash() {
   { printf 'base=%s\n' "${SLUICE_BASE_IMAGE:-}"; grep -vE '^[[:space:]]*SLUICE_ALLOW_DOMAINS=' "$PROJECT_CONFIG"; \
     find "$CORE" -type f | LC_ALL=C sort | while read -r f; do cat "$f"; done; } \
@@ -172,8 +237,7 @@ blocked_hosts() {
 }
 
 # Hostnames the proxy ALLOWED (reached). reached_hosts_raw = one line per request (for counts);
-# reached_hosts = unique; reached_counts = "host (n)" most-hit first. Optional $1 = container
-# (learn --audit opens egress, so every reached host logs as a success).
+# reached_hosts = unique. Optional $1 = container (learn --audit opens egress, so every host logs as a success).
 reached_hosts_raw() {
   _squid_log "$@" | awk '
     { sni="";
@@ -191,9 +255,8 @@ reached_hosts()  { reached_hosts_raw "$@" | sort -u; }
 
 # Per-host egress rows for the receipt + `sluice egress`: one awk pass over the (offset-aware) proxy
 # log -> "<class>\t<host>\t<count>\t<bytes>". class=reached if the host ever got through, else blocked
-# (reached-precedence dedupes a host with mixed success+denied lines); count = successful connections
-# (reached) or denied attempts (blocked); bytes = tx+rx summed. The example.* boot canary and blocked
-# hosts already in the allowlist (a transient /000 race) are dropped - matching blocked_new.
+# (reached-precedence wins on mixed lines); count = successes (reached) or denials (blocked); bytes =
+# tx+rx. The example.* boot canary + already-allowlisted /000-race hosts are dropped (matches blocked_new).
 egress_rows() {
   _squid_log "$@" | awk -v allow=" $(allowed_domains) " '
     # Is host h allowlisted? Exact match, or covered by a leading-dot wildcard (.x matches x + *.x),
@@ -252,7 +315,7 @@ blocked_new() {
   done
 }
 
-# --- `sluice egress [--json]`: the box's egress audit record (reached vs. blocked) ----------
+# `sluice egress [--json]`: the box's egress audit record (reached vs. blocked)
 # reached_hosts = what the box actually reached; blocked_new = genuinely-denied hosts (not in the
 # allowlist, and minus the transient startup-race noise doctor also filters). A control-plane feed.
 cmd_egress() {
@@ -289,10 +352,9 @@ EOF
               } }'
 }
 
-# --- sluice.lock: a committable inventory of the built image -------------------
-# base ref + every apk (name/version/checksum) + every global npm pkg. Introspects the image
-# without starting the sandbox (awk/jq run in-image via a stdin heredoc); sorted for stable diffs.
-# Defined above cmd_doctor so the early `doctor` dispatch can reach it.
+# sluice.lock: a committable inventory of the built image. base ref + every apk
+# (name/version/checksum) + global npm pkg, introspected from the image (awk/jq run in-image via a
+# heredoc), sorted for stable diffs. Defined above cmd_doctor for the early `doctor` dispatch.
 current_inventory() {
   local baseref bdig
   baseref="${SLUICE_BASE_IMAGE:-cgr.dev/chainguard/wolfi-base}"
@@ -396,9 +458,9 @@ render_drift_json() {
 _drift_report() {
   local on_drift="$1" json=0; [ "${2:-}" = --json ] && json=1
   [ -f "$PROJECT_DIR/sluice.lock" ] || die "no sluice.lock to check against - run 'sluice lock' first"
-  # A check verifies the artifact as it is: build only if no image exists; if the image predates a
-  # config edit, note it but still report against what is actually built (a gate shouldn't silently
-  # rebuild - that's `sluice build`/`sluice lock`). Note goes to stderr so --json stdout stays clean.
+  # A check verifies the artifact as built: build only if no image exists; if the image predates a
+  # config edit, note it (on stderr, so --json stays clean) but still report against what's built -
+  # a gate shouldn't silently rebuild (that's `sluice build`/`sluice lock`).
   if image_missing; then build
   elif image_stale; then echo "[sluice] ${E_YEL}note${E_RST}: image predates config edits - run 'sluice build' to refresh" >&2; fi
   local rows; rows="$(classify_drift)"
@@ -423,9 +485,8 @@ cmd_lock_check() { _drift_report 1 "${1:-}"; }
 cmd_lock_diff()  { _drift_report 0 "${1:-}"; }
 
 # `sluice lock --sbom`: a deterministic CycloneDX 1.6 SBOM (apk + npm + pip + gem purls) to stdout.
-# Assembled in-image (jq lives there, not necessarily on the host); apk components carry their SHA-1
-# integrity hash (the apk db's Q1 checksum, decoded to hex). No timestamp/serial + purl-sorted so the
-# output is byte-stable and diffable. Base ref / tool version / image tag are passed in via env.
+# Assembled in-image (jq lives there); apk components carry their SHA-1 integrity hash (the db's Q1
+# checksum, hex-decoded). No timestamp/serial + purl-sorted so it's byte-stable; base/toolver/tag via env.
 cmd_sbom() {
   maybe_build
   local baseref bdig
@@ -466,7 +527,7 @@ SBOM_ARCH="$(apk --print-arch 2>/dev/null || uname -m)"; export SBOM_ARCH
 SBOM
 }
 
-# --- `sluice doctor`: one-shot health + why-egress-is-blocked report ------------
+# `sluice doctor`: one-shot health + why-egress-is-blocked report
 _doc() { printf '  %-10s %s\n' "$1" "$2"; }
 cmd_doctor() {
   [ "${1:-}" = --json ] && { cmd_doctor_json; return $?; }
@@ -616,7 +677,7 @@ cmd_doctor_json() {
     "$(_json_esc "${SLUICE_POLICY_URL:-}")" "$nsd" "$auth_json" "$running_b" "$(printf '%s\n' $blocked | _json_arr)"
 }
 
-# --- `sluice ls`: a derived, read-only table of every built sluice box on this machine ----
+# `sluice ls`: a derived, read-only table of every built sluice box on this machine
 # Boxes are identified by the sluice.confighash label (baked since early versions); path/stack/desc
 # come from labels baked at build, so nothing is sourced here. The box matching $PWD is marked '*'.
 cmd_ls() {
@@ -723,7 +784,14 @@ ART
   printf '%s' "$r" >&2
 }
 
-# --- container engine (docker, else podman; override SLUICE_ENGINE) -------------
+# Per-command help (sluice <cmd> --help) + hidden helpers - before engine/config (they need neither).
+case "${2:-}" in -h|--help) help_for "${1:-}"; exit 0 ;; esac
+case "${1:-}" in
+  __parent)      parent_of "${2:-}"; exit 0 ;;          # registrable parent (tests/completion)
+  __collapsible) _collapsible "${2:-}" && echo yes || echo no; exit 0 ;;
+esac
+
+# container engine (docker, else podman; override SLUICE_ENGINE)
 # init + info commands need no engine; resolve one only for the rest.
 case "${1:-}" in
   init|help|-h|--help|version|-v|--version|doctor) ;;
@@ -738,7 +806,7 @@ case "${1:-}" in
     ;;
 esac
 
-# --- `sluice init` helpers: best-effort manifest parsing (no jq), each returns 0 ------
+# `sluice init` helpers: best-effort manifest parsing (no jq), each returns 0
 _init_json_str()  { printf '%s' "$(grep -oE "\"$2\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" "$1" 2>/dev/null | head -1 | sed -E 's/^.*:[[:space:]]*"([^"]*)".*$/\1/')"; }
 _init_port_from() { printf '%s' "$(printf '%s' "$1" | grep -oiE -- '(--port|--server\.port|-p|PORT)[ =]+[0-9]+' | grep -oE '[0-9]+' | head -1)"; }
 _init_pkg_has()   { grep -qE "\"$2(\"|/)" "$1" 2>/dev/null; }          # dependency / scoped-pkg key
@@ -747,7 +815,7 @@ _init_py_has()    { grep -qiE "(^|[^a-zA-Z0-9_.-])$1" "$dir/requirements.txt" "$
 # Quote a config value: single-quote if it contains $ or " (we never emit a literal single quote).
 _init_q()         { case "$1" in *[\$\"]*) printf "'%s'" "$1" ;; *) printf '"%s"' "$1" ;; esac; }
 
-# --- `sluice init`: scaffold a config from $PWD's manifests (allowlist left to `learn`) ----
+# `sluice init`: scaffold a config from $PWD's manifests (allowlist left to `learn`)
 cmd_init() {
   local force=0
   case "${1:-}" in -f|--force) force=1; shift ;; esac
@@ -761,7 +829,7 @@ cmd_init() {
         run_cmd="bash" ports="" allow="" note="" note2=""
 
   if [ -f "$pj" ]; then
-    # ---------------- node / bun ----------------
+    # node / bun
     stack="node"
     local pm="npm"
     if   [ -f "$dir/bun.lockb" ] || [ -f "$dir/bun.lock" ]; then pm="bun"
@@ -818,7 +886,7 @@ cmd_init() {
     detected="node/$pm${fw:+ ($fw)}"
 
   elif [ -f "$dir/requirements.txt" ] || [ -f "$dir/pyproject.toml" ] || [ -f "$dir/Pipfile" ]; then
-    # ---------------- python ----------------
+    # python
     stack="python"; allow="pypi.org files.pythonhosted.org"
     local pyver="3.12" v
     if [ -f "$dir/.python-version" ]; then
@@ -864,7 +932,7 @@ cmd_init() {
     detected="python-$pyver/$pm${fw:+ ($fw)}"
 
   elif [ -f "$dir/deno.json" ] || [ -f "$dir/deno.jsonc" ]; then
-    # ---------------- deno ----------------
+    # deno
     stack="deno"; extra_pkgs="deno"
     allow="deno.land jsr.io registry.npmjs.org esm.sh cdn.jsdelivr.net"
     local dj="$dir/deno.json"; [ -f "$dj" ] || dj="$dir/deno.jsonc"
@@ -875,7 +943,7 @@ cmd_init() {
     detected="deno"
 
   elif [ -f "$dir/Gemfile" ]; then
-    # ---------------- ruby (best-effort) ----------------
+    # ruby (best-effort)
     # -dev + build-base + linux-headers so native-extension gems (puma/nokogiri/...) compile.
     stack="ruby"; extra_pkgs="ruby-3.3 ruby-3.3-dev build-base linux-headers"; allow="rubygems.org index.rubygems.org"
     setup="mkdir -p \"\$HOME/.local/bin\" \"\$HOME/.gem/ruby\" && gem install --no-document --bindir \"\$HOME/.local/bin\" --install-dir \"\$HOME/.gem/ruby\" bundler"
@@ -932,10 +1000,10 @@ if [ "${1:-}" = init ]; then banner; shift; cmd_init "$@"; exit 0; fi
 case "${1:-}" in
   -h|--help|help) usage; exit 0 ;;
   -v|--version)   printf 'sluice %s\n' "$(sluice_version)"; exit 0 ;;
-  version)        cmd_version; exit 0 ;;
+  version)        cmd_version "${2:-}"; exit 0 ;;
 esac
 
-# --- locate the project by walking cwd upward for sluice.config.sh (like git) ------
+# locate the project by walking cwd upward for sluice.config.sh
 find_config() {
   d="$PWD"
   while [ "$d" != / ]; do
@@ -955,7 +1023,26 @@ if [ "${1:-}" = ls ]; then
   case "${2:-}" in ""|--json) cmd_ls "${2:-}"; exit 0 ;; *) die "usage: sluice ls [--json]" ;; esac
 fi
 
-# --- `sluice agent [name]`: write the agents/<name>.config.sh preset, then build+run ----
+# `sluice prune`: global cleanup - remove every sluice container + image on this machine (confirms).
+cmd_prune() {
+  local imgs i a
+  imgs="$("$ENGINE" image ls --filter label=sluice.confighash --format '{{.Repository}}' 2>/dev/null | grep -v '^<none>$' | sort -u || true)"
+  [ -n "$imgs" ] || { echo "[sluice] no sluice boxes to prune."; return 0; }
+  echo "[sluice] sluice images to remove (+ their containers):"
+  # shellcheck disable=SC2086
+  printf '  %s\n' $imgs
+  if [ -t 0 ] && [ -t 1 ]; then
+    printf '[sluice] remove all of these? [y/N] '; read -r a || a=""
+    case "$a" in y|Y|yes|YES) ;; *) echo "[sluice] ${C_DIM}aborted.${C_RST}"; return 0 ;; esac
+  elif [ "${SLUICE_YES:-}" != 1 ]; then
+    echo "[sluice] non-interactive: re-run with SLUICE_YES=1 to confirm pruning."; return 0
+  fi
+  for i in $imgs; do "$ENGINE" rm -f "$i" >/dev/null 2>&1 || true; "$ENGINE" rmi -f "$i" >/dev/null 2>&1 || true; done
+  echo "[sluice] ${C_GRN}pruned $(printf '%s\n' "$imgs" | grep -c .) box(es).${C_RST}"
+}
+if [ "${1:-}" = prune ]; then cmd_prune; exit $?; fi
+
+# `sluice agent [name]`: write the agents/<name>.config.sh preset, then build+run
 if [ "${1:-}" = agent ]; then
   banner
   shift
@@ -981,7 +1068,7 @@ if ! PROJECT_CONFIG="$(find_config)"; then
   # no config: scaffold for build/run commands; others have nothing to act on.
   case "${1:-run-default}" in
     run-default|build|rebuild|shell|run|smoke) ;;
-    stop|logs|learn|egress) die "no sluice.config.sh found in $PWD or any parent - nothing to ${1}." ;;
+    stop|logs|learn|egress|rm) die "no sluice.config.sh found in $PWD or any parent - nothing to ${1}." ;;
     *) die "unknown command: ${1:-} - run 'sluice help' for usage." ;;
   esac
   # zero-config: scaffold, preview, then confirm before build/run (CI stops unless SLUICE_YES=1).
@@ -1005,13 +1092,12 @@ PROJECT_DIR="$(cd "$(dirname "$PROJECT_CONFIG")" && pwd)"
 # shellcheck disable=SC1090
 . "$PROJECT_CONFIG"
 
-# --- per-project image + container names (SLUICE_NAME overrides the dir-name default) ----
+# per-project image + container names (SLUICE_NAME overrides the dir-name default)
 derive_names
 
-# Pre-run nudge: a config that declares auth vars (SLUICE_ENV) but has none set on the host - and no
-# persisted session to fall back on - will likely fail to authenticate, since the key is forwarded
-# from your shell (never baked) and a browser OAuth login can't complete headless. Warn, don't block;
-# run-default path only (not build/lock or an explicit `sluice run <cmd>`).
+# Pre-run nudge: a config that declares auth vars (SLUICE_ENV) with none set on the host and no
+# persisted session will likely fail to authenticate (the key is forwarded from your shell, never
+# baked; headless OAuth can't complete). Warn, don't block; run-default path only.
 warn_auth_unset() {
   [ -n "${SLUICE_ENV:-}" ] || return 0
   local v; for v in $SLUICE_ENV; do [ -n "${!v:-}" ] && return 0; done
@@ -1022,7 +1108,7 @@ warn_auth_unset() {
 }
 case "${1:-run-default}" in run-default) warn_auth_unset ;; esac
 
-# --- build: assemble a temp context (core + this project's config) and build ----
+# build: assemble a temp context (core + this project's config) and build
 # Verify a published base image's cosign signature (keyless/OIDC). Soft by default: warn if
 # cosign is absent or the image is unsigned; SLUICE_REQUIRE_SIGNED=1 makes either case fatal.
 verify_base() {
@@ -1086,7 +1172,7 @@ image_stale() {
   [ -n "$have" ] && [ "$have" != "$want" ]
 }
 
-# --- start: run the idle container (firewall comes up in the entrypoint) --------
+# start: run the idle container (firewall comes up in the entrypoint)
 start() {
   "$ENGINE" rm -f "$container" >/dev/null 2>&1 || true
 
@@ -1107,9 +1193,9 @@ start() {
   # SELinux only (non-root + caps + egress firewall + dir-only mount still confine it).
   selinux_enforcing && run_args+=(--security-opt label=disable)
 
-  # SLUICE_POLICY_URL: fetch a central allowlist on the host (free egress, before the box locks down)
-  # and merge it into the box's egress policy at run. Plain text, one host per line, # comments OK.
-  # Additive + host-trusted (you author the config); a fetch failure warns and uses the local allowlist.
+  # SLUICE_POLICY_URL: fetch a central allowlist on the host (free egress, before lockdown) and merge
+  # it into the box's policy at run. Plain text, one host/line, # comments OK. Additive + host-trusted;
+  # a fetch failure warns and uses the local allowlist.
   if [ -n "${SLUICE_POLICY_URL:-}" ]; then
     local policy_raw policy_hosts
     if policy_raw="$(curl -fsSL --max-time 10 "$SLUICE_POLICY_URL" 2>/dev/null)"; then
@@ -1121,10 +1207,20 @@ start() {
     fi
   fi
 
-  # Pass the live host allowlist at runtime so an edit (e.g. `sluice learn`) applies with no rebuild;
-  # it wins over the image's baked copy in the entrypoint. Always set (even empty) so a removed host
-  # also takes effect, and so the entrypoint can tell "launched by sluice" from a bare `docker run`.
+  # Pass the live allowlist at runtime (wins over the baked copy) so an edit (e.g. `sluice learn`) needs
+  # no rebuild. Always set, even empty: a removed host takes effect, and the entrypoint can tell it's
+  # sluice-launched, not a bare `docker run`.
   run_args+=(-e "SLUICE_RUNTIME_ALLOW=${SLUICE_ALLOW_DOMAINS:-}")
+
+  # Scoped TLS interception (opt-in, default off): SLUICE_BUMP_DOMAINS hosts get decrypted for URL
+  # filtering (SLUICE_BUMP_URLS); everything else splices. Passed like the allowlist (live edits, no
+  # rebuild). When on, the box mints a per-container CA; the CA-trust env below points clients at it.
+  run_args+=(-e "SLUICE_RUNTIME_BUMP=${SLUICE_BUMP_DOMAINS:-}" -e "SLUICE_RUNTIME_BUMP_URLS=${SLUICE_BUMP_URLS:-}")
+  if [ -n "${SLUICE_BUMP_DOMAINS:-}" ]; then
+    run_args+=(-e "NODE_EXTRA_CA_CERTS=/etc/squid/ssl/squid-cert.pem" \
+               -e "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt" \
+               -e "REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt")
+  fi
 
   # Mount the project dir rw; SLUICE_WORKDIR tells the entrypoint to chown it to sluice (Linux uid).
   run_args+=(-v "$PROJECT_DIR":"$PROJECT_DIR" -e "SLUICE_WORKDIR=$PROJECT_DIR")
@@ -1149,8 +1245,8 @@ EOF
   fi
 
   # SLUICE_STATE_DIRS: bind-mount each home-relative dir from a per-project host store
-  # ($XDG_STATE_HOME/sluice/<slug>) so agent sessions/auth survive container recreation. Dirs only,
-  # relative paths only (rejected below); never list a baked path (.npm-global, cursor's .local).
+  # ($XDG_STATE_HOME/sluice/<slug>) so agent sessions/auth survive recreation. Relative dirs only
+  # (rejected below); never a baked path (.npm-global, cursor's .local).
   if [ -n "${SLUICE_STATE_DIRS:-}" ]; then
     local state_base="${XDG_STATE_HOME:-$HOME/.local/state}/sluice/$slug" sd state_paths=""
     for sd in ${SLUICE_STATE_DIRS}; do
@@ -1190,10 +1286,9 @@ _exec_args() {
 exec_in() { _exec_args; exec "$ENGINE" exec "${_EXEC_ARGS[@]}" "$container" "$@"; }
 run_in()  { _exec_args; "$ENGINE" exec "${_EXEC_ARGS[@]}" "$container" "$@"; }
 
-# After a run-default session, print an egress receipt: hosts the box reached (with hit counts,
-# most-hit first) and hosts it tried but the firewall blocked (review these). stderr-only, so it
-# never pollutes the app's stdout/pipes; silent when the run made no egress at all. The detailed
-# per-host view is `sluice egress`.
+# After a run-default session, print an egress receipt: hosts the box reached (hit counts, most-hit
+# first) and hosts the firewall blocked (review these). stderr-only so it never pollutes the app's
+# stdout; silent when there was no egress. Detailed per-host view: `sluice egress`.
 show_egress_receipt() {
   local rows TAB reached_rows blocked_rows ordered grn="" red="" dim="" bld="" rst=""
   rows="$(egress_rows 2>/dev/null || true)"
@@ -1241,19 +1336,15 @@ apply_allowlist() {
   chmod 0644 "$PROJECT_CONFIG" 2>/dev/null || true   # mktemp is 0600; the build sources it as the sluice user
 }
 
-# Registrable-ish parent (last two dot-labels) of a host. Heuristic - multi-part TLDs (co.uk) over-
-# collapse, which is why a `.parent` wildcard is always offered, never forced.
-parent_of() { printf '%s\n' "$1" | awk -F. 'NF>=2{print $(NF-1)"."$NF; next}{print}'; }
-
 # Merged allowlist value: existing SLUICE_ALLOW_DOMAINS + the given (newline) entries, unique.
 merge_allow() {
   printf '%s %s\n' "${SLUICE_ALLOW_DOMAINS:-}" "$(printf '%s' "$1" | tr '\n' ' ')" \
     | tr ' ' '\n' | sed '/^$/d' | sort -u | tr '\n' ' ' | sed 's/ *$//'
 }
 
-# Append entries to the running box's squid allowlist + reload squid (SIGHUP = reconfigure: re-reads
-# the acl files), so picks go live with no rebuild. squid runs as `squid -N` (no pid file, so
-# `squid -k` can't signal it), hence pkill. Non-zero if the box is down or the reload fails.
+# Append entries to the box's squid allowlist + SIGHUP squid (reconfigure: re-reads the acl files) so
+# picks go live with no rebuild. squid runs `squid -N` (no pid file, so `squid -k` can't signal it),
+# hence pkill. Non-zero if the box is down or the reload fails.
 reload_allowlist() {
   [ "$#" -gt 0 ] || return 0
   running || return 1
@@ -1278,8 +1369,8 @@ learn_apply() {   # $1 = newline-separated entries (hosts and/or .domains)
 }
 
 # Interactive review of candidate "<host>\t<count>\t<bytes>" rows: offer `.parent` wildcard collapses,
-# then per-host allow/skip/domain, then persist + hot-reload the picks. Shared by learn + learn --audit;
-# falls back to a plain list when there's no tty.
+# then per-host allow/skip/domain, then persist + hot-reload. Shared by learn + learn --audit; falls
+# back to a plain list when there's no tty.
 _learn_review() {
   local rows="$1" label="$2" TAB; TAB="$(printf '\t')"
   if [ ! -t 0 ] && [ ! -t 1 ]; then
@@ -1294,6 +1385,7 @@ _learn_review() {
   # Wildcard offers: parents with >=2 blocked subdomains.
   local parents p subs ya; parents="$(printf '%s\n' "$hosts" | while read -r h; do [ -n "$h" ] && parent_of "$h"; done | sort | uniq -c | awk '$1>=2{print $2}')"
   for p in $parents; do
+    _collapsible "$p" || continue   # never offer a wildcard equal to a public suffix (foo.github.io -> .github.io)
     subs="$(printf '%s\n' "$hosts" | while read -r h; do [ "$(parent_of "$h")" = "$p" ] && echo "$h"; done)"
     # shellcheck disable=SC2086
     printf '  %s subdomains of %s: %s\n' "$(printf '%s\n' "$subs" | awk 'END{print NR}')" "$p" "$(printf '%s ' $subs)"
@@ -1303,7 +1395,7 @@ _learn_review() {
     case "$ya" in y|Y|yes|YES) selected+=(".$p"); handled+=($subs); echo ;; *) echo ;; esac
   done
   # Per-host loop for anything not covered by an accepted wildcard.
-  local h c b ans
+  local h c b ans pd
   while IFS="$TAB" read -r h c b; do
     [ -n "$h" ] || continue
     case " ${handled[*]:-} " in *" $h "*) continue ;; esac
@@ -1311,7 +1403,7 @@ _learn_review() {
     read -r ans </dev/tty || ans=""
     case "$ans" in
       a|A|y|Y) selected+=("$h") ;;
-      d|D)     selected+=(".$(parent_of "$h")") ;;
+      d|D)     pd="$(parent_of "$h")"; if _collapsible "$pd"; then selected+=(".$pd"); else selected+=("$h"); fi ;;
       q|Q)     break ;;
       *)       ;;
     esac
@@ -1326,7 +1418,7 @@ EOF
   learn_apply "$(printf '%s\n' "${selected[@]}")"
 }
 
-# --- `sluice learn [--all] [--print | --apply]`: review the hosts squid BLOCKED and allowlist the ones
+# `sluice learn [--all] [--print | --apply]`: review the hosts squid BLOCKED and allowlist the ones
 # you choose. Scoped to the last run by default (--all = since boot). The example.* canary + raw IPs are
 # already dropped by egress_rows. --print emits the merged list (CI); --apply allows all (no prompts).
 cmd_learn() {
@@ -1358,11 +1450,10 @@ cmd_learn() {
   _learn_review "$rows" "$label"
 }
 
-# --- `sluice learn --audit`: one-shot OPEN-egress discovery (the warned escape hatch) ----
-# Runs SLUICE_RUN_CMD once in an ephemeral, credential-stripped container with egress opened to ALL
-# HTTP/HTTPS hosts (non-HTTP ports + IPv6 stay blocked), then proposes the allowlist from every host
-# it reached. For trusted code whose fetcher aborts on the first block, so enforce-mode learn can't
-# see past it. No SLUICE_ENV/SLUICE_PRELAUNCH/state dirs are forwarded - nothing to exfiltrate.
+# `sluice learn --audit`: one-shot OPEN-egress discovery (the warned escape hatch). Runs SLUICE_RUN_CMD
+# once in an ephemeral, credential-stripped container with egress opened to ALL HTTP/HTTPS hosts
+# (non-HTTP + IPv6 stay blocked), then proposes the allowlist from every host it reached - for trusted
+# code whose fetcher aborts on the first block. No creds forwarded, nothing to exfiltrate.
 cmd_learn_audit() {
   cat >&2 <<EOF
 [sluice] ${E_YEL}WARNING:${E_RST} 'learn --audit' opens egress to ALL HTTP/HTTPS hosts for one run.
@@ -1439,6 +1530,7 @@ case "${1:-run-default}" in
   build)   build; exit 0 ;;
   rebuild) build; start; exit 0 ;;
   stop)    "$ENGINE" rm -f "$container" >/dev/null 2>&1 || true; echo "[sluice] $container stopped"; exit 0 ;;
+  rm)      "$ENGINE" rm -f "$container" >/dev/null 2>&1 || true; "$ENGINE" rmi -f "$tag" >/dev/null 2>&1 || true; echo "[sluice] removed $container (container + image)"; exit 0 ;;
   logs)    "$ENGINE" logs -f "$container" ;;
   smoke)
     maybe_build

@@ -65,6 +65,13 @@ printf '%s' "$out_a" | grep 'sluice-lstest-a' | grep -q '^\*' \
 printf '%s' "$out_a" | grep 'sluice-lstest-b' | grep -q '^\* ' \
   && bad "non-current box (B) wrongly marked '*'" || ok "non-current box (B) unmarked"
 
+# 6. `sluice rm` removes that box's image (B is merely built, so no mount to chown back first).
+( cd "$base/b" && "$SLUICE" rm ) >/dev/null 2>&1
+"$ENG" image inspect sluice-lstest-b >/dev/null 2>&1 \
+  && bad "'sluice rm' did not remove box B's image" || ok "'sluice rm' removed box B's image"
+"$ENG" image inspect sluice-lstest-a >/dev/null 2>&1 \
+  && ok "'sluice rm' on B left box A's image intact" || bad "'sluice rm' on B also removed box A's image"
+
 # Teardown: chown the started mount back so the host can clean up; stop + remove both images.
 "$ENG" exec --user root sluice-lstest-a chown -R "$(id -u):$(id -g)" "$base/a" >/dev/null 2>&1 || true
 "$ENG" rm -f sluice-lstest-a sluice-lstest-b >/dev/null 2>&1 || true

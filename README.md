@@ -124,6 +124,8 @@ sluice build           # build the image (if missing or the config changed)
 sluice rebuild         # build + recreate the container - apply config/allowlist edits
 sluice update          # rebuild from scratch (re-resolve packages) + refresh sluice.lock
 sluice stop            # remove the project's container
+sluice rm              # remove the project's container AND image
+sluice prune           # remove every sluice container + image on this machine (confirms)
 
 # Inspect
 sluice doctor          # health check: engine, image, allowlist, blocked egress (--json)
@@ -219,26 +221,20 @@ branch, and see [`THREAT_MODEL.md`](THREAT_MODEL.md) for exactly what is and isn
 ## Configure
 
 Everything is driven by `sluice.config.sh`. Copy [`sluice.config.example.sh`](sluice.config.example.sh)
-- it documents every knob - and edit. The knobs, briefly:
+- it documents every knob - and edit. The ones you'll reach for most:
 
 | knob | purpose |
 |------|---------|
-| `SLUICE_NAME` | image/container name `sluice-<name>` (default: the project dir's name) |
-| `SLUICE_DESC` | one-line description, shown in `sluice ls` and `sluice doctor` |
-| `SLUICE_BASE_IMAGE` | opt-in: build FROM a cosign-signed base image (`ghcr.io/.../sluice-base`) instead of from `core/` |
-| `SLUICE_EXTRA_PKGS` | extra apk packages (build time) |
-| `SLUICE_EXTRA_NPM` | extra global npm packages, pinned (build time) |
-| `SLUICE_SETUP_CMDS` | build-time setup (clones, dep installs) - runs as the sluice user, before the firewall |
-| `SLUICE_SETUP_ROOT_CMDS` | build-time setup as root (free egress) - provision outside `$HOME`, e.g. a `/nix` store |
-| `SLUICE_ALLOW_DOMAINS` | runtime egress domains, on top of the base |
-| `SLUICE_ALLOW_IPS` | runtime egress IPs/CIDRs |
-| `SLUICE_POLICY_URL` | URL of a plain-text allowlist fetched on the host and merged in (additive, host-trusted) |
-| `SLUICE_PORTS` | TCP ports to publish (firewall opens a matching inbound rule) |
 | `SLUICE_RUN_CMD` | the command a bare `sluice` runs (default: a shell) |
+| `SLUICE_EXTRA_PKGS` | extra apk packages baked in at build time |
+| `SLUICE_ALLOW_DOMAINS` | runtime egress domains, on top of the base allowlist |
+| `SLUICE_ALLOW_IPS` | runtime egress IPs/CIDRs for non-HTTP services |
+| `SLUICE_PORTS` | TCP ports to publish (firewall opens a matching inbound rule) |
 | `SLUICE_ENV` | host env var names to forward into the session |
-| `SLUICE_MOUNTS` | extra bind mounts (`host:container[:ro]`) |
-| `SLUICE_STATE_DIRS` | home-relative dirs to persist across runs (agent sessions/history/auth); host-side, per project |
-| `SLUICE_PRELAUNCH` | a function (defined in the config) run on the host before launch, to stage credentials |
+
+The rest - build-time setup, a central egress policy (`SLUICE_POLICY_URL`), scoped TLS
+interception (`SLUICE_BUMP_DOMAINS`/`SLUICE_BUMP_URLS`), persisted state, credential staging
+(`SLUICE_PRELAUNCH`) - are documented inline in [`sluice.config.example.sh`](sluice.config.example.sh).
 
 `sluice.config.sh` is sourced by `/bin/sh` (Docker build), `bash` (firewall, host), so keep
 it POSIX-safe: space/newline-separated strings, **no bash arrays**.
@@ -260,7 +256,9 @@ The guardrail that makes running untrusted code defensible:
 - **Filesystem isolation:** only the project dir is mounted (plus its git common dir
   when it's a worktree). The sluice can't see the rest of your machine.
 - The allowlist is **host-granular** (not per-URL); keep it tight, and avoid allowing
-  shared cloud hosts that could double as an exfil path.
+  shared cloud hosts that could double as an exfil path. For a host you control,
+  `SLUICE_BUMP_DOMAINS` opts into decrypting it for per-URL filtering (off by default;
+  see [THREAT_MODEL](THREAT_MODEL.md#scoped-tls-interception-opt-in-off-by-default)).
 - **Signed core (opt-in).** Build FROM a cosign-signed base image (`SLUICE_BASE_IMAGE`)
   instead of rebuilding `core/` locally; sluice verifies the signature first. The image
   carries no key (the splice cert is generated per-container).
@@ -296,10 +294,14 @@ core/                     the sandbox image: Dockerfile + squid / firewall / ent
 agents/                   coding-agent presets (run `sluice agent` to list)
 examples/                 self-contained gallery demos
 test/                     acceptance + init-detection (the CI gate) and per-feature verify harnesses
+completion/               bash + zsh shell completion
 packaging/                Homebrew formula
 install.sh                curl|sh + local installer
 sluice.config.example.sh  documented config template (every knob)
 ```
+
+Shell completion (commands, flags, agent names): `source completion/sluice.bash` (bash), or add
+`completion/` to your `fpath` before `compinit` (zsh).
 
 Runs on **docker** or **podman** (auto-detected; override with `SLUICE_ENGINE`). CI
 ([`.github/workflows/acceptance.yml`](.github/workflows/acceptance.yml)) runs the harness

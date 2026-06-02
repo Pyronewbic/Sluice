@@ -1,0 +1,50 @@
+#compdef sluice
+# zsh completion for sluice. Put this dir on your $fpath before compinit, e.g.:
+#   fpath=(/path/to/completion $fpath); autoload -Uz compinit; compinit
+
+_sluice() {
+  local -a cmds
+  cmds=(
+    'agent:run a coding-agent preset'
+    'init:scaffold a sluice.config.sh from the detected stack'
+    'learn:review blocked hosts and allowlist your picks'
+    'shell:a bash shell in the sandbox'
+    'run:run an ad-hoc command in the sandbox'
+    'build:build the image if missing or changed'
+    'rebuild:build + recreate the container'
+    'update:rebuild from scratch + refresh sluice.lock'
+    'stop:remove the project container'
+    'rm:remove the project container AND image'
+    'prune:remove every sluice container + image'
+    'doctor:health check'
+    'ls:list all sluice boxes'
+    'egress:show reached vs blocked'
+    'logs:follow firewall + readiness logs'
+    'lock:record/verify the supply-chain inventory'
+    'smoke:run the image smoke test'
+    'version:show version + host runtime'
+    'help:show help'
+  )
+
+  if (( CURRENT == 2 )); then
+    _describe -t commands 'sluice command' cmds
+    return
+  fi
+
+  case "${words[2]}" in
+    learn)   _arguments '--all[since boot]' '--print[emit the list]' '--apply[allow all]' '--audit[open-egress discovery]' '--help[usage]' ;;
+    lock)    _arguments '--check[fail on drift]' '--diff[show drift]' '--sbom[emit CycloneDX]' '--json[machine-readable]' '--help[usage]' ;;
+    doctor|ls|egress|version) _arguments '--json[machine-readable]' '--help[usage]' ;;
+    init)    _arguments '--force[overwrite]' '--help[usage]' ;;
+    agent)
+      local d names
+      d="${$(readlink -f ${commands[sluice]} 2>/dev/null):h}/../agents"
+      if [[ -d "$d" ]]; then
+        names=(${d}/*.config.sh(:t:r))
+        _describe -t agents 'agent' names
+      fi
+      ;;
+    *)       _arguments '--help[usage]' ;;
+  esac
+}
+_sluice "$@"
