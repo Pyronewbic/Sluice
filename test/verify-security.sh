@@ -10,7 +10,7 @@ set -u
 
 BASE="$(mktemp -d)"
 STORE="${XDG_STATE_HOME:-$HOME/.local/state}/sluice/sectest-state"   # host-side, OUTSIDE the temp tree
-CONTAINERS="sluice-sectest-ips sluice-sectest-hash sluice-sectest-pre sluice-sectest-state sluice-sectest-wt sluice-sectest-mnt sluice-sectest-harden"
+CONTAINERS="sluice-sectest-ips sluice-sectest-hash sluice-sectest-pre sluice-sectest-state sluice-sectest-wt sluice-sectest-mnt sluice-sectest-harden sluice-sectest-doh"
 cleanup() {
   # The entrypoint chowns the project + state mounts to uid 1000; chown the host tree back (via a
   # root container off a built sectest image - wolfi-base may lack chown) so the host can rm it.
@@ -162,5 +162,28 @@ else
   ok "harden: no in-box sudo (privilege-escalation primitive removed)"
 fi
 ( cd "$hd" && "$SLUICE" stop ) >/dev/null 2>&1
+
+# --- DoH/DoT closure: a DoH resolver is denied even when allowlisted; SLUICE_ALLOW_DOH=1 opts in ---
+doh="$BASE/doh"; mkdir -p "$doh"
+printf 'SLUICE_NAME="sectest-doh"\nSLUICE_ALLOW_DOMAINS="cloudflare-dns.com"\nSLUICE_RUN_CMD="bash"\n' > "$doh/sluice.config.sh"
+( cd "$doh" && "$SLUICE" run true ) >/dev/null 2>&1   # build + bring up
+"$ENG" exec sluice-sectest-doh sh -c 'test -s /etc/squid/doh-endpoints.txt' \
+  && ok "doh: denylist baked in the box" || bad "doh: denylist missing/empty"
+"$ENG" exec sluice-sectest-doh grep -q '^http_access deny doh_host' /etc/squid.conf \
+  && ok "doh: squid denies DoH hosts ahead of the allowlist" || bad "doh: deny rule missing from squid.conf"
+if "$ENG" exec --user sluice sluice-sectest-doh curl -s -o /dev/null --max-time 8 https://cloudflare-dns.com/ 2>/dev/null; then
+  bad "doh: an allowlisted DoH resolver was reachable (block failed)"
+else
+  ok "doh: an allowlisted DoH resolver is blocked (live)"
+fi
+# SLUICE_ALLOW_DOH=1 clears the denylist (opt back in)
+printf 'SLUICE_NAME="sectest-doh"\nSLUICE_ALLOW_DOMAINS="cloudflare-dns.com"\nSLUICE_ALLOW_DOH=1\nSLUICE_RUN_CMD="bash"\n' > "$doh/sluice.config.sh"
+( cd "$doh" && "$SLUICE" rebuild ) >/dev/null 2>&1
+if "$ENG" exec sluice-sectest-doh sh -c 'test -s /etc/squid/doh-endpoints.txt'; then
+  bad "doh: SLUICE_ALLOW_DOH=1 did not clear the denylist"
+else
+  ok "doh: SLUICE_ALLOW_DOH=1 clears the denylist (opt-in)"
+fi
+( cd "$doh" && "$SLUICE" stop ) >/dev/null 2>&1
 
 finish

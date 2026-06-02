@@ -108,6 +108,7 @@ Meta:
 
 Env: SLUICE_ENGINE  SLUICE_NO_BANNER  SLUICE_YES  SLUICE_NO_UPDATE_CHECK  NO_COLOR
      SLUICE_PIDS_LIMIT (default 4096)  SLUICE_MEMORY (e.g. 4g; unset = no cap)
+     SLUICE_ALLOW_DOH=1 (permit DoH/DoT resolvers; blocked by default as an exfil channel)
 Docs: https://github.com/Pyronewbic/Sluice
 EOF
 }
@@ -319,6 +320,21 @@ laundering_host() {
     webhook.site|*.ngrok.io|*.ngrok-free.app|hooks.slack.com|*.requestbin.com|*.pipedream.net) return 0 ;;
     api.openai.com|api.anthropic.com|generativelanguage.googleapis.com|api.cohere.ai) return 0 ;;
   esac
+  return 1
+}
+
+# True if $host is on the baked DoH/DoT denylist (core/doh-endpoints.txt, the single source squid
+# also reads). dstdomain semantics: a leading-dot entry matches the domain + subdomains; else exact.
+doh_listed() {
+  local host="$1" entry
+  [ -f "$CORE/doh-endpoints.txt" ] || return 1
+  while IFS= read -r entry; do
+    case "$entry" in ''|\#*) continue ;; esac
+    case "$entry" in
+      .*) case ".$host" in *"$entry") return 0 ;; esac ;;
+      *)  [ "$host" = "$entry" ] && return 0 ;;
+    esac
+  done < "$CORE/doh-endpoints.txt"
   return 1
 }
 
@@ -718,9 +734,16 @@ cmd_doctor() {
   [ -n "${SLUICE_PORTS:-}" ] && _doc ports "$SLUICE_PORTS ${C_DIM}(published on 127.0.0.1)${C_RST}"
   _doc allowlist "${SLUICE_ALLOW_DOMAINS:-(none beyond base)}"
   _doc "" "base: $(base_domains)"
-  local _risky="" _h
-  for _h in ${SLUICE_ALLOW_DOMAINS:-}; do laundering_host "$_h" && _risky="$_risky $_h"; done
+  local _risky="" _doh="" _h
+  for _h in ${SLUICE_ALLOW_DOMAINS:-}; do
+    laundering_host "$_h" && _risky="$_risky $_h"
+    doh_listed "$_h" && _doh="$_doh $_h"
+  done
   [ -n "$_risky" ] && _doc "" "${C_YEL}note${C_RST}: shared host(s) an attacker can also write to -${_risky} - data can be laundered out (splice, not decrypt); keep the allowlist tight"
+  if [ -n "$_doh" ]; then
+    if [ "${SLUICE_ALLOW_DOH:-}" = 1 ]; then _doc "" "${C_YEL}note${C_RST}: DoH resolver(s) allowed AND SLUICE_ALLOW_DOH=1 -${_doh} - DNS-over-HTTPS exfil is possible"
+    else _doc "" "${C_DIM}note: DoH resolver(s) on the allowlist -${_doh} - still BLOCKED (DoH exfil channel); SLUICE_ALLOW_DOH=1 to permit${C_RST}"; fi
+  fi
   [ -n "${SLUICE_ALLOW_IPS:-}" ] && _doc "" "ips:  $SLUICE_ALLOW_IPS ${C_DIM}(direct egress, any port, no hostname filter)${C_RST}"
   [ -n "${SLUICE_POLICY_URL:-}" ] && _doc policy "$SLUICE_POLICY_URL"
 

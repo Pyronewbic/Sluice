@@ -72,8 +72,11 @@ The guarantees below hold only while these do:
   and survives IP rotation. Only the base hosts + `SLUICE_ALLOW_DOMAINS` are reachable; the
   boot self-test fails closed if a denied host or a direct-IP connection is reachable.
 - **IP-literal / DoH / IPv6 bypasses** -> a direct-IP HTTPS connection has no SNI ->
-  terminated; DNS is restricted to the configured resolver; IPv6 is disabled entirely (we
-  proxy v4 only, so a dual-stack app can't slip out over v6).
+  terminated; plain DNS is restricted to the configured resolver; IPv6 is disabled entirely (we
+  proxy v4 only, so a dual-stack app can't slip out over v6). Known **DoH/DoT resolver endpoints**
+  (`core/doh-endpoints.txt`) are denied *even if allowlisted* - otherwise an agent could tunnel
+  exfil as DNS-over-HTTPS to an allowed resolver and bypass the SNI filter; `SLUICE_ALLOW_DOH=1`
+  opts back in.
 - **Reading/altering the rest of your machine** -> only the project dir (and its git
   common dir, for worktrees) is mounted. Nothing else is visible.
 - **Host privilege escalation** -> sessions run non-root (uid 1000) with **no effective

@@ -18,10 +18,16 @@ set -e
   for d in ${SLUICE_POLICY_ALLOW:-}; do printf '%s\n' "$d"; done
 } > /etc/squid/allowlist.txt
 
+# DoH/DoT resolvers are denied even when allowlisted (an agent could tunnel exfil as DNS-over-HTTPS
+# past the SNI allowlist). The denylist is baked at /etc/squid/doh-endpoints.txt; SLUICE_ALLOW_DOH=1
+# clears it to opt back in.
+[ "${SLUICE_ALLOW_DOH:-}" = 1 ] && : > /etc/squid/doh-endpoints.txt
+
 # Audit mode (learn --audit): open egress to ALL HTTP/HTTPS so one run logs every host the app reaches.
 # Runtime-only (this container's squid.conf, never the image); ephemeral + cred-stripped; iptables still drops non-HTTP + IPv6.
 if [ "${SLUICE_AUDIT:-}" = 1 ]; then
   echo "[sluice] AUDIT MODE: egress OPEN to all HTTP/HTTPS hosts (logging every SNI). Trusted code, no creds." >&2
+  : > /etc/squid/doh-endpoints.txt   # audit discovers everything the app reaches, DoH included
   sed -i -e 's/^ssl_bump splice allowed_sni$/ssl_bump splice all/' \
          -e 's/^http_access allow allowed_host$/http_access allow all/' /etc/squid.conf
 fi

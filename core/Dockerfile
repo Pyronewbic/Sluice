@@ -40,6 +40,7 @@ RUN { getent group squid  >/dev/null 2>&1 || groupadd -r squid; } \
     && mkdir -p /etc/squid/ssl /var/log/squid /var/cache/squid /run/squid \
     && chown -R squid:squid /etc/squid/ssl /var/log/squid /var/cache/squid /run/squid
 COPY squid.conf /etc/squid.conf
+COPY doh-endpoints.txt /etc/squid/doh-endpoints.txt
 
 # The entrypoint already runs as root and invokes init-firewall.sh directly; the live `sluice learn`
 # reload re-enters as root via the host engine. So the box needs no in-box sudo - we ship neither the

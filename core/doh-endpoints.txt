@@ -1,0 +1,27 @@
+# Known public DNS-over-HTTPS / DNS-over-TLS endpoints. squid DENIES these even when a host is on
+# your allowlist: a host-granular SNI allowlist can be tunnelled - an agent resolves attacker
+# domains (or wraps exfil) as DoH to an *allowed* resolver, bypassing the filter. Opt back in with
+# SLUICE_ALLOW_DOH=1 (the entrypoint then clears this list). dstdomain syntax: a leading dot also
+# matches subdomains. Curated, not exhaustive - add your own via the same file if needed.
+.cloudflare-dns.com
+one.one.one.one
+.dns.google
+dns.google
+.quad9.net
+.nextdns.io
+.opendns.com
+.adguard-dns.com
+dns.adguard.com
+doh.cleanbrowsing.org
+.controld.com
+.dns.sb
+doh.sb
+.dnscrypt.ca
+.libredns.gr
+dns.mullvad.net
+.dns.mullvad.net
+dns.twnic.tw
+dns.alidns.com
+.alidns.com
+doh.pub
+.doh.pub
