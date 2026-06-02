@@ -20,8 +20,6 @@ needs, what it may reach, what ports it serves, and the command to run.
 network call sluice itself makes is an opt-out check to GitHub for a newer release
 (`SLUICE_NO_UPDATE_CHECK=1` to disable).
 
-<p align="center"><img src="assets/cage-demo.gif" width="800" alt="proving the sandbox with real commands: uid 1000 (non-root) and the host SSH key isn't mounted; the app runs and the egress receipt shows api.github.com reached while the firewall blocks google and api.openai.com; then sluice learn collapses the two google subdomains to a .google.com wildcard and skips openai (live, no rebuild), and the next run's receipt shows google reached while openai stays blocked"></p>
-
 ## Install
 
 ```bash
@@ -86,7 +84,7 @@ shows the same per-host on demand, and `sluice doctor` reports the engine, the m
 image freshness, published ports, the effective allowlist, auth env, and the hosts your last run was
 blocked from - even before anything is built.
 
-<p align="center"><img src="assets/doctor-demo.gif" width="680" alt="sluice doctor prints a one-screen health panel: the container engine, the mounted project dir (the box's only host path), image freshness (config current), the published port, the auth env var (set), and the hosts the last run was blocked from (api.openai.com) with a 'sluice learn' hint - green for ok, red for blocked"></p>
+<p align="center"><img src="assets/doctor-demo.gif" width="680" alt="sluice doctor prints a one-screen health panel: the container engine, the mounted project dir (the box's only host path), image freshness (config current), the supply-chain lock (in sync), the published port, the auth env var (set), and the hosts the last run was blocked from (api.openai.com) with a 'sluice learn' hint - green for ok, red for blocked"></p>
 
 `learn` is a **per-host review**, not a rubber-stamp: for each blocked host you **allow / skip /
 collapse to a `.domain` wildcard**, so a telemetry or exfil host stays blocked while the real
@@ -111,7 +109,7 @@ sluice init [--force]  # scaffold a sluice.config.sh by detecting the repo's sta
 sluice learn           # propose the egress allowlist from blocked hosts (--print | --apply | --audit)
 sluice run <cmd...>    # an ad-hoc command instead of SLUICE_RUN_CMD
 sluice doctor          # health check: engine, image, allowlist, blocked egress (--json)
-sluice lock            # inventory apk+npm+pip+gem+go to sluice.lock (--check | --diff | --sbom | --scan)
+sluice lock            # inventory apk+npm+pip+gem+go+cargo to sluice.lock (--check | --diff | --enforce | --sbom | --scan)
 ```
 
 Plus `build` / `rebuild` / `update` / `stop` / `rm` / `prune` for lifecycle and `shell` / `ls` /
@@ -160,16 +158,17 @@ command, e.g. `sluice -b api egress` or `sluice -b api shell`; it echoes the tar
 `ls`, `doctor`, and `egress` all take `--json` for scripting and CI - e.g. `sluice egress --json`
 emits the box's reached-vs-blocked hosts as a machine-readable audit record.
 
-`sluice lock` writes a committable `sluice.lock` — a full inventory of the image (every apk, npm,
-pip, gem, and go package with its version and digest) so what's in your sandbox is reviewable in a
-diff, and `sluice doctor` flags drift. It's an audit artifact, not a reproducibility guarantee
-(Wolfi's apk repo is rolling). `--check` turns drift into a **CI gate**, `--diff` reviews it locally,
-`--sbom` emits a deterministic **CycloneDX 1.6** SBOM, and **`--scan`** vuln-checks the box with a host
-**Grype/Trivy** (`--fail-on <severity>` to gate CI):
+`sluice lock` writes a committable `sluice.lock` - a full inventory of the image (every apk, npm,
+pip, gem, go, and cargo package with its version and digest) so what's in your sandbox is reviewable
+in a diff, and `sluice doctor` flags drift. It's an audit artifact, not a reproducibility guarantee
+(Wolfi's apk repo is rolling). `--check` turns drift into a **CI gate** (`--enforce` is the strict
+variant: it refuses to build or to tolerate a stale image), `--diff` reviews it locally, `--sbom`
+emits a deterministic SBOM (**CycloneDX 1.6** or **SPDX** via `--format`), and **`--scan`** vuln-checks
+the box with a host **Grype/Trivy** (`--fail-on <severity>` to gate CI):
 
 ```bash
 sluice lock --check                  # fail the build if the sandbox drifted from sluice.lock
-sluice lock --sbom > sbom.cdx.json   # CycloneDX inventory (apk/npm/pip/gem/go purls), byte-stable
+sluice lock --sbom > sbom.cdx.json   # CycloneDX inventory (apk/npm/pip/gem/go/cargo purls), byte-stable
 sluice lock --scan --fail-on high    # vuln-scan the box; non-zero exit on a high+ CVE (needs host grype/trivy)
 ```
 

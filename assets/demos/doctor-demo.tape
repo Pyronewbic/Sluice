@@ -1,7 +1,8 @@
-# DOCTOR demo: the one-screen posture panel. A real run hits a blocked host off-camera, then
-# `sluice doctor` shows the whole health view - engine, the mounted project dir (the box's only host
-# path), image freshness, published ports, auth env, and the LAST run's blocked egress with a learn
-# hint. All real, colorized to the sluice convention (green ok, red blocked, dim neutral, bold header).
+# DOCTOR demo: the one-screen posture panel. Off-camera the box is locked and a real run hits a
+# blocked host, then `sluice doctor` shows the whole health view - engine, the mounted project dir
+# (the box's only host path), image freshness, the supply-chain lock (in sync), published ports,
+# auth env, and the LAST run's blocked egress with a learn hint. All real, colorized to the sluice
+# convention (green ok, red blocked, dim neutral, bold header).
 #
 # Reproduce (from the repo root):
 #   d=/tmp/sluice-doctor-demo; rm -rf "$d"; mkdir -p "$d"
@@ -24,6 +25,10 @@ Hide
 Type "source /tmp/doctor-setup.sh; clear"
 Enter
 Sleep 1000ms
+# off-camera: lock the box so the panel shows a green supply-chain 'in sync' line
+Type "sluice lock"
+Enter
+Sleep 6000ms
 # off-camera: a real run so the egress line is populated (openai isn't allowlisted -> blocked)
 Type "sluice run sh -c 'curl -s -m6 -o /dev/null https://api.openai.com; true'"
 Enter

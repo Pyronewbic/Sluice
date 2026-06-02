@@ -682,7 +682,7 @@ cmd_doctor() {
       local curinv drift npkgs
       curinv="$(current_inventory 2>/dev/null || true)"
       drift="$(lock_drift "$curinv")"
-      npkgs="$(printf '%s\n' "$curinv" | grep -cE '^(apk|npm|pip|gem|go) ' || true)"
+      npkgs="$(printf '%s\n' "$curinv" | grep -cE '^(apk|npm|pip|gem|go|cargo) ' || true)"
       if [ -z "$drift" ]; then
         _doc lock "${C_GRN}in sync${C_RST} ($npkgs pkgs)"
       else

@@ -37,7 +37,7 @@ _sluice() {
   local cmd="${COMP_WORDS[$ci]}"
   case "$cmd" in
     learn)   COMPREPLY=( $(compgen -W "--all --print --apply --audit --help" -- "$cur") ) ;;
-    lock)    COMPREPLY=( $(compgen -W "--check --diff --sbom --json --help" -- "$cur") ) ;;
+    lock)    COMPREPLY=( $(compgen -W "--check --diff --enforce --sbom --scan --json --fail-on --format --help" -- "$cur") ) ;;
     ls)      COMPREPLY=( $(compgen -W "--running --orphans --stack --egress --json --help" -- "$cur") ) ;;
     prune)   COMPREPLY=( $(compgen -W "--orphans --help" -- "$cur") ) ;;
     doctor|egress|version) COMPREPLY=( $(compgen -W "--json --help" -- "$cur") ) ;;
