@@ -20,6 +20,14 @@ Python/FastAPI, Deno, Ruby/Rails, Rust, Go) and scaffolds the config, then **`sl
 fills the egress allowlist from what the app actually tried to reach. Any other language runs
 too via `SLUICE_EXTRA_PKGS` + `SLUICE_RUN_CMD` (see the [main README](../README.md#use)).
 
+## Stronger isolation (Linux)
+
+Any preset above - or your own repo - runs under an own-kernel micro-VM with
+**`SLUICE_RUNTIME=kata`** (Linux + containerd/nerdctl), so a kernel escape can't reach the host.
+Same firewall, non-root, and project-only mount underneath; only the kernel boundary changes, so
+there's nothing new to see in the demo - that's the point. See
+[`THREAT_MODEL.md`](../THREAT_MODEL.md) for when it's worth the setup.
+
 ## Discovering the allowlist with `sluice learn`
 
 You don't have to guess the egress allowlist up front. Run the app, let the firewall block any
