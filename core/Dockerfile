@@ -18,7 +18,7 @@ RUN apk add --no-cache curl \
 
 # --- Base tooling: node/git/gh + the firewall (iptables, squid, dnsmasq, openssl) ---------
 RUN apk add --no-cache \
-      bash coreutils ca-certificates-bundle curl git less vim procps sudo shadow \
+      bash coreutils ca-certificates-bundle curl git less vim procps shadow \
       iptables bind-tools jq gh squid dnsmasq openssl \
       nodejs-24 npm
 
@@ -41,12 +41,9 @@ RUN { getent group squid  >/dev/null 2>&1 || groupadd -r squid; } \
     && chown -R squid:squid /etc/squid/ssl /var/log/squid /var/cache/squid /run/squid
 COPY squid.conf /etc/squid.conf
 
-# Let the non-root sluice user (re)run the firewall script as root without a password.
-RUN mkdir -p /etc/sudoers.d \
-    && echo "sluice ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh" > /etc/sudoers.d/firewall \
-    && chmod 0440 /etc/sudoers.d/firewall \
-    && { grep -qs '^@includedir /etc/sudoers.d' /etc/sudoers || echo '@includedir /etc/sudoers.d' >> /etc/sudoers; }
-
+# The entrypoint already runs as root and invokes init-firewall.sh directly; the live `sluice learn`
+# reload re-enters as root via the host engine. So the box needs no in-box sudo - we ship neither the
+# setuid binary nor a NOPASSWD path, leaving uid 1000 with no route to root.
 COPY init-firewall.sh /usr/local/bin/init-firewall.sh
 COPY entrypoint.sh    /usr/local/bin/entrypoint.sh
 COPY smoke-test.sh    /usr/local/bin/smoke-test.sh

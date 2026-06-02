@@ -107,6 +107,7 @@ Meta:
   help             show this help
 
 Env: SLUICE_ENGINE  SLUICE_NO_BANNER  SLUICE_YES  SLUICE_NO_UPDATE_CHECK  NO_COLOR
+     SLUICE_PIDS_LIMIT (default 4096)  SLUICE_MEMORY (e.g. 4g; unset = no cap)
 Docs: https://github.com/Pyronewbic/Sluice
 EOF
 }
@@ -307,6 +308,19 @@ mark_run_start()  { "$RUNNER" exec "$container" sh -c 'wc -c < /var/log/squid/ac
 
 # This project's effective egress allowlist: config domains + the always-on base.
 allowed_domains() { printf '%s %s' "${SLUICE_ALLOW_DOMAINS:-}" "$(base_domains)"; }
+
+# True if a host is a known shared/public endpoint an attacker could also WRITE to - so data can be
+# laundered out through it even though it's allowlisted (THREAT_MODEL "allowed-host laundering"; we
+# splice, never decrypt). Heuristic + non-exhaustive; doctor nudges, never blocks.
+laundering_host() {
+  case "$1" in
+    *s3.amazonaws.com|*.s3.*.amazonaws.com|storage.googleapis.com|*.blob.core.windows.net|*.r2.cloudflarestorage.com|*.digitaloceanspaces.com) return 0 ;;
+    gist.github.com|gist.githubusercontent.com|*pastebin.com|paste.*|transfer.sh|0x0.st|file.io|*.tmpfiles.org) return 0 ;;
+    webhook.site|*.ngrok.io|*.ngrok-free.app|hooks.slack.com|*.requestbin.com|*.pipedream.net) return 0 ;;
+    api.openai.com|api.anthropic.com|generativelanguage.googleapis.com|api.cohere.ai) return 0 ;;
+  esac
+  return 1
+}
 
 # Blocked hosts NOT already allowed - the genuinely-missing ones. Drops the transient
 # startup-race /000 on allowlisted hosts (e.g. registry.npmjs.org), so it never proposes them.
@@ -704,7 +718,10 @@ cmd_doctor() {
   [ -n "${SLUICE_PORTS:-}" ] && _doc ports "$SLUICE_PORTS ${C_DIM}(published on 127.0.0.1)${C_RST}"
   _doc allowlist "${SLUICE_ALLOW_DOMAINS:-(none beyond base)}"
   _doc "" "base: $(base_domains)"
-  [ -n "${SLUICE_ALLOW_IPS:-}" ] && _doc "" "ips:  $SLUICE_ALLOW_IPS"
+  local _risky="" _h
+  for _h in ${SLUICE_ALLOW_DOMAINS:-}; do laundering_host "$_h" && _risky="$_risky $_h"; done
+  [ -n "$_risky" ] && _doc "" "${C_YEL}note${C_RST}: shared host(s) an attacker can also write to -${_risky} - data can be laundered out (splice, not decrypt); keep the allowlist tight"
+  [ -n "${SLUICE_ALLOW_IPS:-}" ] && _doc "" "ips:  $SLUICE_ALLOW_IPS ${C_DIM}(direct egress, any port, no hostname filter)${C_RST}"
   [ -n "${SLUICE_POLICY_URL:-}" ] && _doc policy "$SLUICE_POLICY_URL"
 
   if [ -n "${SLUICE_ENV:-}" ]; then
@@ -1510,10 +1527,16 @@ start() {
   fi
 
   # route_localnet -> squid intercept; disable_ipv6 -> v4-only proxy (set at run; /proc/sys is ro).
+  # no-new-privileges: an unprivileged session can never gain privs via a setuid binary (defence in
+  # depth - sessions already run as uid 1000 with no effective caps). pids-limit: a runaway agent or
+  # build can't fork-bomb the host (override with SLUICE_PIDS_LIMIT; SLUICE_MEMORY caps RAM).
   local run_args=(--cap-add NET_ADMIN --cap-add NET_RAW
+    --security-opt no-new-privileges
+    --pids-limit "${SLUICE_PIDS_LIMIT:-4096}"
     --sysctl net.ipv4.conf.all.route_localnet=1
     --sysctl net.ipv6.conf.all.disable_ipv6=1
     --sysctl net.ipv6.conf.default.disable_ipv6=1)
+  [ -n "${SLUICE_MEMORY:-}" ] && run_args+=(--memory "$SLUICE_MEMORY")
   # SELinux-enforcing hosts deny the box access to a bind mount without a label; run it unconfined for
   # SELinux only (non-root + caps + egress firewall + dir-only mount still confine it).
   selinux_enforcing && run_args+=(--security-opt label=disable)
@@ -1806,11 +1829,14 @@ EOF
   # Credential-stripped run args: project mount + git common dir + the proxy sysctls + SLUICE_AUDIT.
   # Deliberately NO prelaunch, state-dir mounts, SLUICE_ENV, or published ports (see start()).
   local run_args=(--cap-add NET_ADMIN --cap-add NET_RAW
+    --security-opt no-new-privileges
+    --pids-limit "${SLUICE_PIDS_LIMIT:-4096}"
     --sysctl net.ipv4.conf.all.route_localnet=1
     --sysctl net.ipv6.conf.all.disable_ipv6=1
     --sysctl net.ipv6.conf.default.disable_ipv6=1
     -e SLUICE_AUDIT=1
     -v "$PROJECT_DIR":"$PROJECT_DIR" -e "SLUICE_WORKDIR=$PROJECT_DIR")
+  [ -n "${SLUICE_MEMORY:-}" ] && run_args+=(--memory "$SLUICE_MEMORY")
   selinux_enforcing && run_args+=(--security-opt label=disable)   # see the main run path
   if git -C "$PROJECT_DIR" rev-parse --git-common-dir >/dev/null 2>&1; then
     local common; common="$(git -C "$PROJECT_DIR" rev-parse --git-common-dir)"
