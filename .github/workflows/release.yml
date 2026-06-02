@@ -1,23 +1,53 @@
 name: release
 
-# Tag a version (git tag v0.1.0 && git push --tags) -> a DRAFT GitHub release. The auto notes
-# are only a scaffold (they miss commits pushed straight to main); edit them, then publish.
-# GitHub attaches the source tarball automatically; the Homebrew formula + curl|sh installer
-# pin to that tag. (The same tag also triggers publish-base.yml, which builds + cosign-signs
-# the multi-arch GHCR base image.)
+# Tag a version (git tag v0.7.0 && git push --tags) -> a DRAFT GitHub release carrying a
+# deterministic source tarball, its SHA256SUMS, and a cosign keyless signature bundle. The auto
+# notes are only a scaffold (they miss commits pushed straight to main); edit them, then publish.
+# The Homebrew formula pins to the signed tarball asset. (The same tag also triggers
+# publish-base.yml, which builds + cosign-signs the multi-arch GHCR base image.)
+#
+# workflow_dispatch rebuilds + reattaches the signed artifacts for an existing tag without
+# touching its (already curated) notes.
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "existing tag to (re)build signed artifacts for, e.g. v0.7.0"
+        required: true
 
 permissions:
-  contents: write
+  contents: write       # create the release + upload assets
+  id-token: write       # cosign keyless sign-blob (Sigstore OIDC)
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
-      - name: Create draft GitHub release
-        run: gh release create "$GITHUB_REF_NAME" --draft --generate-notes --verify-tag
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+          fetch-depth: 0
+      - uses: sigstore/cosign-installer@v3
+      - name: Build deterministic source tarball + checksums
+        run: |
+          v="${TAG#v}"
+          tarball="sluice-${v}.tar.gz"
+          # Entry mtimes come from the commit; gzip -n drops its own name/timestamp. So anyone can
+          # `git archive` the tag and regenerate a byte-identical tarball to check this sha.
+          git archive --format=tar --prefix="sluice-${v}/" "$TAG" | gzip -n9 > "$tarball"
+          sha256sum "$tarball" > SHA256SUMS
+          echo "TARBALL=$tarball" >> "$GITHUB_ENV"
+      - name: cosign sign-blob (keyless)
+        run: cosign sign-blob --yes "$TARBALL" --bundle "${TARBALL}.cosign.bundle"
+      - name: Create draft release (if missing) + attach signed artifacts
         env:
           GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$TAG" --draft --generate-notes --verify-tag \
+            || echo "release $TAG exists - keeping its notes"
+          gh release upload "$TAG" \
+            "$TARBALL" "${TARBALL}.cosign.bundle" SHA256SUMS --clobber
