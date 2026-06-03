@@ -116,7 +116,12 @@ jobs:
           W=$(mktemp -d); mkdir -p "$W/empty"
           echo 'SLUICE_RUN_CMD="bash"' > "$W/empty/sluice.config.sh"
           echo "===== sudo sluice run true (rootful podman) ====="
-          sudo env SLUICE_ENGINE=podman PATH="$PATH" sh -c "cd '$W/empty' && '$GITHUB_WORKSPACE/bin/sluice' run true" 2>&1 | tail -70 || true
+          sudo env SLUICE_ENGINE=podman PATH="$PATH" sh -c "cd '$W/empty' && '$GITHUB_WORKSPACE/bin/sluice' run true" 2>&1 | tail -8 || true
+          echo "===== podman logs sluice-empty (entrypoint / firewall) ====="
+          sudo podman logs sluice-empty 2>&1 | tail -60 || true
+          echo "===== state + network backend ====="
+          sudo podman inspect sluice-empty --format 'status={{.State.Status}} exit={{.State.ExitCode}}' 2>&1 || true
+          sudo podman info --format 'network={{.Host.NetworkBackend}}' 2>&1 || true
       - name: Acceptance tests (rootful Podman)
         # Rootful so the sysctls apply. NOT `sudo -E`: preserving HOME=/home/runner makes root podman
         # read the rootless storage and fail; pass only PATH (for bin/sluice -> podman/curl) + the engine.
