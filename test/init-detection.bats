@@ -151,15 +151,16 @@ hasnt() { ! grep -qF -- "$2" "$WORK/$1/sluice.config.sh"; }
   has go-lock 'SLUICE_ALLOW_DOMAINS=""'
 }
 
-@test "java/maven+spring: jdk+maven pkgs, spring-boot run, port" {
+@test "java/maven+spring: jdk+maven pkgs, JAVA_HOME, spring-boot run, port" {
   has java-maven 'SLUICE_EXTRA_PKGS="openjdk-21 maven"' &&
-  has java-maven 'SLUICE_RUN_CMD="mvn -q spring-boot:run"' &&
+  has java-maven 'export JAVA_HOME=/usr/lib/jvm/java-21-openjdk' &&
+  has java-maven 'mvn -q spring-boot:run' &&
   has java-maven 'SLUICE_PORTS="8080"' &&
   has java-maven 'detected: java/maven (spring-boot)'
 }
 @test "java/gradle: jdk+gradle pkgs, gradle run, gradle registry" {
   has java-gradle 'SLUICE_EXTRA_PKGS="openjdk-21 gradle"' &&
-  has java-gradle 'SLUICE_RUN_CMD="gradle run"' &&
+  has java-gradle 'gradle run' &&
   has java-gradle 'plugins.gradle.org'
 }
 @test "php: php+composer pkgs, built-in server, packagist" {
@@ -168,7 +169,7 @@ hasnt() { ! grep -qF -- "$2" "$WORK/$1/sluice.config.sh"; }
   has php 'repo.packagist.org'
 }
 @test "dotnet: sdk pkg, dotnet run urls, nuget" {
-  has dotnet 'SLUICE_EXTRA_PKGS="dotnet-sdk"' &&
+  has dotnet 'SLUICE_EXTRA_PKGS="dotnet-10-sdk"' &&
   has dotnet 'dotnet run --urls http://0.0.0.0:8080' &&
   has dotnet 'api.nuget.org'
 }

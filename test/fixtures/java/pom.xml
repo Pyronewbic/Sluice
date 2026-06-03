@@ -1,0 +1,16 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.example</groupId>
+  <artifactId>app</artifactId>
+  <version>1.0</version>
+  <packaging>jar</packaging>
+  <properties><maven.compiler.release>21</maven.compiler.release></properties>
+  <build><plugins>
+    <plugin>
+      <groupId>org.codehaus.mojo</groupId>
+      <artifactId>exec-maven-plugin</artifactId>
+      <version>3.1.0</version>
+      <configuration><mainClass>com.example.Main</mainClass></configuration>
+    </plugin>
+  </plugins></build>
+</project>

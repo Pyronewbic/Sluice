@@ -211,19 +211,22 @@ cmd_init() {
 
   elif [ -f "$dir/pom.xml" ] || [ -f "$dir/build.gradle" ] || [ -f "$dir/build.gradle.kts" ]; then
     # java/kotlin (best-effort): JDK + build tool; Spring Boot gets a server run cmd + port.
+    # wolfi's openjdk-21 installs to /usr/lib/jvm/java-21-openjdk but sets neither JAVA_HOME nor PATH,
+    # so mvn/gradle can't find the JDK - export both.
     stack="java"; allow="repo.maven.apache.org repo1.maven.org"
+    local jh="export JAVA_HOME=/usr/lib/jvm/java-21-openjdk; export PATH=\"\$JAVA_HOME/bin:\$PATH\""
     local spring=""
     grep -qiE 'spring-boot' "$dir/pom.xml" "$dir/build.gradle" "$dir/build.gradle.kts" 2>/dev/null && { spring=1; ports="8080"; }
     if [ -f "$dir/pom.xml" ]; then
       extra_pkgs="openjdk-21 maven"
-      if [ -n "$spring" ]; then run_cmd="mvn -q spring-boot:run"
-      else run_cmd="mvn -q compile exec:java"; note="java/maven is best-effort - set SLUICE_RUN_CMD for your app."; fi
+      if [ -n "$spring" ]; then run_cmd="$jh; mvn -q spring-boot:run"
+      else run_cmd="$jh; mvn -q compile exec:java"; note="java/maven is best-effort - set SLUICE_RUN_CMD for your app."; fi
       detected="java/maven${spring:+ (spring-boot)}"
     else
       extra_pkgs="openjdk-21 gradle"; allow="$allow plugins.gradle.org services.gradle.org"
       local gw="gradle"; [ -f "$dir/gradlew" ] && gw="./gradlew"
-      if [ -n "$spring" ]; then run_cmd="$gw bootRun"
-      else run_cmd="$gw run"; note="java/gradle is best-effort - set SLUICE_RUN_CMD for your app."; fi
+      if [ -n "$spring" ]; then run_cmd="$jh; $gw bootRun"
+      else run_cmd="$jh; $gw run"; note="java/gradle is best-effort - set SLUICE_RUN_CMD for your app."; fi
       detected="java/gradle${spring:+ (spring-boot)}"
     fi
 
@@ -239,7 +242,7 @@ cmd_init() {
 
   elif [ -n "$(ls "$dir"/*.csproj "$dir"/*.sln 2>/dev/null)" ]; then
     # .NET (best-effort): dotnet run, bound to 0.0.0.0 via the ASP.NET urls flag.
-    stack="dotnet"; extra_pkgs="dotnet-sdk"; allow="api.nuget.org www.nuget.org"; ports="8080"
+    stack="dotnet"; extra_pkgs="dotnet-10-sdk"; allow="api.nuget.org www.nuget.org"; ports="8080"
     run_cmd="dotnet run --urls http://0.0.0.0:8080"; detected="dotnet"
     note="dotnet is best-effort - confirm the port your app binds (ASPNETCORE_URLS)."
 
