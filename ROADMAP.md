@@ -57,12 +57,13 @@ At the cut, also: delete the README "> Pre-1.0..." note + its `usage()` line, an
 release notes with Highlights + Install + Docs links (the x.0 release-notes style).
 
 **B. Close for confidence (or consciously accept the gap):**
-- [ ] #3 live agent round-trips for amp/cursor/codex/gemini (credential-gated; claude/aider/opencode
-      are already live) - so the wedge is "verified end-to-end," not just cred-free.
+- [x] #3 live agent round-trips verified (2026-06-03, manual with real keys) - claude/aider/opencode
+      run live daily and the credential-gated four (amp/cursor/codex/gemini) were round-tripped end to
+      end, so the wedge is "verified end-to-end," not just cred-free.
 - [x] #2 real Linux dev-box run (done 2026-06-02). On a stock Ubuntu 24.04 / Docker 29.5.2 box, non-sudo
       (docker group): `install.sh` curl|sh from main -> `sluice build` on the **unpatched** Dockerfile ->
       egress matrix holds (registry.npmjs.org reached, example.com DROP) -> `doctor` clean. The live
-      `sluice agent <name>` round-trip stays the cred-gated item above (#3), not this.
+      `sluice agent <name>` round-trip was tracked separately as #3 above, not part of this smoke.
 
 **C. Quality bar (should already mostly hold - audit before cutting):**
 - [ ] All tests green: the gate bats suites (acceptance, init-detection, the no-Docker CLI + installer
@@ -91,7 +92,7 @@ contact with a skeptical, Linux-heavy dev/security crowd landing on the repo.
 - [x] **Demo assets (landed 2026-06-02).** Two capability GIFs in the README (real pasted commands):
       **doctor** (the one-screen health panel, incl. the supply-chain lock line) and **lock** (drift
       caught -> SBOM with purl + integrity hash). The cage hero GIF was dropped as low-value (2026-06-02,
-      prose leads instead); the live agent demo still wants a real key - record it before launch.
+      prose leads instead). The live agent round-trip is now verified (#3); a dedicated agent demo GIF stays optional.
 - [x] **Top-of-README quickstart (landed 2026-06-01).** Value prop -> copy-paste quickstart.
 - [x] **Issue templates + CONTRIBUTING (landed 2026-06-02).** Bug + feature forms (bug form collects
       version/engine/OS/`doctor`), blank issues disabled + security routed to `SECURITY.md`, lean
@@ -157,14 +158,14 @@ check saw a different pool IP than the client - fixed with an in-box caching **d
 a name pins to one IP set per session. The real physical-Linux-dev-box smoke (the last gap) ran clean on
 2026-06-02: stock `install.sh` -> build -> egress matrix -> `doctor` on Ubuntu 24.04 / Docker 29.5.2.
 
-### 3. Agent-native wrapping (the wedge) - ✅ 9 presets cred-free verified, sessions persist
+### 3. Agent-native wrapping (the wedge) - ✅ 9 presets verified (cred-free harness + live keyed round-trip), sessions persist
 `sluice agent <name>` scaffolds a preset (if there's no config) and drops you in. Nine ship - **claude,
 codex, gemini, aider, cursor, opencode, amp, qwen, crush** - each a normal `sluice.config.sh` declaring the tool, its
 API hosts, and the auth var forwarded via `SLUICE_ENV` (never baked); all default to **YOLO**
-(skip-approvals), since the sandbox is the gate. A harness (`verify-agents.sh` + a weekly drift smoke)
+(skip-approvals), since the sandbox is the gate. A harness (`nightly-agents.bats` + a weekly drift smoke)
 checks cred-free that each CLI installs, its hosts are reachable, a non-allowlisted host is blocked, and
-the auth var forwards; the live round-trip is the only cred-gated step (one key away - in the 1.0
-checklist). Sessions persist across runs via `SLUICE_STATE_DIRS` (a per-project host store), so an agent
+the auth var forwards; the live keyed round-trip is verified separately (manual, with real keys,
+done 2026-06-03). Sessions persist across runs via `SLUICE_STATE_DIRS` (a per-project host store), so an agent
 resumes after a rebuild/reboot.
 
 ### 4. Observability + learn-mode - ✅ landed
@@ -198,7 +199,7 @@ in the backlog above.
 `sluice init` detects the stack and scaffolds a working config: **node** (npm/pnpm/yarn/bun + framework
 port/flags read from the real dev script), **python** (pip/poetry/uv + framework), plus **deno,
 ruby/rails, rust, go** - POSIX-clean, no engine needed. Build-verified end-to-end (init -> build ->
-serve, deps through the proxy) for all of them via `test/fixtures/<rt>` (nightly `verify-runtimes.sh`). A
+serve, deps through the proxy) for all of them via `test/fixtures/<rt>` (nightly `nightly-runtimes.bats`). A
 bare `sluice` in an unconfigured repo scaffolds + previews + asks to run (the `create-next-app` pattern;
 `SLUICE_YES=1` in CI). The `examples/` gallery is three capability demos - **firewall** (the egress block
 made visible), **jupyter** (serve an app, no runtime egress), **nix** (a pinned toolchain baked at build,
