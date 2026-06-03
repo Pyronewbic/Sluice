@@ -187,5 +187,5 @@ never allow a host an attacker can also write to.
 
 ---
 
-_Last reviewed 2026-06-02 against sluice 0.7.0 (staged). Revisit when the egress path, mount model,
-or runtime options change._
+_Last reviewed 2026-06-03 against sluice 0.8.0 (released) + the post-release seccomp hardening on main
+(default-superset / browser / audit). Revisit when the egress path, mount model, or runtime options change._
