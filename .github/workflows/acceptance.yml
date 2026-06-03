@@ -85,7 +85,7 @@ jobs:
       - uses: actions/checkout@v4
         with: { submodules: recursive }
       - name: Acceptance tests (Docker)
-        run: test/bats/bin/bats --print-output-on-failure test/acceptance.bats test/acceptance-bump.bats
+        run: test/bats/bin/bats --print-output-on-failure test/acceptance.bats test/acceptance-bump.bats test/verify-run-default.bats
 
   security:
     name: security escape-hatches (Docker)

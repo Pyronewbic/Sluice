@@ -1446,6 +1446,7 @@ if ! PROJECT_CONFIG="$(find_config)"; then
     exit 0
   fi
   PROJECT_CONFIG="$PWD/sluice.config.sh"
+  _SCAFFOLDED=1   # F3: bare-sluice first-run nudge fires after the run completes
 fi
 PROJECT_DIR="$(cd "$(dirname "$PROJECT_CONFIG")" && pwd)"
 
@@ -2050,27 +2051,39 @@ case "${1:-run-default}" in
     ;;
   run-default)
     banner
+    # F2: snapshot image freshness BEFORE ensure_up may rebuild, so the plan line can say up-to-date vs rebuilt.
+    _fresh=1
+    [ "$("$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.confighash" }}' "$tag" 2>/dev/null || true)" = "$(config_hash)" ] || _fresh=""
     ensure_up
+    _nhosts="$(allowed_domains | wc -w | tr -d ' ')"
+    _state="up-to-date"; [ -n "$_fresh" ] || _state="rebuilt"
     # (auth-unset warning already emitted once by warn_auth_unset above; state-aware, no duplicate here)
     # Snapshot the proxy log position so the receipt reports THIS run's egress, not the box's whole
     # boot. Then run SLUICE_RUN_CMD; the EXIT trap prints the receipt (reached + blocked). run_in
-    # (not exec_in) so the trap fires after the session, even on Ctrl-C.
+    # (not exec_in) so the trap fires after the session, even on Ctrl-C - which is why we capture and
+    # re-propagate the command's status ourselves (the trailing hints would otherwise leave $? = 0).
     _RCPT_OFFSET="$("$RUNNER" exec "$container" sh -c 'wc -c < /var/log/squid/access.log' 2>/dev/null | tr -dc 0-9)"
     mark_run_start   # so a later `sluice learn` can scope to this run
     trap show_egress_receipt EXIT
+    # F2: one-line plan so the implicit build/run is legible (the no-op case speaks via the status below).
+    case "${SLUICE_RUN_CMD:-}" in
+      true|:|/bin/true) ;;
+      *) echo "${E_DIM}[sluice]${E_RST} box ${_state} (${_nhosts} allowed hosts) - running: ${SLUICE_RUN_CMD:-bash}" >&2 ;;
+    esac
+    _rc=0
     if [ "${#AGENT_EXTRA_ARGS[@]}" -gt 0 ]; then
       # one-shot agent run: forward trailing args as positional params (no re-quoting needed)
-      run_in sh -lc "${SLUICE_RUN_CMD:-bash} \"\$@\"" sh "${AGENT_EXTRA_ARGS[@]}"
+      run_in sh -lc "${SLUICE_RUN_CMD:-bash} \"\$@\"" sh "${AGENT_EXTRA_ARGS[@]}" || _rc=$?
     else
-      run_in sh -lc "${SLUICE_RUN_CMD:-bash}"
+      run_in sh -lc "${SLUICE_RUN_CMD:-bash}" || _rc=$?
     fi
-    # A deliberate no-op run-cmd (e.g. the lock demo's `true`) exits 0 with no output and, absent
-    # egress, a silent receipt - indistinguishable from a hang. Say the box is up and what to run.
+    # F4: a no-op run-cmd (e.g. the lock demo's `true`) would dead-end on a one-line hint; show a
+    # compact doctor-lite status instead (box up, image state, allowed-host count) + what to run.
     case "${SLUICE_RUN_CMD:-}" in
       true|:|/bin/true)
         _shell_hint="sluice shell"; [ -n "$SLUICE_BOX_TARGET" ] && _shell_hint="sluice -b $SLUICE_BOX_SLUG shell"
-        echo "${E_DIM}[sluice]${E_RST} SLUICE_RUN_CMD is '${SLUICE_RUN_CMD}' - box is up, nothing to run." >&2
-        echo "         try '$_shell_hint' or a subcommand (e.g. sluice lock)." >&2 ;;
+        echo "${E_DIM}[sluice]${E_RST} box ${container} is up (image ${_state}; ${_nhosts} allowed hosts); SLUICE_RUN_CMD='${SLUICE_RUN_CMD}' is a no-op - nothing to run." >&2
+        echo "         try '$_shell_hint', 'sluice doctor', or a subcommand (e.g. sluice lock)." >&2 ;;
     esac
     # overlay workspace: nudge with the changeset; the host repo is untouched until `sluice apply`.
     if workspace_is_overlay; then
@@ -2080,6 +2093,11 @@ EOF
       [ "$(( ${_wsa:-0} + ${_wsm:-0} + ${_wsd:-0} ))" -gt 0 ] && \
         echo "${E_DIM}[sluice]${E_RST} workspace: ${_wsa} added, ${_wsm} modified, ${_wsd} deleted (host repo untouched) - review: sluice diff | write back: sluice apply" >&2
     fi
+    # F3: complete the onboarding arc on the very first run (config was just scaffolded this invocation).
+    [ -n "${_SCAFFOLDED:-}" ] && echo "${E_DIM}[sluice]${E_RST} first run done - next: 'sluice learn' (lock egress to what it needed), 'sluice lock' (pin the supply chain)." >&2
+    # F1: propagate SLUICE_RUN_CMD's status. The EXIT trap doesn't call exit, so bash exits with this
+    # code; without it the trailing hints/nudges leave $? = 0 (a false green in CI / `sluice && ...`).
+    exit "$_rc"
     ;;
   *) die "unknown command: $1 - run 'sluice help' for usage." ;;
 esac
