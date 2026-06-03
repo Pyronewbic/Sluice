@@ -22,16 +22,17 @@ override with `SLUICE_ENGINE`).
 
 ## Run the tests
 
-CI's gate is two scripts - run them before opening a PR:
+The suites are [bats-core](https://github.com/bats-core/bats-core), vendored as submodules - run
+`make setup` once after a fresh clone. CI's gate is `make test`; run it before opening a PR:
 
 ```bash
-./test/init-detection.sh     # stack-detection unit tests (no engine needed)
-./test/acceptance.sh         # end-to-end security invariants (needs docker/podman)
+make test            # gate: CLI/init/install units + egress + security invariants (needs docker/podman)
+make test-nightly    # heavy suites: lock, learn, runtimes, nix, agents, control-plane
+make structure       # base-image invariants (no sudo, uid 1000, firewall packages) via container-structure-test
 ```
 
-The `test/verify-*.sh` harnesses cover individual features (security, lock, learn, control-plane,
-agents, runtimes, nix; all share `test/lib.sh`) - run the one your change touches, and extend it
-when you change behavior.
+Each suite is `test/<name>.bats` (gate) or `test/nightly-<name>.bats` (heavy); shared helpers live in
+`test/test_helper/common.bash`. Run the one your change touches, and extend it when you change behavior.
 
 ## Style
 
@@ -39,8 +40,8 @@ when you change behavior.
 macOS, so avoid bashisms newer than 3.2 (no associative arrays, no `${var^^}`), and never put a
 `case` inside a `$(...)` command substitution - bash 3.2 mis-parses it at runtime and `bash -n`
 won't catch it, so run the real command, not just the syntax check. `sluice.config.sh` is sourced as
-POSIX `sh` (space/newline strings, no bash arrays). Run **shellcheck** on what you touch, and keep
-comments terse.
+POSIX `sh` (space/newline strings, no bash arrays). `make lint` runs **shellcheck** (the gate) plus
+**shfmt** `-i 2 -ci` (`brew install shellcheck shfmt`); run it on what you touch, and keep comments terse.
 
 ## Pull requests
 

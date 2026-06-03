@@ -42,16 +42,13 @@ jobs:
           target: base
           load: true
           tags: sluice-base:smoke
-      - name: Assert base invariants
+      - name: Install container-structure-test
         run: |
-          docker run --rm --entrypoint sh sluice-base:smoke -c '
-            set -e
-            for b in bash squid dnsmasq node npm iptables openssl git gh dig; do
-              command -v "$b" >/dev/null || { echo "missing: $b"; exit 1; }
-            done
-            id sluice >/dev/null
-            test ! -f /etc/squid/ssl/squid-key.pem   # keyless base: no private key in the image
-            echo "base invariants OK"'
+          curl -fsSL https://storage.googleapis.com/container-structure-test/latest/container-structure-test-linux-amd64 -o cst
+          chmod +x cst && sudo mv cst /usr/local/bin/container-structure-test
+      - name: Assert base invariants
+        # Same spec the PR gate runs (acceptance.yml) - no sudo, uid 1000, firewall packages, keyless.
+        run: container-structure-test test --image sluice-base:smoke --config tests/structure.yaml
 
       # --- build + push the multi-arch base, then cosign-sign the pushed digest ---
       - name: Build + push (amd64 + arm64)

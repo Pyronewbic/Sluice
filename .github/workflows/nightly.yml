@@ -20,13 +20,20 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with: { submodules: recursive }
       - name: Verify runtime examples
         env:
-          RUNTIMES: ${{ github.event.inputs.runtimes }}   # empty on schedule -> all
-          VERIFY_JOBS: 2   # conservative on the shared runner (script defaults to 3 for local dev)
-        run: ./test/verify-runtimes.sh   # docker is preinstalled on GH runners
+          RUNTIMES: ${{ github.event.inputs.runtimes }}   # empty on schedule -> all (the _want guard)
+        # Each fixture is a self-contained @test (own box, in-container curl), so bats runs them
+        # serially here; no host ports are published, so they never clash.
+        run: test/bats/bin/bats --print-output-on-failure --report-formatter junit --output "$RUNNER_TEMP/bats" test/nightly-runtimes.bats
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: junit-runtimes
+          path: ${{ runner.temp }}/bats/*.xml
 
-  # Each verify-* suite builds + tears down its own box, so CI just calls it. Heavy (image builds)
+  # Each nightly-* suite builds + tears down its own box(es), so CI just calls it. Heavy (image builds)
   # -> nightly, not the PR gate. One matrix leg per suite so a failure points at the right feature.
   feature-suites:
     name: feature (${{ matrix.suite }})
@@ -38,11 +45,17 @@ jobs:
         suite: [lock, learn, control-plane]   # learn folds in audit; control-plane folds in ls + seams
     steps:
       - uses: actions/checkout@v4
+        with: { submodules: recursive }
       - name: Install grype (for the lock --scan leg)
         if: matrix.suite == 'lock'
         run: curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sudo sh -s -- -b /usr/local/bin
       - name: Verify ${{ matrix.suite }}
-        run: ./test/verify-${{ matrix.suite }}.sh   # python3 (for control-plane) + docker preinstalled
+        run: test/bats/bin/bats --print-output-on-failure --report-formatter junit --output "$RUNNER_TEMP/bats" test/nightly-${{ matrix.suite }}.bats   # python3 (for control-plane) + docker preinstalled
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: junit-${{ matrix.suite }}
+          path: ${{ runner.temp }}/bats/*.xml
 
   # Nix builds a ~1.5GB image, so it gets its own job + a longer budget.
   nix:
@@ -51,5 +64,11 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with: { submodules: recursive }
       - name: Verify the Nix example
-        run: ./test/verify-nix.sh
+        run: test/bats/bin/bats --print-output-on-failure --report-formatter junit --output "$RUNNER_TEMP/bats" test/nightly-nix.bats
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: junit-nix
+          path: ${{ runner.temp }}/bats/*.xml

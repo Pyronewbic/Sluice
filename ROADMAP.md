@@ -65,9 +65,9 @@ release notes with Highlights + Install + Docs links (the x.0 release-notes styl
       `sluice agent <name>` round-trip stays the cred-gated item above (#3), not this.
 
 **C. Quality bar (should already mostly hold - audit before cutting):**
-- [ ] All tests green: acceptance, init-detection, the no-Docker CLI + installer units, and the
-      verify-* harnesses (security / agents / runtimes / lock / learn / control-plane / nix - sharing
-      `test/lib.sh`; the manual ones gated in nightly).
+- [ ] All tests green: the gate bats suites (acceptance, init-detection, the no-Docker CLI + installer
+      units, security) and the `nightly-*` bats suites (agents / runtimes / lock / learn / control-plane
+      / nix - sharing `test/test_helper/common.bash`; gated in nightly).
 - [ ] Docs current + consistent: README, THREAT_MODEL, examples/, sluice.config.example.sh, and help
       all match the locked surface (knob table = the frozen knobs; command list = the frozen verbs).
 - [ ] Distribution intact (already done): signed GHCR base + cosign-verify, signed release tarballs
@@ -145,7 +145,7 @@ TLS interception, now a scoped opt-in via `SLUICE_BUMP_DOMAINS`; non-HTTP egress
 the reviewed `SLUICE_ALLOW_IPS`.
 
 ### 2. Linux support (Docker + Podman) - ✅ CI-green: Docker + rootful & rootless Podman
-`bin/sluice` is engine-agnostic (`SLUICE_ENGINE`; docker->podman fallback). `test/acceptance.sh` runs the
+`bin/sluice` is engine-agnostic (`SLUICE_ENGINE`; docker->podman fallback). The acceptance bats suite runs the
 egress + isolation matrix on Linux Docker (the gate) + both Podman modes (best-effort) - the
 `route_localnet`/`disable_ipv6` sysctls + in-netns iptables work even rootless. Two Linux-only bugs the
 nightly surfaced and fixed: (1) bind mounts keep the host uid, so the root entrypoint chowns the mount to

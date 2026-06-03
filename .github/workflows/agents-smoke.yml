@@ -18,5 +18,12 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+        with: { submodules: recursive }
       - name: Verify agent presets
-        run: ./test/verify-agents.sh   # AGENTS unset -> all 7; no key set -> live probes skip
+        # AGENTS unset -> all presets; no key set -> live probes are no-ops (cred-free gate only).
+        run: test/bats/bin/bats --print-output-on-failure --report-formatter junit --output "$RUNNER_TEMP/bats" test/nightly-agents.bats
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: junit-agents-smoke
+          path: ${{ runner.temp }}/bats/*.xml

@@ -1,0 +1,64 @@
+# container-structure-test spec for the sluice `base` image (core/Dockerfile target: base).
+# Asserts the BAKED guarantees that don't need a running box - the cheap regression gate for the
+# "shipped setuid sudo / dropped a firewall package / lost the non-root user" class. The behavioral
+# guarantees (egress firewall, caps, seccomp) live in the bats suites; this only checks the image.
+#   container-structure-test test --image sluice-base:gate --config tests/structure.yaml
+schemaVersion: "2.0.0"
+
+fileExistenceTests:
+  # No in-box route to root: neither the setuid binary nor a NOPASSWD drop-in is shipped.
+  - name: "no setuid sudo"
+    path: /usr/bin/sudo
+    shouldExist: false
+  - name: "no firewall sudoers drop-in"
+    path: /etc/sudoers.d/firewall
+    shouldExist: false
+  # Firewall config baked into the base (the runtime splice cert is NOT - generated in entrypoint.sh).
+  - name: "squid.conf baked"
+    path: /etc/squid.conf
+    shouldExist: true
+  - name: "DoH/DoT denylist baked"
+    path: /etc/squid/doh-endpoints.txt
+    shouldExist: true
+  - name: "no baked splice private key (keyless base)"
+    path: /etc/squid/ssl/squid-key.pem
+    shouldExist: false
+  - name: "entrypoint is executable"
+    path: /usr/local/bin/entrypoint.sh
+    shouldExist: true
+    permissions: "-rwxr-xr-x"
+  - name: "init-firewall is executable"
+    path: /usr/local/bin/init-firewall.sh
+    shouldExist: true
+    permissions: "-rwxr-xr-x"
+
+commandTests:
+  # The non-root session user is uid 1000.
+  - name: "sluice user is uid 1000"
+    command: id
+    args: ["-u", "sluice"]
+    expectedOutput: ["^1000\\s*$"]
+  # The squid service user exists (the only uid with direct egress).
+  - name: "squid service user exists"
+    command: id
+    args: ["squid"]
+    exitCode: 0
+  # The firewall + tooling are present (diff = diffutils, which the old ad-hoc smoke missed). No shell
+  # vars: container-structure-test does env substitution on the config, which would eat a $-loop.
+  - name: "firewall + base tooling present"
+    command: sh
+    args:
+      - -c
+      - "command -v bash && command -v squid && command -v dnsmasq && command -v node && command -v npm && command -v iptables && command -v openssl && command -v git && command -v gh && command -v dig && command -v diff"
+    exitCode: 0
+  # sudo resolves to nothing on PATH (belt-and-suspenders to the file check above).
+  - name: "sudo not on PATH"
+    command: sh
+    args: ["-c", "command -v sudo || true"]
+    excludedOutput: ["sudo"]
+
+metadataTest:
+  entrypoint: ["/usr/local/bin/entrypoint.sh"]
+  envVars:
+    - key: NPM_CONFIG_PREFIX
+      value: /home/sluice/.npm-global

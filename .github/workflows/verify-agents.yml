@@ -19,13 +19,19 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+        with: { submodules: recursive }
       - name: Verify agent presets
         env:
-          AGENTS: ${{ github.event.inputs.agents }}
+          AGENTS: ${{ github.event.inputs.agents }}   # honoured by the _want guard
           # Add any of these as repo secrets to also run that agent's live round-trip.
           CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
           AMP_API_KEY: ${{ secrets.AMP_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: ./test/verify-agents.sh   # docker is preinstalled on GH runners
+        run: test/bats/bin/bats --print-output-on-failure --report-formatter junit --output "$RUNNER_TEMP/bats" test/nightly-agents.bats
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: junit-agents
+          path: ${{ runner.temp }}/bats/*.xml

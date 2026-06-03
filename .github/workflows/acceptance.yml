@@ -1,6 +1,6 @@
 name: acceptance
 
-# Runs the sluice acceptance harness on Linux. The Docker job is the gate; the two Podman
+# Runs the sluice gate bats suites on Linux. The Docker job is the gate; the two Podman
 # jobs are best-effort (informational): rootful proves the engine path, and rootless probes
 # whether a user namespace allows the route_localnet / disable_ipv6 sysctls + in-netns
 # iptables the egress proxy needs (the open ROADMAP #2 question).
@@ -10,14 +10,49 @@ on:
   pull_request:
 
 jobs:
+  lint:
+    name: lint (shellcheck + shfmt)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck (gate)
+        run: shellcheck -S warning bin/sluice   # shellcheck is preinstalled on ubuntu runners
+      - name: shfmt (advisory)
+        continue-on-error: true   # not yet a hard gate; `shfmt -w bin/sluice` is a separate reviewable change
+        run: |
+          go install mvdan.cc/sh/v3/cmd/shfmt@v3.8.0
+          "$(go env GOPATH)/bin/shfmt" -d -i 2 -ci bin/sluice
+
+  structure:
+    name: base image invariants (container-structure-test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the base stage
+        run: docker build --target base -t sluice-base:gate core/
+      - name: Install container-structure-test
+        run: |
+          curl -fsSL https://storage.googleapis.com/container-structure-test/latest/container-structure-test-linux-amd64 -o cst
+          chmod +x cst && sudo mv cst /usr/local/bin/container-structure-test
+      - name: Assert baked invariants (no sudo, uid 1000, firewall packages)
+        run: container-structure-test test --image sluice-base:gate --config tests/structure.yaml
+
   detection:
     name: init detection (unit)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+        with: { submodules: recursive }
       - name: Unit tests (sluice init stack detection, no Docker)
-        run: ./test/init-detection.sh
+        run: test/bats/bin/bats --print-output-on-failure --report-formatter junit --output "$RUNNER_TEMP/bats" test/init-detection.bats
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: junit-detection
+          path: ${{ runner.temp }}/bats/*.xml
 
   install:
     name: installer smoke (no Docker)
@@ -25,8 +60,14 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+        with: { submodules: recursive }
       - name: install.sh symlinks + runs the CLI
-        run: ./test/verify-install.sh
+        run: test/bats/bin/bats --print-output-on-failure --report-formatter junit --output "$RUNNER_TEMP/bats" test/verify-install.bats
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: junit-install
+          path: ${{ runner.temp }}/bats/*.xml
 
   cli:
     name: CLI surface (unit, no Docker)
@@ -34,8 +75,14 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+        with: { submodules: recursive }
       - name: version --json, per-command --help, parent_of, completions
-        run: ./test/verify-cli.sh
+        run: test/bats/bin/bats --print-output-on-failure --report-formatter junit --output "$RUNNER_TEMP/bats" test/verify-cli.bats
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: junit-cli
+          path: ${{ runner.temp }}/bats/*.xml
 
   docker:
     name: Linux, Docker
@@ -43,8 +90,14 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+        with: { submodules: recursive }
       - name: Acceptance tests (Docker)
-        run: ./test/acceptance.sh   # docker is preinstalled and group-accessible on GH runners
+        run: test/bats/bin/bats --print-output-on-failure --report-formatter junit --output "$RUNNER_TEMP/bats" test/acceptance.bats test/acceptance-bump.bats
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: junit-docker
+          path: ${{ runner.temp }}/bats/*.xml
 
   security:
     name: security escape-hatches (Docker)
@@ -52,8 +105,14 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
-      - name: Verify the danger knobs (ALLOW_IPS, PRELAUNCH, STATE_DIRS, worktree, MOUNTS, config_hash)
-        run: ./test/verify-security.sh
+        with: { submodules: recursive }
+      - name: Verify the danger knobs (allow-ips, prelaunch, state-dirs, worktree, mounts, config-hash, harden, seccomp, readonly, workspace, doh)
+        run: test/bats/bin/bats --print-output-on-failure --report-formatter junit --output "$RUNNER_TEMP/bats" test/verify-security-*.bats
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: junit-security
+          path: ${{ runner.temp }}/bats/*.xml
 
   podman:
     name: Linux, Podman (rootful, best-effort)
@@ -62,11 +121,12 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
+        with: { submodules: recursive }
       - name: Install podman
         run: sudo apt-get update && sudo apt-get install -y podman
       - name: Acceptance tests (rootful Podman)
         # Rootful so the sysctls apply; -E preserves PATH so bin/sluice finds podman/curl.
-        run: sudo -E env SLUICE_ENGINE=podman ./test/acceptance.sh
+        run: sudo -E env SLUICE_ENGINE=podman test/bats/bin/bats --print-output-on-failure test/acceptance.bats test/acceptance-bump.bats
 
   podman-rootless:
     name: Linux, Podman (rootless, best-effort)
@@ -75,6 +135,7 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
+        with: { submodules: recursive }
       - name: Install + configure rootless podman
         run: |
           sudo apt-get update && sudo apt-get install -y podman uidmap slirp4netns
@@ -88,4 +149,4 @@ jobs:
         # No sudo: runs in the user namespace. The egress proxy needs route_localnet /
         # disable_ipv6 sysctls + in-netns iptables - this job reports whether rootless allows
         # them. The egress allow/deny/IPv6/non-root matrix is the signal.
-        run: SLUICE_ENGINE=podman ./test/acceptance.sh
+        run: SLUICE_ENGINE=podman test/bats/bin/bats --print-output-on-failure test/acceptance.bats test/acceptance-bump.bats

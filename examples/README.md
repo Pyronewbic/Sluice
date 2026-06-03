@@ -74,5 +74,5 @@ cd my-repo && sluice agent claude     # Claude Code, --dangerously-skip-permissi
 
 Presets ([`../agents/`](../agents/), run `sluice agent` to list): **claude, codex, gemini,
 aider, cursor, opencode, amp, qwen, crush** - each declares its tool, API hosts, and the auth env var to
-forward. Verified end-to-end via [`../test/verify-agents.sh`](../test/verify-agents.sh)
+forward. Verified end-to-end via [`../test/nightly-agents.bats`](../test/nightly-agents.bats)
 (binary installs + runs, API hosts reachable, non-allowlisted hosts blocked, auth forwarded).
