@@ -144,8 +144,12 @@ cmd_init() {
     fi
     case "$pm" in
       pip)
-        if [ -n "$inst_target" ]; then run_cmd="export PATH=\"\$HOME/.local/bin:\$PATH\"; pip install --user $inst_target && $fwcmd"
-        else                           run_cmd="export PATH=\"\$HOME/.local/bin:\$PATH\"; $fwcmd"; fi ;;
+        if [ -f "$dir/requirements.txt" ]; then
+          # F2: install deps at build (free egress, into ~/.local) so the runtime needs no pypi.
+          prefetch_files="requirements.txt"; prefetch_cmd="export PATH=\"\$HOME/.local/bin:\$PATH\"; pip install --user -r requirements.txt"
+          run_cmd="export PATH=\"\$HOME/.local/bin:\$PATH\"; $fwcmd"; allow=""
+        elif [ -n "$inst_target" ]; then run_cmd="export PATH=\"\$HOME/.local/bin:\$PATH\"; pip install --user $inst_target && $fwcmd"
+        else                             run_cmd="export PATH=\"\$HOME/.local/bin:\$PATH\"; $fwcmd"; fi ;;
       pipenv) run_cmd="export PATH=\"\$HOME/.local/bin:\$PATH\"; pipenv install && pipenv run $fwcmd" ;;
       poetry) run_cmd="poetry install && poetry run $fwcmd" ;;
       uv)     run_cmd="uv sync && uv run $fwcmd" ;;
@@ -166,17 +170,24 @@ cmd_init() {
   elif [ -f "$dir/Gemfile" ]; then
     # ruby (best-effort)
     # -dev + build-base + linux-headers so native-extension gems (puma/nokogiri/...) compile.
-    stack="ruby"; extra_pkgs="ruby-3.3 ruby-3.3-dev build-base linux-headers"; allow="rubygems.org index.rubygems.org"
+    stack="ruby"; extra_pkgs="ruby-3.3 ruby-3.3-dev build-base linux-headers"; detected="ruby-3.3"
     setup="mkdir -p \"\$HOME/.local/bin\" \"\$HOME/.gem/ruby\" && gem install --no-document --bindir \"\$HOME/.local/bin\" --install-dir \"\$HOME/.gem/ruby\" bundler"
     local rb="export GEM_HOME=\"\$HOME/.gem/ruby\"; export PATH=\"\$HOME/.local/bin:\$PATH\""
-    if grep -qE "gem ['\"]rails['\"]" "$dir/Gemfile" 2>/dev/null || [ -f "$dir/config/application.rb" ]; then
-      ports="3000"; run_cmd="$rb; bundle install && bundle exec rails server -b 0.0.0.0 -p 3000"
+    local _rbserve _rails=""
+    if grep -qE "gem ['\"]rails['\"]" "$dir/Gemfile" 2>/dev/null || [ -f "$dir/config/application.rb" ]; then _rails=1; fi
+    if [ -n "$_rails" ]; then
+      ports="3000"; _rbserve="bundle exec rails server -b 0.0.0.0 -p 3000"
     else
       local rbentry="app.rb"; [ -f "$dir/main.rb" ] && rbentry="main.rb"
-      run_cmd="$rb; bundle install && ruby $rbentry"
-      note="ruby is best-effort - set SLUICE_RUN_CMD/SLUICE_PORTS for your app."
+      _rbserve="ruby $rbentry"; note="ruby is best-effort - set SLUICE_RUN_CMD/SLUICE_PORTS for your app."
     fi
-    detected="ruby-3.3"
+    if [ -f "$dir/Gemfile.lock" ]; then
+      # F2: install gems at build (free egress, into GEM_HOME) so the runtime needs no rubygems.
+      prefetch_files="Gemfile Gemfile.lock"; prefetch_cmd="$rb; bundle install"; allow=""
+      run_cmd="$rb; $_rbserve"; detected="ruby-3.3 (prefetched)"
+    else
+      allow="rubygems.org index.rubygems.org"; run_cmd="$rb; bundle install && $_rbserve"
+    fi
 
   elif [ -f "$dir/Cargo.toml" ]; then
     # build-base provides the C linker (cc/ld) that rustc needs to link any binary.

@@ -48,8 +48,9 @@ _smoke_runtime() {
 @test "runtime: bun serves 200 in-container (deps via proxy)"    { _want bun    || skip "not in RUNTIMES"; _smoke_runtime bun; }
 @test "runtime: poetry serves 200 in-container (deps via proxy)" { _want poetry || skip "not in RUNTIMES"; _smoke_runtime poetry; }
 @test "runtime: uv serves 200 in-container (deps via proxy)"     { _want uv     || skip "not in RUNTIMES"; _smoke_runtime uv; }
-# F2: deps fetched at BUILD (go mod download); serves with GOPROXY=off and NO go-proxy in the allowlist.
-@test "runtime: go-prefetch serves 200 offline (F2: deps baked at build, registry blocked)" { _want go-prefetch || skip "not in RUNTIMES"; _smoke_runtime go-prefetch; }
+# F2: deps fetched at BUILD; serve with the package registry NOT allowlisted (deps came from the cache).
+@test "runtime: go-prefetch serves 200 offline (F2: go mod download at build, go-proxy blocked)" { _want go-prefetch || skip "not in RUNTIMES"; _smoke_runtime go-prefetch; }
+@test "runtime: python-prefetch serves 200 offline (F2: pip install at build, pypi blocked)" { _want python-prefetch || skip "not in RUNTIMES"; _smoke_runtime python-prefetch; }
 
 # Kata micro-VM smoke (SLUICE_RUNTIME=kata): only on a host with a usable nerdctl + the Kata shim;
 # proves sluice's firewall/squid stack comes up UNCHANGED under an own-kernel runtime.

@@ -13,7 +13,7 @@ setup_file() {
   local d
   for d in node-vite node-pnpm-port node-next node-bun node-yarn node-bound \
            py-fastapi py-django py-uv py-flask py-ver py-pipenv deno ruby ruby-rails \
-           rust go rust-lock go-lock java-maven java-gradle php dotnet elixir dart gmake generic poly force upd; do mkdir -p "$WORK/$d"; done
+           rust go rust-lock go-lock ruby-lock java-maven java-gradle php dotnet elixir dart gmake generic poly force upd; do mkdir -p "$WORK/$d"; done
 
   printf '{"scripts":{"dev":"vite"},"devDependencies":{"vite":"^5"}}\n' > "$WORK/node-vite/package.json"; _init node-vite
   printf '{"scripts":{"dev":"vite --port 4000"},"devDependencies":{"vite":"^5"}}\n' > "$WORK/node-pnpm-port/package.json"; : > "$WORK/node-pnpm-port/pnpm-lock.yaml"; _init node-pnpm-port
@@ -32,6 +32,7 @@ setup_file() {
   printf '{"tasks":{"dev":"deno run -A main.ts"}}\n' > "$WORK/deno/deno.json"; _init deno
   printf 'source "https://rubygems.org"\ngem "sinatra"\n' > "$WORK/ruby/Gemfile"; _init ruby
   printf 'source "https://rubygems.org"\ngem "rails", "~> 7"\n' > "$WORK/ruby-rails/Gemfile"; _init ruby-rails
+  printf 'source "https://rubygems.org"\ngem "sinatra"\n' > "$WORK/ruby-lock/Gemfile"; : > "$WORK/ruby-lock/Gemfile.lock"; : > "$WORK/ruby-lock/app.rb"; _init ruby-lock
   printf '[package]\nname="x"\n' > "$WORK/rust/Cargo.toml"; _init rust
   printf 'module x\ngo 1.22\n' > "$WORK/go/go.mod"; _init go
   printf '[package]\nname="x"\n' > "$WORK/rust-lock/Cargo.toml"; : > "$WORK/rust-lock/Cargo.lock"; _init rust-lock
@@ -121,6 +122,15 @@ hasnt() { ! grep -qF -- "$2" "$WORK/$1/sluice.config.sh"; }
 @test "ruby/rails: port + server" {
   has ruby-rails 'SLUICE_PORTS="3000"' &&
   has ruby-rails 'bundle exec rails server -b 0.0.0.0 -p 3000'
+}
+@test "ruby+lock: F2 prefetch (bundle install at build, no rubygems)" {
+  has ruby-lock 'SLUICE_PREFETCH_FILES="Gemfile Gemfile.lock"' &&
+  has ruby-lock 'SLUICE_ALLOW_DOMAINS=""' &&
+  has ruby-lock 'detected: ruby-3.3 (prefetched)'
+}
+@test "py/pip+requirements: F2 prefetch (deps installed at build, no pypi)" {
+  has py-fastapi 'SLUICE_PREFETCH_FILES="requirements.txt"' &&
+  has py-fastapi 'SLUICE_ALLOW_DOMAINS=""'
 }
 @test "rust: build pkgs + run cmd" {
   has rust 'SLUICE_EXTRA_PKGS="rust build-base"' &&
