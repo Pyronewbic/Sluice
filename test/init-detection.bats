@@ -13,7 +13,7 @@ setup_file() {
   local d
   for d in node-vite node-pnpm-port node-next node-bun node-yarn node-bound \
            py-fastapi py-django py-uv py-flask py-ver py-pipenv deno ruby ruby-rails \
-           rust go generic poly force; do mkdir -p "$WORK/$d"; done
+           rust go java-maven java-gradle php dotnet elixir dart gmake generic poly force; do mkdir -p "$WORK/$d"; done
 
   printf '{"scripts":{"dev":"vite"},"devDependencies":{"vite":"^5"}}\n' > "$WORK/node-vite/package.json"; _init node-vite
   printf '{"scripts":{"dev":"vite --port 4000"},"devDependencies":{"vite":"^5"}}\n' > "$WORK/node-pnpm-port/package.json"; : > "$WORK/node-pnpm-port/pnpm-lock.yaml"; _init node-pnpm-port
@@ -34,6 +34,15 @@ setup_file() {
   printf 'source "https://rubygems.org"\ngem "rails", "~> 7"\n' > "$WORK/ruby-rails/Gemfile"; _init ruby-rails
   printf '[package]\nname="x"\n' > "$WORK/rust/Cargo.toml"; _init rust
   printf 'module x\ngo 1.22\n' > "$WORK/go/go.mod"; _init go
+
+  printf '<project><dependencies><dependency><artifactId>spring-boot-starter-web</artifactId></dependency></dependencies></project>\n' > "$WORK/java-maven/pom.xml"; _init java-maven
+  printf 'plugins { id "application" }\n' > "$WORK/java-gradle/build.gradle"; _init java-gradle
+  printf '{"require":{"monolog/monolog":"^3"}}\n' > "$WORK/php/composer.json"; _init php
+  printf '<Project Sdk="Microsoft.NET.Sdk.Web"></Project>\n' > "$WORK/dotnet/app.csproj"; _init dotnet
+  printf 'defmodule X.MixProject do\n  def project, do: [deps: [{:phoenix, "~> 1.7"}]]\nend\n' > "$WORK/elixir/mix.exs"; _init elixir
+  printf 'name: myapp\nenvironment:\n  sdk: ">=3.0.0"\n' > "$WORK/dart/pubspec.yaml"; _init dart
+  printf 'run:\n\techo hi\n' > "$WORK/gmake/Makefile"; _init gmake
+
   _init generic
   printf '{"scripts":{"dev":"vite"},"devDependencies":{"vite":"^5"}}\n' > "$WORK/poly/package.json"; printf 'fastapi\n' > "$WORK/poly/requirements.txt"; _init poly
   printf '{"scripts":{"dev":"vite"},"devDependencies":{"vite":"^5"}}\n' > "$WORK/force/package.json"; _init force
@@ -113,6 +122,47 @@ hasnt() { ! grep -qF -- "$2" "$WORK/$1/sluice.config.sh"; }
 @test "go: apk + run cmd" {
   has go 'SLUICE_EXTRA_PKGS="go"' &&
   has go 'SLUICE_RUN_CMD="go run ."'
+}
+
+@test "java/maven+spring: jdk+maven pkgs, spring-boot run, port" {
+  has java-maven 'SLUICE_EXTRA_PKGS="openjdk-21 maven"' &&
+  has java-maven 'SLUICE_RUN_CMD="mvn -q spring-boot:run"' &&
+  has java-maven 'SLUICE_PORTS="8080"' &&
+  has java-maven 'detected: java/maven (spring-boot)'
+}
+@test "java/gradle: jdk+gradle pkgs, gradle run, gradle registry" {
+  has java-gradle 'SLUICE_EXTRA_PKGS="openjdk-21 gradle"' &&
+  has java-gradle 'SLUICE_RUN_CMD="gradle run"' &&
+  has java-gradle 'plugins.gradle.org'
+}
+@test "php: php+composer pkgs, built-in server, packagist" {
+  has php 'SLUICE_EXTRA_PKGS="php composer"' &&
+  has php 'composer install && php -S 0.0.0.0:8000' &&
+  has php 'repo.packagist.org'
+}
+@test "dotnet: sdk pkg, dotnet run urls, nuget" {
+  has dotnet 'SLUICE_EXTRA_PKGS="dotnet-sdk"' &&
+  has dotnet 'dotnet run --urls http://0.0.0.0:8080' &&
+  has dotnet 'api.nuget.org'
+}
+@test "elixir/phoenix: elixir pkg, phx.server, port, hex" {
+  has elixir 'SLUICE_EXTRA_PKGS="elixir"' &&
+  has elixir 'mix deps.get && mix phx.server' &&
+  has elixir 'SLUICE_PORTS="4000"' &&
+  has elixir 'detected: elixir/phoenix'
+}
+@test "dart: dart pkg, pub get + run, pub.dev" {
+  has dart 'SLUICE_EXTRA_PKGS="dart"' &&
+  has dart 'dart pub get && dart run' &&
+  has dart 'pub.dev'
+}
+@test "generic+Makefile: run cmd sourced from a make target" {
+  has gmake 'SLUICE_RUN_CMD="make run"' &&
+  has gmake 'SLUICE_EXTRA_PKGS="make"'
+}
+@test "scaffold: hardening knobs present as commented options (F3)" {
+  has node-vite '# SLUICE_SECCOMP=hardened' &&
+  has node-vite '# SLUICE_WORKSPACE=overlay'
 }
 
 @test "generic: bash run cmd + no-stack note" {
