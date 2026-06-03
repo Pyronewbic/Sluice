@@ -144,10 +144,13 @@ closed. Allow/deny is by hostname and survives IP rotation. **Caveat:** host-gra
 TLS interception, now a scoped opt-in via `SLUICE_BUMP_DOMAINS`; non-HTTP egress is default-DROP except
 the reviewed `SLUICE_ALLOW_IPS`.
 
-### 2. Linux support (Docker + Podman) - ✅ CI-green: Docker + rootful & rootless Podman
+### 2. Linux support (Docker + Podman) - ✅ CI-green: Docker + rootless Podman (rootful unsupported)
 `bin/sluice` is engine-agnostic (`SLUICE_ENGINE`; docker->podman fallback). The acceptance bats suite runs the
-egress + isolation matrix on Linux Docker (the gate) + both Podman modes (best-effort) - the
-`route_localnet`/`disable_ipv6` sysctls + in-netns iptables work even rootless. Two Linux-only bugs the
+egress + isolation matrix on Linux Docker (the gate) + rootless Podman (best-effort) - the
+`route_localnet`/`disable_ipv6` sysctls + in-netns iptables work even rootless. **Rootful Podman is
+unsupported**: its `netavark` backend leaves the box's `dnsmasq` unable to enumerate interfaces
+(`Permission denied`), so the firewall never comes up - it works under rootless `slirp4netns` + Docker
+(same class as the gVisor incompatibility). Two Linux-only bugs the
 nightly surfaced and fixed: (1) bind mounts keep the host uid, so the root entrypoint chowns the mount to
 1000 when needed (no-op on Docker Desktop); (2) rotating-CDN hosts 409'd because squid's Host-forgery
 check saw a different pool IP than the client - fixed with an in-box caching **dnsmasq** both point at, so

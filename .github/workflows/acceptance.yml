@@ -1,9 +1,9 @@
 name: acceptance
 
-# Runs the sluice gate bats suites on Linux. The Docker job is the gate; the two Podman
-# jobs are best-effort (informational): rootful proves the engine path, and rootless probes
-# whether a user namespace allows the route_localnet / disable_ipv6 sysctls + in-netns
-# iptables the egress proxy needs (the open ROADMAP #2 question).
+# Runs the sluice gate bats suites on Linux. The Docker job is the gate; the rootless Podman
+# job is best-effort (informational): it probes whether a user namespace allows the
+# route_localnet / disable_ipv6 sysctls + in-netns iptables the egress proxy needs. Rootful
+# Podman is unsupported - its netavark backend breaks the box's dnsmasq (see ROADMAP #2).
 on:
   push:
     branches: [main]   # branch pushes run via pull_request below; this avoids double runs
@@ -96,36 +96,6 @@ jobs:
         with: { submodules: recursive }
       - name: Verify the danger knobs (allow-ips, prelaunch, state-dirs, worktree, mounts, config-hash, harden, seccomp, readonly, workspace, doh)
         run: test/bats/bin/bats --print-output-on-failure test/verify-security-*.bats
-
-  podman:
-    name: Linux, Podman (rootful, best-effort)
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-        with: { submodules: recursive }
-      - name: Install podman
-        run: sudo apt-get update && sudo apt-get install -y podman
-      - name: Diagnose rootful build/run (temporary)
-        continue-on-error: true
-        # bats hides setup_file stderr and mis-attributes the failing line; file ops are fine, so the
-        # real failure is a sluice command. Run `sluice run true` (build + run) with output visible,
-        # cd-ing inside sudo so it mirrors bats's all-root context.
-        run: |
-          W=$(mktemp -d); mkdir -p "$W/empty"
-          echo 'SLUICE_RUN_CMD="bash"' > "$W/empty/sluice.config.sh"
-          echo "===== sudo sluice run true (rootful podman) ====="
-          sudo env SLUICE_ENGINE=podman PATH="$PATH" sh -c "cd '$W/empty' && '$GITHUB_WORKSPACE/bin/sluice' run true" 2>&1 | tail -8 || true
-          echo "===== podman logs sluice-empty (entrypoint / firewall) ====="
-          sudo podman logs sluice-empty 2>&1 | tail -60 || true
-          echo "===== state + network backend ====="
-          sudo podman inspect sluice-empty --format 'status={{.State.Status}} exit={{.State.ExitCode}}' 2>&1 || true
-          sudo podman info --format 'network={{.Host.NetworkBackend}}' 2>&1 || true
-      - name: Acceptance tests (rootful Podman)
-        # Rootful so the sysctls apply. NOT `sudo -E`: preserving HOME=/home/runner makes root podman
-        # read the rootless storage and fail; pass only PATH (for bin/sluice -> podman/curl) + the engine.
-        run: sudo env SLUICE_ENGINE=podman PATH="$PATH" test/bats/bin/bats --print-output-on-failure test/acceptance.bats test/acceptance-bump.bats
 
   podman-rootless:
     name: Linux, Podman (rootless, best-effort)
