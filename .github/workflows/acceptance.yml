@@ -110,16 +110,13 @@ jobs:
       - name: Diagnose rootful build/run (temporary)
         continue-on-error: true
         # bats hides setup_file stderr and mis-attributes the failing line; file ops are fine, so the
-        # real failure is a sluice command. Run build + run directly with output visible. Hypothesis:
-        # `sudo -E` keeps HOME=/home/runner, so rootful podman reads the rootless storage and chokes.
+        # real failure is a sluice command. Run `sluice run true` (build + run) with output visible,
+        # cd-ing inside sudo so it mirrors bats's all-root context.
         run: |
-          W=$(sudo mktemp -d); sudo mkdir -p "$W/empty"
-          echo 'SLUICE_RUN_CMD="bash"' | sudo tee "$W/empty/sluice.config.sh" >/dev/null
-          cd "$W/empty"
-          echo "===== with sudo -E (current invocation) ====="
-          sudo -E env SLUICE_ENGINE=podman "$GITHUB_WORKSPACE/bin/sluice" run true 2>&1 | tail -50 || true
-          echo "===== with sudo (no -E, fresh root HOME) ====="
-          sudo env SLUICE_ENGINE=podman PATH="$PATH" "$GITHUB_WORKSPACE/bin/sluice" run true 2>&1 | tail -50 || true
+          W=$(mktemp -d); mkdir -p "$W/empty"
+          echo 'SLUICE_RUN_CMD="bash"' > "$W/empty/sluice.config.sh"
+          echo "===== sudo sluice run true (rootful podman) ====="
+          sudo env SLUICE_ENGINE=podman PATH="$PATH" sh -c "cd '$W/empty' && '$GITHUB_WORKSPACE/bin/sluice' run true" 2>&1 | tail -70 || true
       - name: Acceptance tests (rootful Podman)
         # Rootful so the sysctls apply. NOT `sudo -E`: preserving HOME=/home/runner makes root podman
         # read the rootless storage and fail; pass only PATH (for bin/sluice -> podman/curl) + the engine.
