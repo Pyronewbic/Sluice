@@ -16,9 +16,11 @@ output) or a **feature request**. Security holes do not go here - see above.
 
 ## Dev setup
 
-The CLI is one bash script, `bin/sluice` - there's no build step. Run it straight from a checkout, or
-`./install.sh` to symlink it onto your `PATH`. You need **docker** or **podman** (auto-detected;
-override with `SLUICE_ENGINE`).
+The CLI ships as one bash script, `bin/sluice`, **assembled from the ordered `src/*.sh` slices** by
+`make build` (so the curl-one-file install still works). Edit the slices, not `bin/sluice` directly,
+then `make build`; a CI gate (`make build-check`) fails if the committed `bin/sluice` drifts from
+`src/`. Run it straight from a checkout, or `./install.sh` to symlink it onto your `PATH`. You need
+**docker** or **podman** (auto-detected; override with `SLUICE_ENGINE`).
 
 ## Run the tests
 
@@ -36,7 +38,7 @@ Each suite is `test/<name>.bats` (gate) or `test/nightly-<name>.bats` (heavy); s
 
 ## Style
 
-`bin/sluice` is the one file to be careful with: it has to run under the **bash 3.2** that ships on
+The launcher (`src/*.sh`, assembled into `bin/sluice`) is the code to be careful with: it has to run under the **bash 3.2** that ships on
 macOS, so avoid bashisms newer than 3.2 (no associative arrays, no `${var^^}`), and never put a
 `case` inside a `$(...)` command substitution - bash 3.2 mis-parses it at runtime and `bash -n`
 won't catch it, so run the real command, not just the syntax check. `sluice.config.sh` is sourced as

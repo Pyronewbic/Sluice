@@ -2,6 +2,9 @@
 # sluice - run any project in a sandboxed, egress-firewalled container.
 # Drop a sluice.config.sh in a project (or run `sluice` to scaffold one); `sluice help` lists the
 # commands. Per-project image/container, auto-rebuilt when the config or core changes.
+#
+# GENERATED FILE - do not edit directly. Assembled from src/*.sh by `make build`
+# (the slices concatenate in order; a CI gate fails if this file drifts from src/).
 set -euo pipefail
 
 # resolve our install dir (bin/sluice is symlinked onto PATH; follow the chain)
