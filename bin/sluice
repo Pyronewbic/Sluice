@@ -113,7 +113,7 @@ Meta:
 Env: SLUICE_ENGINE  SLUICE_NO_BANNER  SLUICE_YES  SLUICE_NO_UPDATE_CHECK  NO_COLOR
      SLUICE_PIDS_LIMIT (default 4096)  SLUICE_MEMORY (e.g. 4g; unset = no cap)
      SLUICE_ALLOW_DOH=1 (permit DoH/DoT resolvers; blocked by default as an exfil channel)
-     SLUICE_SECCOMP=hardened (block namespace/trace/keyctl syscalls; breaks browser sandboxes)
+     SLUICE_SECCOMP=hardened|browser|audit (extra syscall filter; hardened >= engine default)
      SLUICE_READONLY_ROOT=1 (immutable rootfs; tmpfs + anon-volume the writable paths)
      SLUICE_WORKSPACE=overlay (host repo read-only; box edits a copy - see 'diff'/'apply')
 Docs: https://github.com/Pyronewbic/Sluice
@@ -1575,9 +1575,22 @@ start() {
     --sysctl net.ipv6.conf.all.disable_ipv6=1
     --sysctl net.ipv6.conf.default.disable_ipv6=1)
   [ -n "${SLUICE_MEMORY:-}" ] && run_args+=(--memory "$SLUICE_MEMORY")
-  # SLUICE_SECCOMP=hardened: opt-in profile that errors the namespace/trace/keyctl/mount class on top
-  # of the dropped caps (breaks browser-engine sandboxes; default = the engine's own profile).
-  [ "${SLUICE_SECCOMP:-}" = hardened ] && run_args+=(--security-opt "seccomp=$CORE/seccomp.json")
+  # SLUICE_SECCOMP: opt-in seccomp on top of the dropped caps (unset = the engine's own profile).
+  #   hardened - denylist that is a strict superset of the engine default (adds userfaultfd, the
+  #              ASLR-disable path, ...); breaks browser-engine userns sandboxes.
+  #   browser  - hardened minus the namespace/mount calls Chromium/Playwright need for their own
+  #              userns sandbox (ptrace/bpf/modules/userfaultfd/... stay blocked).
+  #   audit    - hardened, log-only (SCMP_ACT_LOG): observe what WOULD be blocked, enforce nothing.
+  local _sc=""
+  case "${SLUICE_SECCOMP:-}" in
+    hardened) run_args+=(--security-opt "seccomp=$CORE/seccomp.json") ;;
+    browser)  run_args+=(--security-opt "seccomp=$CORE/seccomp-browser.json") ;;
+    audit)    _sc="$(mktemp "${TMPDIR:-/tmp}/sluice-seccomp-audit.XXXXXX")"
+              sed 's/SCMP_ACT_ERRNO/SCMP_ACT_LOG/g' "$CORE/seccomp.json" > "$_sc"
+              run_args+=(--security-opt "seccomp=$_sc") ;;
+    ""|default) : ;;
+    *) die "SLUICE_SECCOMP must be hardened, browser, or audit (got '${SLUICE_SECCOMP}')" ;;
+  esac
   # SLUICE_READONLY_ROOT=1: immutable rootfs. tmpfs the ephemeral system paths; the two dirs that mix
   # baked content with runtime writes (/etc/squid, /home/sluice) become anon volumes (pre-populated
   # from the image, writable). resolv.conf can't be rewritten under --read-only, so we set it via

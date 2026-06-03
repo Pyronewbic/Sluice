@@ -87,7 +87,12 @@ The guarantees below hold only while these do:
   root. `--pids-limit` (`SLUICE_PIDS_LIMIT`) and optional `--memory` (`SLUICE_MEMORY`) keep a runaway
   agent or build from exhausting the host. An opt-in hardened seccomp profile
   (`SLUICE_SECCOMP=hardened`) additionally errors the in-container namespace-creation / tracing /
-  keyctl / mount syscall class (off by default - it breaks browser-engine sandboxes). An opt-in
+  keyctl / mount syscall class; its denylist is a strict **superset of the engine default**, so it
+  also closes the non-cap-gated primitives the default blocks (`userfaultfd`, the `personality`
+  ADDR_NO_RANDOMIZE self-ASLR-disable, `kcmp`). Off by default since blocking userns breaks
+  browser-engine sandboxes - `SLUICE_SECCOMP=browser` keeps the hardening but re-allows the
+  unshare/clone/mount calls a browser needs for its own userns sandbox, and `=audit` logs would-be
+  blocks (`SCMP_ACT_LOG`) instead of enforcing. An opt-in
   `SLUICE_READONLY_ROOT=1` makes the rootfs immutable (tmpfs the ephemeral paths; `/etc/squid` +
   `/home/sluice` become writable anon volumes pre-populated from the image) so a process can't tamper
   with system files or leave persistence. (On SELinux-enforcing hosts the box runs

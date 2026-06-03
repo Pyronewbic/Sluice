@@ -1,0 +1,45 @@
+{
+  "_comment": "sluice browser seccomp profile (SLUICE_SECCOMP=browser). This is core/seccomp.json MINUS the calls a browser engine (Chromium/Playwright) needs to build its OWN unprivileged-userns sandbox: unshare, clone(CLONE_NEWUSER), clone3, mount, umount2, pivot_root. Everything else the hardened profile blocks stays blocked (setns, bpf, ptrace, perf_event_open, keyctl family, the new mount API, modules, kexec/swap, userfaultfd, kcmp, *_handle_at, personality ADDR_NO_RANDOMIZE, ...). Use this only when an agent must run a browser WITH its internal sandbox; otherwise run the browser --no-sandbox under hardened (the container is already the jail). Behavioural check against a real Chromium/Playwright run is manual - CI has no browser fixture. Targets amd64/arm64.",
+  "defaultAction": "SCMP_ACT_ALLOW",
+  "syscalls": [
+    {
+      "_comment": "namespace setns, tracing, key material, the NEW mount API, modules, kexec/swap. (classic mount/umount2/pivot_root + unshare/clone(NEWUSER) are intentionally allowed here for the browser sandbox.)",
+      "names": [
+        "setns",
+        "bpf", "perf_event_open",
+        "keyctl", "add_key", "request_key",
+        "ptrace", "process_vm_readv", "process_vm_writev",
+        "move_mount", "open_tree", "fsopen", "fsconfig", "fsmount", "fspick", "mount_setattr",
+        "init_module", "finit_module", "delete_module", "create_module", "get_kernel_syms", "query_module",
+        "kexec_load", "kexec_file_load",
+        "swapon", "swapoff"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1
+    },
+    {
+      "_comment": "the rest of the OCI default deny set: non-cap-gated exploitation primitives + obsolete/cap-gated calls (kept identical to hardened).",
+      "names": [
+        "userfaultfd", "kcmp",
+        "name_to_handle_at", "open_by_handle_at",
+        "acct", "quotactl", "syslog", "sysfs",
+        "reboot", "settimeofday", "clock_settime", "clock_adjtime",
+        "ioperm", "iopl",
+        "lookup_dcookie", "nfsservctl", "uselib", "ustat",
+        "mbind", "set_mempolicy", "get_mempolicy", "move_pages", "migrate_pages",
+        "vm86", "vm86old"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1
+    },
+    {
+      "_comment": "block personality() only when it sets ADDR_NO_RANDOMIZE (0x0040000 = 262144); kept identical to hardened.",
+      "names": ["personality"],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        { "index": 0, "value": 262144, "valueTwo": 262144, "op": "SCMP_CMP_MASKED_EQ" }
+      ]
+    }
+  ]
+}

@@ -1,17 +1,33 @@
 {
-  "_comment": "sluice hardened seccomp profile (opt-in via SLUICE_SECCOMP=hardened). Allow-by-default minus a dangerous syscall class the sandbox never needs: in-container namespace creation (the userns/CVE surface), tracing, key material, mount, kernel-module/kexec/swap. Sessions already run uid 1000 with zero caps, so this is defence in depth. NOTE: blocking unshare/clone(NEWUSER) breaks browser-engine sandboxes (Chromium/Playwright) - run those with the engine's default profile or the browser's --no-sandbox. Targets amd64/arm64 (clone flags = arg0).",
+  "_comment": "sluice hardened seccomp profile (opt-in via SLUICE_SECCOMP=hardened; browser/audit variants exist). Allow-by-default minus a denylist that is a strict SUPERSET of the OCI/Docker default deny set, so 'hardened' is always >= the engine default it replaces. Blocks in-container namespace creation (userns/CVE surface), tracing, key material, the mount API, modules, kexec/swap, the non-cap-gated exploitation primitives the default also blocks (userfaultfd = kernel-UAF primitive; personality ADDR_NO_RANDOMIZE = self-disabling ASLR; kcmp; *_handle_at), and the obsolete/cap-gated rest. Sessions already run uid 1000 with zero caps, so this is defence in depth. NOTE: blocking unshare/clone(NEWUSER) breaks browser-engine sandboxes (Chromium/Playwright) - use SLUICE_SECCOMP=browser. Targets amd64/arm64 (clone/personality flags = arg0).",
   "defaultAction": "SCMP_ACT_ALLOW",
   "syscalls": [
     {
+      "_comment": "namespace creation, tracing, key material, mount API, modules, kexec/swap.",
       "names": [
         "unshare", "setns",
         "bpf", "perf_event_open",
         "keyctl", "add_key", "request_key",
         "ptrace", "process_vm_readv", "process_vm_writev",
-        "mount", "umount2", "pivot_root", "move_mount", "open_tree", "fsopen", "fsconfig", "fsmount",
-        "init_module", "finit_module", "delete_module",
+        "mount", "umount2", "pivot_root", "move_mount", "open_tree", "fsopen", "fsconfig", "fsmount", "fspick", "mount_setattr",
+        "init_module", "finit_module", "delete_module", "create_module", "get_kernel_syms", "query_module",
         "kexec_load", "kexec_file_load",
         "swapon", "swapoff"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1
+    },
+    {
+      "_comment": "the rest of the OCI default deny set: non-cap-gated exploitation primitives + obsolete/cap-gated calls. Makes the denylist a strict superset of the engine default.",
+      "names": [
+        "userfaultfd", "kcmp",
+        "name_to_handle_at", "open_by_handle_at",
+        "acct", "quotactl", "syslog", "sysfs",
+        "reboot", "settimeofday", "clock_settime", "clock_adjtime",
+        "ioperm", "iopl",
+        "lookup_dcookie", "nfsservctl", "uselib", "ustat",
+        "mbind", "set_mempolicy", "get_mempolicy", "move_pages", "migrate_pages",
+        "vm86", "vm86old"
       ],
       "action": "SCMP_ACT_ERRNO",
       "errnoRet": 1
@@ -23,12 +39,21 @@
       "errnoRet": 38
     },
     {
-      "_comment": "block clone() only when CLONE_NEWUSER (0x10000000) is set; normal threads/forks (no NEWUSER) are allowed.",
+      "_comment": "block clone() only when CLONE_NEWUSER (0x10000000 = 268435456) is set; normal threads/forks (no NEWUSER) are allowed.",
       "names": ["clone"],
       "action": "SCMP_ACT_ERRNO",
       "errnoRet": 1,
       "args": [
         { "index": 0, "value": 268435456, "valueTwo": 268435456, "op": "SCMP_CMP_MASKED_EQ" }
+      ]
+    },
+    {
+      "_comment": "block personality() only when it sets ADDR_NO_RANDOMIZE (0x0040000 = 262144), i.e. self-disabling ASLR; normal personality queries/uses (UNAME26, READ_IMPLIES_EXEC, 0xffffffff) pass.",
+      "names": ["personality"],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        { "index": 0, "value": 262144, "valueTwo": 262144, "op": "SCMP_CMP_MASKED_EQ" }
       ]
     }
   ]

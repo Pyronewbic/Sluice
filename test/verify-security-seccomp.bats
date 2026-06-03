@@ -40,6 +40,38 @@ teardown_file() {
   assert_output "ok"
 }
 
+@test "seccomp: personality(ADDR_NO_RANDOMIZE) is blocked under hardened (ASLR can't be self-disabled)" {
+  "$ENG" exec sluice-sectest-seccomp sh -c 'command -v setarch' >/dev/null 2>&1 || skip "setarch not in image"
+  run "$ENG" exec --user sluice sluice-sectest-seccomp setarch -R true
+  assert_failure
+}
+
+@test "seccomp: hardened denies userfaultfd + personality (the non-cap-gated default-deny gaps)" {
+  grep -v _comment "$ROOT/core/seccomp.json" | grep -q '"userfaultfd"'
+  grep -v _comment "$ROOT/core/seccomp.json" | grep -q '"personality"'
+}
+
+@test "seccomp: browser profile leaves the userns sandbox calls (unshare/clone/mount) allowed" {
+  run bash -c "grep -v _comment '$ROOT/core/seccomp-browser.json' | grep -Eq '\"unshare\"|\"clone\"|\"mount\"|\"pivot_root\"'"
+  assert_failure
+}
+
+@test "seccomp: browser profile still blocks ptrace + bpf + userfaultfd" {
+  grep -v _comment "$ROOT/core/seccomp-browser.json" | grep -q '"ptrace"'
+  grep -v _comment "$ROOT/core/seccomp-browser.json" | grep -q '"bpf"'
+  grep -v _comment "$ROOT/core/seccomp-browser.json" | grep -q '"userfaultfd"'
+}
+
+@test "seccomp: audit transform errors nothing (every ERRNO -> LOG)" {
+  run bash -c "sed 's/SCMP_ACT_ERRNO/SCMP_ACT_LOG/g' '$ROOT/core/seccomp.json' | grep -c SCMP_ACT_ERRNO"
+  assert_output "0"
+}
+
+@test "seccomp: audit transform logs (yields SCMP_ACT_LOG actions)" {
+  run bash -c "sed 's/SCMP_ACT_ERRNO/SCMP_ACT_LOG/g' '$ROOT/core/seccomp.json' | grep -c SCMP_ACT_LOG"
+  refute_output "0"
+}
+
 @test "seccomp: a default run (no SLUICE_SECCOMP) applies no sluice profile" {
   ( cd "$WORK/sc" && "$SLUICE" stop ) >/dev/null 2>&1 || true
   ( cd "$WORK/sc" && "$SLUICE" run true ) >/dev/null 2>&1 || true
