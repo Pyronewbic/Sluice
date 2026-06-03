@@ -96,16 +96,16 @@ egress-open run (loudly warned; see [`THREAT_MODEL.md`](THREAT_MODEL.md)). Full 
 
 `sluice init` does just the scaffold step (no prompt, no run); in CI, a bare `sluice` scaffolds and
 stops unless `SLUICE_YES=1`. It infers the stack, run command, and ports for **Node, Python, Deno,
-Ruby/Rails, Rust, and Go**; `learn` then fills the one thing you can't guess statically - the egress
-allowlist. Any other language runs too: set `SLUICE_EXTRA_PKGS` + `SLUICE_RUN_CMD` and the generic
-base handles the rest.
+Ruby/Rails, Rust, Go, Java, PHP, .NET, Elixir, and Dart**; `learn` then fills the one thing you can't
+guess statically - the egress allowlist. Any other language runs too: set `SLUICE_EXTRA_PKGS` +
+`SLUICE_RUN_CMD` and the generic base handles the rest (or it sources a Procfile/Makefile run target).
 
 The commands you'll reach for:
 
 ```bash
 sluice                 # build (if needed) + run SLUICE_RUN_CMD in the sandbox
 sluice agent <name>    # run a coding agent (run `sluice agent` with no name to list them)
-sluice init [--force]  # scaffold a sluice.config.sh by detecting the repo's stack
+sluice init [--force]  # scaffold a sluice.config.sh from the detected stack (--update to re-detect)
 sluice learn           # propose the egress allowlist from blocked hosts (--print | --apply | --audit)
 sluice run <cmd...>    # an ad-hoc command instead of SLUICE_RUN_CMD
 sluice doctor          # health check: engine, image, allowlist, blocked egress (--json)
@@ -286,7 +286,8 @@ scaffolds the config.
 ## Layout
 
 ```
-bin/sluice                the CLI (a single bash script)
+bin/sluice                the CLI launcher (one file; generated from src/ by `make build`)
+src/                      the launcher in ordered slices - edit here, then `make build`
 core/                     the sandbox image: Dockerfile + squid / firewall / entrypoint
 agents/                   coding-agent presets (run `sluice agent` to list)
 examples/                 self-contained gallery demos

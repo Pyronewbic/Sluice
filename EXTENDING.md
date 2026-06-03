@@ -1,6 +1,6 @@
 # Extending sluice
 
-How sluice grows without sprawling. The public surface is intentionally small and frozen (16 verbs, 6
+How sluice grows without sprawling. The public surface is intentionally small and frozen (16 verbs, 11
 detected stacks); new capability is supposed to ride the cheapest mechanism that fits, not add to that
 surface. This is the rule we apply to every feature - including our own backlog.
 
@@ -42,7 +42,8 @@ The same rule sorts what is already planned (see [ROADMAP](ROADMAP.md)):
 - SPDX output, cargo inventory, pinned-version replay -> rung 3 (flags on `lock`).
 - `SLUICE_RUNTIME` micro-VM isolation -> rung 2 knob plus an internal run path, no new verb.
 - Control plane / fleet -> mostly an external service over the existing `--json` seams.
-- More language stacks (PHP, etc.) -> rung 6, on real demand only.
+- Language stacks -> rung 6, on real demand: Java / PHP / .NET / Elixir / Dart were added this way;
+  further stacks ride the same rung.
 
 For the mechanics of opening a change (tests, commit style, the surface bar), see
 [CONTRIBUTING](CONTRIBUTING.md).

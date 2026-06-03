@@ -42,6 +42,15 @@ SLUICE_SETUP_CMDS=""
 #   SLUICE_SETUP_ROOT_CMDS='mkdir -p /nix && chown sluice:sluice /nix'
 SLUICE_SETUP_ROOT_CMDS=""
 
+# Dep prefetch (tighter runtime egress): fetch the project's deps at BUILD (free egress) into a $HOME
+# cache the runtime mount won't shadow, so the runtime allowlist can DROP the package registry and
+# repeat runs skip the re-fetch. SLUICE_PREFETCH_FILES = manifests copied into the build; SLUICE_PREFETCH_CMD
+# = the fetch, run in a staging dir after SLUICE_SETUP_CMDS. `sluice init` sets these for go/rust/ruby/
+# python-pip when a lockfile is present (and switches the run command to offline). e.g. (go):
+#   SLUICE_PREFETCH_FILES="go.mod go.sum"   SLUICE_PREFETCH_CMD="go mod download"   (run with GOPROXY=off)
+SLUICE_PREFETCH_FILES=""
+SLUICE_PREFETCH_CMD=""
+
 # Build the project layer FROM a prebuilt, cosign-signed base instead of rebuilding the core
 # locally (faster; auditable). Opt-in: set to a published ref, e.g.
 # "ghcr.io/pyronewbic/sluice-base:0.2.1". sluice cosign-verifies it if cosign is installed
@@ -81,6 +90,23 @@ SLUICE_BUMP_DOMAINS=""
 # pattern so it scopes to one bumped host. Space/newline-separated. Empty = allow each bumped host
 # wholesale but log its full URLs. e.g. "^https?://api\.internal\.example\.com/v1/"
 SLUICE_BUMP_URLS=""
+
+# --- hardening (opt-in; off by default) -----------------------------------------
+
+# Extra seccomp syscall filter on top of the already-dropped caps. "hardened" = a denylist that is a
+# strict superset of the engine default (blocks userns/ptrace/bpf/mount/modules/userfaultfd, the
+# ASLR-disable path, ...). "browser" = hardened minus the calls Chromium/Playwright need to build
+# their own userns sandbox. "audit" = log-only (observe, enforce nothing). Unset = the engine's
+# default profile. See THREAT_MODEL.md.
+SLUICE_SECCOMP=""
+
+# Immutable rootfs: tmpfs the ephemeral system paths; /etc/squid + /home/sluice become writable anon
+# volumes pre-populated from the image. Set to 1 to enable.
+SLUICE_READONLY_ROOT=""
+
+# Protected workspace: mount the host repo READ-ONLY and have the box edit a throwaway copy - review
+# with `sluice diff`, write back with `sluice apply`. Set to "overlay" to enable.
+SLUICE_WORKSPACE=""
 
 # --- serving --------------------------------------------------------------------
 

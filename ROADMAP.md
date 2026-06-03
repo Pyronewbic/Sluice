@@ -127,9 +127,9 @@ rough effort (S/M/L) and the gap each closes.
 - **Supply-chain depth - M.** APKINDEX-snapshot pinning + full pinned-version replay (CycloneDX + cosign
   SBOM attestation + cargo inventory + SPDX output + `lock --enforce` strict gate shipped).
 
-**Deferred (on real demand / not now):** Windows/WSL2, GPU passthrough, PHP + more stack detection
-(scope is frozen at the current 6 - the generic base + `SLUICE_EXTRA_PKGS`/`SLUICE_RUN_CMD` already run
-any language), a non-server batch/data-job demo, and multi-tenant adversarial isolation (a different
+**Deferred (on real demand / not now):** Windows/WSL2, GPU passthrough, further stack detection beyond
+the current 11 (the generic base + `SLUICE_EXTRA_PKGS`/`SLUICE_RUN_CMD`, or a Procfile/Makefile run target,
+already run any language), a non-server batch/data-job demo, and multi-tenant adversarial isolation (a different
 product - sluice is anti-exfil for code you mostly trust, not hostile-tenant isolation).
 
 ---
@@ -197,11 +197,12 @@ in the backlog above.
 
 ### 6. `sluice init` + a preset gallery - ✅ landed
 `sluice init` detects the stack and scaffolds a working config: **node** (npm/pnpm/yarn/bun + framework
-port/flags read from the real dev script), **python** (pip/poetry/uv + framework), plus **deno,
-ruby/rails, rust, go** - POSIX-clean, no engine needed. Build-verified end-to-end (init -> build ->
-serve, deps through the proxy) for all of them via `test/fixtures/<rt>` (nightly `nightly-runtimes.bats`). A
-bare `sluice` in an unconfigured repo scaffolds + previews + asks to run (the `create-next-app` pattern;
-`SLUICE_YES=1` in CI). The `examples/` gallery is three capability demos - **firewall** (the egress block
-made visible), **jupyter** (serve an app, no runtime egress), **nix** (a pinned toolchain baked at build,
-locked at runtime). **Language scope is frozen** at the 6 stacks; PHP/more stacks + a batch-job demo are
-on-demand (see the backlog).
+port/flags read from the real dev script), **python** (pip/poetry/uv + framework), **deno, ruby/rails,
+rust, go**, plus **java (maven/gradle), php, .NET, elixir, dart** - POSIX-clean, no engine needed. `init
+--update` re-detects without clobbering manual edits, and an unknown stack sources a Procfile/Makefile run
+target. **F2 dep prefetch** (go/rust/ruby/python-pip when a lockfile is present) fetches deps at build so
+the runtime allowlist can drop the package registry. Build-verified end-to-end (init -> build -> serve) via
+`test/fixtures/<rt>` (nightly `nightly-runtimes.bats`) for node/python/deno/ruby/rust/go/php/dart/dotnet/java
+plus the go/python prefetch path; elixir detection ships but its deps don't yet compile on wolfi (an erlang-
+headers gap). A bare `sluice` in an unconfigured repo scaffolds + previews + asks to run (`SLUICE_YES=1` in
+CI). The `examples/` gallery is three capability demos - **firewall**, **jupyter**, **nix**.

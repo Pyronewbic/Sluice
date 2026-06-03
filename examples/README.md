@@ -16,9 +16,9 @@ slice of what sluice does - read the "shows" column to pick one.
 ## Your own stack
 
 No preset needed: run **`sluice init`** in your repo - it detects the stack (Node/Vite/Next,
-Python/FastAPI, Deno, Ruby/Rails, Rust, Go) and scaffolds the config, then **`sluice learn`**
-fills the egress allowlist from what the app actually tried to reach. Any other language runs
-too via `SLUICE_EXTRA_PKGS` + `SLUICE_RUN_CMD` (see the [main README](../README.md#use)).
+Python/FastAPI, Deno, Ruby/Rails, Rust, Go, Java, PHP, .NET, Elixir, Dart) and scaffolds the config,
+then **`sluice learn`** fills the egress allowlist from what the app actually tried to reach. Any
+other language runs too via `SLUICE_EXTRA_PKGS` + `SLUICE_RUN_CMD` (see the [main README](../README.md#use)).
 
 ## Stronger isolation (Linux)
 
