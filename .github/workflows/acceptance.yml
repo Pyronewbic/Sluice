@@ -107,22 +107,23 @@ jobs:
         with: { submodules: recursive }
       - name: Install podman
         run: sudo apt-get update && sudo apt-get install -y podman
-      - name: Diagnose rootful env (temporary)
+      - name: Diagnose rootful build/run (temporary)
         continue-on-error: true
-        # Replicate acceptance.bats's setup_file ops under the exact rootful invocation, to see why a
-        # plain `printf > file` fails there (bats hides setup_file stderr).
+        # bats hides setup_file stderr and mis-attributes the failing line; file ops are fine, so the
+        # real failure is a sluice command. Run build + run directly with output visible. Hypothesis:
+        # `sudo -E` keeps HOME=/home/runner, so rootful podman reads the rootless storage and chokes.
         run: |
-          sudo -E env SLUICE_ENGINE=podman bash -xc '
-            W=$(mktemp -d); echo "WORK=[$W]"; ls -ld "$W"
-            mkdir -p "$W/empty" && echo "mkdir OK" || echo "mkdir FAIL rc=$?"
-            printf "x\n" > "$W/empty/c.sh" && echo "write OK" || echo "write FAIL rc=$?"
-            ls -la "$W/empty" 2>&1 || true
-            echo "TMPDIR=[$TMPDIR]"; df -h "$W" /tmp 2>/dev/null || true
-            id; podman info --format "rootless={{.Host.Security.Rootless}}" 2>/dev/null || true
-          '
+          W=$(sudo mktemp -d); sudo mkdir -p "$W/empty"
+          echo 'SLUICE_RUN_CMD="bash"' | sudo tee "$W/empty/sluice.config.sh" >/dev/null
+          cd "$W/empty"
+          echo "===== with sudo -E (current invocation) ====="
+          sudo -E env SLUICE_ENGINE=podman "$GITHUB_WORKSPACE/bin/sluice" run true 2>&1 | tail -50 || true
+          echo "===== with sudo (no -E, fresh root HOME) ====="
+          sudo env SLUICE_ENGINE=podman PATH="$PATH" "$GITHUB_WORKSPACE/bin/sluice" run true 2>&1 | tail -50 || true
       - name: Acceptance tests (rootful Podman)
-        # Rootful so the sysctls apply; -E preserves PATH so bin/sluice finds podman/curl.
-        run: sudo -E env SLUICE_ENGINE=podman test/bats/bin/bats --print-output-on-failure test/acceptance.bats test/acceptance-bump.bats
+        # Rootful so the sysctls apply. NOT `sudo -E`: preserving HOME=/home/runner makes root podman
+        # read the rootless storage and fail; pass only PATH (for bin/sluice -> podman/curl) + the engine.
+        run: sudo env SLUICE_ENGINE=podman PATH="$PATH" test/bats/bin/bats --print-output-on-failure test/acceptance.bats test/acceptance-bump.bats
 
   podman-rootless:
     name: Linux, Podman (rootless, best-effort)
