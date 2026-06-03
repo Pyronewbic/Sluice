@@ -13,7 +13,7 @@ setup_file() {
   local d
   for d in node-vite node-pnpm-port node-next node-bun node-yarn node-bound \
            py-fastapi py-django py-uv py-flask py-ver py-pipenv deno ruby ruby-rails \
-           rust go java-maven java-gradle php dotnet elixir dart gmake generic poly force; do mkdir -p "$WORK/$d"; done
+           rust go java-maven java-gradle php dotnet elixir dart gmake generic poly force upd; do mkdir -p "$WORK/$d"; done
 
   printf '{"scripts":{"dev":"vite"},"devDependencies":{"vite":"^5"}}\n' > "$WORK/node-vite/package.json"; _init node-vite
   printf '{"scripts":{"dev":"vite --port 4000"},"devDependencies":{"vite":"^5"}}\n' > "$WORK/node-pnpm-port/package.json"; : > "$WORK/node-pnpm-port/pnpm-lock.yaml"; _init node-pnpm-port
@@ -46,6 +46,11 @@ setup_file() {
   _init generic
   printf '{"scripts":{"dev":"vite"},"devDependencies":{"vite":"^5"}}\n' > "$WORK/poly/package.json"; printf 'fastapi\n' > "$WORK/poly/requirements.txt"; _init poly
   printf '{"scripts":{"dev":"vite"},"devDependencies":{"vite":"^5"}}\n' > "$WORK/force/package.json"; _init force
+
+  # --update: a stale config with a manual env var + custom allowlist + uncommented hardening; refresh detection.
+  printf '{"scripts":{"dev":"vite"},"devDependencies":{"vite":"^5"}}\n' > "$WORK/upd/package.json"
+  printf 'SLUICE_EXTRA_PKGS="oldpkg"\nSLUICE_PORTS="9999"\nSLUICE_RUN_CMD="echo stale"\nSLUICE_ALLOW_DOMAINS="my.custom.host"\nSLUICE_ENV="MY_TOKEN"\nSLUICE_SECCOMP=hardened\n' > "$WORK/upd/sluice.config.sh"
+  ( cd "$WORK/upd" && SLUICE_YES=1 "$SLUICE" init --update ) >/dev/null 2>&1
 }
 
 teardown_file() { rm -rf "$WORK"; }
@@ -179,4 +184,18 @@ hasnt() { ! grep -qF -- "$2" "$WORK/$1/sluice.config.sh"; }
   assert_failure
   run bash -c "cd '$WORK/force' && '$SLUICE' init --force"
   assert_success
+}
+
+@test "update: refreshes detected fields (run cmd + port)" {
+  has upd 'SLUICE_RUN_CMD="npm install && npm run dev -- --host 0.0.0.0 --port 5173"' &&
+  has upd 'SLUICE_PORTS="5173"'
+}
+@test "update: preserves allowlist + env + uncommented hardening" {
+  has upd 'SLUICE_ALLOW_DOMAINS="my.custom.host"' &&
+  has upd 'SLUICE_ENV="MY_TOKEN"' &&
+  has upd 'SLUICE_SECCOMP=hardened'
+}
+@test "update: refuses when there is no config to update" {
+  run bash -c "d=\"\$(mktemp -d)\"; cd \"\$d\" && '$SLUICE' init --update"
+  assert_failure
 }
