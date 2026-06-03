@@ -183,7 +183,7 @@ blocked; THREAT_MODEL #9).
 checkout), and a Homebrew tap (+ a `--HEAD` dev stream) pinning the **cosign-signed release tarball**.
 `release.yml` cuts a draft GitHub release on a `v*` tag carrying a deterministic source tarball +
 `SHA256SUMS` + a **cosign keyless** signature bundle (sign-blob via GitHub OIDC; verify steps in
-`SECURITY.md`). Released through **v0.7.0**. A **signed GHCR base image**
+`SECURITY.md`). Released through **v0.8.0**. A **signed GHCR base image**
 (`publish-base.yml`, amd64+arm64, cosign keyless via GitHub OIDC, **keyless** - the splice cert is
 per-container) is opt-in via `SLUICE_BASE_IMAGE` (`SLUICE_REQUIRE_SIGNED=1` to enforce); CI also attests
 its **CycloneDX SBOM** to the signed digest, which `sluice` soft-verifies with the signature. **Supply

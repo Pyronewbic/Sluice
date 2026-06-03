@@ -37,7 +37,7 @@ else
 fi
 
 # version + help
-SLUICE_VERSION="0.7.0"   # fallback when not a git checkout
+SLUICE_VERSION="0.8.0"   # fallback when not a git checkout
 sluice_version() {       # git tag if $ROOT is our own checkout, else the baked constant
   local v
   if [ -e "$ROOT/.git" ] && v="$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null)" && [ -n "$v" ]; then
