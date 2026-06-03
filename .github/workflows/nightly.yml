@@ -26,12 +26,7 @@ jobs:
           RUNTIMES: ${{ github.event.inputs.runtimes }}   # empty on schedule -> all (the _want guard)
         # Each fixture is a self-contained @test (own box, in-container curl), so bats runs them
         # serially here; no host ports are published, so they never clash.
-        run: test/bats/bin/bats --print-output-on-failure --report-formatter junit --output "$RUNNER_TEMP/bats" test/nightly-runtimes.bats
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: junit-runtimes
-          path: ${{ runner.temp }}/bats/*.xml
+        run: test/bats/bin/bats --print-output-on-failure test/nightly-runtimes.bats
 
   # Each nightly-* suite builds + tears down its own box(es), so CI just calls it. Heavy (image builds)
   # -> nightly, not the PR gate. One matrix leg per suite so a failure points at the right feature.
@@ -50,12 +45,7 @@ jobs:
         if: matrix.suite == 'lock'
         run: curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sudo sh -s -- -b /usr/local/bin
       - name: Verify ${{ matrix.suite }}
-        run: test/bats/bin/bats --print-output-on-failure --report-formatter junit --output "$RUNNER_TEMP/bats" test/nightly-${{ matrix.suite }}.bats   # python3 (for control-plane) + docker preinstalled
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: junit-${{ matrix.suite }}
-          path: ${{ runner.temp }}/bats/*.xml
+        run: test/bats/bin/bats --print-output-on-failure test/nightly-${{ matrix.suite }}.bats   # python3 (for control-plane) + docker preinstalled
 
   # Nix builds a ~1.5GB image, so it gets its own job + a longer budget.
   nix:
@@ -66,9 +56,4 @@ jobs:
       - uses: actions/checkout@v4
         with: { submodules: recursive }
       - name: Verify the Nix example
-        run: test/bats/bin/bats --print-output-on-failure --report-formatter junit --output "$RUNNER_TEMP/bats" test/nightly-nix.bats
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: junit-nix
-          path: ${{ runner.temp }}/bats/*.xml
+        run: test/bats/bin/bats --print-output-on-failure test/nightly-nix.bats

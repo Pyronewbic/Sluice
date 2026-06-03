@@ -29,9 +29,4 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: test/bats/bin/bats --print-output-on-failure --report-formatter junit --output "$RUNNER_TEMP/bats" test/nightly-agents.bats
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: junit-agents
-          path: ${{ runner.temp }}/bats/*.xml
+        run: test/bats/bin/bats --print-output-on-failure test/nightly-agents.bats
