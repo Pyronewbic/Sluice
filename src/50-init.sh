@@ -47,7 +47,7 @@ cmd_init() {
   fi
 
   local stack="generic" detected="generic" extra_pkgs="" extra_npm="" setup="" \
-        run_cmd="bash" ports="" allow="" note="" note2=""
+        run_cmd="bash" ports="" allow="" note="" note2="" prefetch_files="" prefetch_cmd=""
 
   if [ -f "$pj" ]; then
     # node / bun
@@ -180,9 +180,23 @@ cmd_init() {
 
   elif [ -f "$dir/Cargo.toml" ]; then
     # build-base provides the C linker (cc/ld) that rustc needs to link any binary.
-    stack="rust"; detected="rust"; extra_pkgs="rust build-base"; allow="static.crates.io index.crates.io"; run_cmd="cargo run"
+    stack="rust"; detected="rust"; extra_pkgs="rust build-base"
+    if [ -f "$dir/Cargo.lock" ]; then
+      # F2: fetch crates at build (free egress) so the runtime needs no crates.io.
+      prefetch_files="Cargo.toml Cargo.lock"; prefetch_cmd="cargo fetch"; run_cmd="cargo run --offline"; allow=""
+      detected="rust (prefetched)"; note="deps are fetched at build (cargo fetch); runtime egress needs no crates.io. Edit Cargo.lock -> rebuild."
+    else
+      allow="static.crates.io index.crates.io"; run_cmd="cargo run"
+    fi
   elif [ -f "$dir/go.mod" ]; then
-    stack="go"; detected="go"; extra_pkgs="go"; allow="proxy.golang.org sum.golang.org"; run_cmd="go run ."
+    stack="go"; detected="go"; extra_pkgs="go"
+    if [ -f "$dir/go.sum" ]; then
+      # F2: download modules at build (free egress) so the runtime needs no go proxy.
+      prefetch_files="go.mod go.sum"; prefetch_cmd="go mod download"; run_cmd="GOPROXY=off go run ."; allow=""
+      detected="go (prefetched)"; note="deps are fetched at build (go mod download); runtime egress needs no go proxy. Edit go.sum -> rebuild."
+    else
+      allow="proxy.golang.org sum.golang.org"; run_cmd="go run ."
+    fi
 
   elif [ -f "$dir/pom.xml" ] || [ -f "$dir/build.gradle" ] || [ -f "$dir/build.gradle.kts" ]; then
     # java/kotlin (best-effort): JDK + build tool; Spring Boot gets a server run cmd + port.
@@ -277,6 +291,8 @@ cmd_init() {
     [ -n "$extra_pkgs" ] && echo "SLUICE_EXTRA_PKGS=$(_init_q "$extra_pkgs")"
     [ -n "$extra_npm" ]  && echo "SLUICE_EXTRA_NPM=$(_init_q "$extra_npm")"
     [ -n "$setup" ]      && echo "SLUICE_SETUP_CMDS=$(_init_q "$setup")   # build-time, free egress, before the firewall"
+    [ -n "$prefetch_files" ] && echo "SLUICE_PREFETCH_FILES=$(_init_q "$prefetch_files")   # manifests copied into the build for the prefetch"
+    [ -n "$prefetch_cmd" ]   && echo "SLUICE_PREFETCH_CMD=$(_init_q "$prefetch_cmd")   # fetch deps at build (free egress) so runtime egress can drop the registry"
     echo "SLUICE_PORTS=$(_init_q "$ports")            # ports to publish (the app MUST bind 0.0.0.0)"
     echo "SLUICE_RUN_CMD=$(_init_q "$run_cmd")"
     echo "SLUICE_ALLOW_DOMAINS=$(_init_q "$allow")    # runtime egress hosts (or run 'sluice learn')"

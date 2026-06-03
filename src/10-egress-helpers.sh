@@ -40,7 +40,8 @@ _collapsible() {
 # (e.g. `sluice learn`) needs no rebuild.
 config_hash() {
   { printf 'base=%s\n' "${SLUICE_BASE_IMAGE:-}"; grep -vE '^[[:space:]]*SLUICE_ALLOW_DOMAINS=' "$PROJECT_CONFIG"; \
-    find "$CORE" -type f | LC_ALL=C sort | while read -r f; do cat "$f"; done; } \
+    find "$CORE" -type f | LC_ALL=C sort | while read -r f; do cat "$f"; done; \
+    for f in ${SLUICE_PREFETCH_FILES:-}; do [ -f "$PROJECT_DIR/$f" ] && cat "$PROJECT_DIR/$f"; done; } \
     | shasum | awk '{print $1}' | cut -c1-12
 }
 

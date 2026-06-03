@@ -13,7 +13,7 @@ setup_file() {
   local d
   for d in node-vite node-pnpm-port node-next node-bun node-yarn node-bound \
            py-fastapi py-django py-uv py-flask py-ver py-pipenv deno ruby ruby-rails \
-           rust go java-maven java-gradle php dotnet elixir dart gmake generic poly force upd; do mkdir -p "$WORK/$d"; done
+           rust go rust-lock go-lock java-maven java-gradle php dotnet elixir dart gmake generic poly force upd; do mkdir -p "$WORK/$d"; done
 
   printf '{"scripts":{"dev":"vite"},"devDependencies":{"vite":"^5"}}\n' > "$WORK/node-vite/package.json"; _init node-vite
   printf '{"scripts":{"dev":"vite --port 4000"},"devDependencies":{"vite":"^5"}}\n' > "$WORK/node-pnpm-port/package.json"; : > "$WORK/node-pnpm-port/pnpm-lock.yaml"; _init node-pnpm-port
@@ -34,6 +34,8 @@ setup_file() {
   printf 'source "https://rubygems.org"\ngem "rails", "~> 7"\n' > "$WORK/ruby-rails/Gemfile"; _init ruby-rails
   printf '[package]\nname="x"\n' > "$WORK/rust/Cargo.toml"; _init rust
   printf 'module x\ngo 1.22\n' > "$WORK/go/go.mod"; _init go
+  printf '[package]\nname="x"\n' > "$WORK/rust-lock/Cargo.toml"; : > "$WORK/rust-lock/Cargo.lock"; _init rust-lock
+  printf 'module x\ngo 1.22\n' > "$WORK/go-lock/go.mod"; : > "$WORK/go-lock/go.sum"; _init go-lock
 
   printf '<project><dependencies><dependency><artifactId>spring-boot-starter-web</artifactId></dependency></dependencies></project>\n' > "$WORK/java-maven/pom.xml"; _init java-maven
   printf 'plugins { id "application" }\n' > "$WORK/java-gradle/build.gradle"; _init java-gradle
@@ -127,6 +129,16 @@ hasnt() { ! grep -qF -- "$2" "$WORK/$1/sluice.config.sh"; }
 @test "go: apk + run cmd" {
   has go 'SLUICE_EXTRA_PKGS="go"' &&
   has go 'SLUICE_RUN_CMD="go run ."'
+}
+@test "rust+lock: F2 prefetch (cargo fetch at build, offline run, no crates.io)" {
+  has rust-lock 'SLUICE_PREFETCH_CMD="cargo fetch"' &&
+  has rust-lock 'SLUICE_RUN_CMD="cargo run --offline"' &&
+  has rust-lock 'SLUICE_ALLOW_DOMAINS=""'
+}
+@test "go+lock: F2 prefetch (go mod download at build, GOPROXY=off run, no go proxy)" {
+  has go-lock 'SLUICE_PREFETCH_FILES="go.mod go.sum"' &&
+  has go-lock 'SLUICE_RUN_CMD="GOPROXY=off go run ."' &&
+  has go-lock 'SLUICE_ALLOW_DOMAINS=""'
 }
 
 @test "java/maven+spring: jdk+maven pkgs, spring-boot run, port" {

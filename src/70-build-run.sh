@@ -33,6 +33,14 @@ build() {
   local tmp; tmp="$(mktemp -d)"
   cp -R "$CORE"/. "$tmp"/
   cp "$PROJECT_CONFIG" "$tmp/sluice.config.sh"
+  # F2 dep prefetch: drop the declared manifests into ./prefetch so the project stage can fetch deps
+  # at build (free egress) into a $HOME cache the runtime mount won't shadow. Always present (a .keep
+  # for non-prefetch builds) so the Dockerfile COPY never fails on a missing dir.
+  mkdir -p "$tmp/prefetch"; : > "$tmp/prefetch/.keep"
+  local _pf
+  for _pf in ${SLUICE_PREFETCH_FILES:-}; do
+    [ -f "$PROJECT_DIR/$_pf" ] && cp "$PROJECT_DIR/$_pf" "$tmp/prefetch/" 2>/dev/null || true
+  done
   # Self-describing labels (read by `sluice ls`; not part of config_hash, so no spurious rebuild).
   local args=(--label "sluice.confighash=$(config_hash)"
     --label "sluice.project=$PROJECT_DIR"

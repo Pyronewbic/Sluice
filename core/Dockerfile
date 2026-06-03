@@ -81,5 +81,12 @@ USER sluice
 WORKDIR /home/sluice
 RUN . /usr/local/share/sluice.config.sh \
     && if [ -n "${SLUICE_SETUP_CMDS:-}" ]; then sh -eux -c "$SLUICE_SETUP_CMDS"; fi
+
+# --- SLUICE_PREFETCH_CMD: fetch the project's deps at build (free egress) into a $HOME cache the
+#     runtime mount won't shadow, so the runtime allowlist can drop the package registry (F2). The
+#     manifests come from build()'s ./prefetch; runs as sluice, after SETUP_CMDS (so e.g. bundler exists). ---
+COPY --chown=sluice:sluice prefetch/ /home/sluice/.sluice-prefetch/
+RUN . /usr/local/share/sluice.config.sh \
+    && if [ -n "${SLUICE_PREFETCH_CMD:-}" ]; then cd /home/sluice/.sluice-prefetch && sh -eux -c "$SLUICE_PREFETCH_CMD"; fi
 USER root
 WORKDIR /
