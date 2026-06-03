@@ -31,9 +31,9 @@ fi
 # Parallel stderr-gated set: lines printed to >&2 use E_* (not C_*) so color tracks fd 2's TTY - no
 # escape leak into a redirected stderr, and color still shows when only stderr is a terminal.
 if [ -t 2 ] && [ -z "${NO_COLOR:-}" ]; then
-  E_GRN=$'\033[32m'; E_RED=$'\033[31m'; E_YEL=$'\033[33m'; E_DIM=$'\033[2m'; E_BLD=$'\033[1m'; E_RST=$'\033[0m'
+  E_GRN=$'\033[32m'; E_RED=$'\033[31m'; E_YEL=$'\033[33m'; E_DIM=$'\033[2m'; E_RST=$'\033[0m'
 else
-  E_GRN=''; E_RED=''; E_YEL=''; E_DIM=''; E_BLD=''; E_RST=''
+  E_GRN=''; E_RED=''; E_YEL=''; E_DIM=''; E_RST=''
 fi
 
 # version + help
@@ -763,7 +763,7 @@ cmd_doctor() {
   fi
 
   if [ -n "$eng" ] && running; then
-    local _RCPT_OFFSET="$(last_run_offset)"   # scope to last run (matches 'sluice learn'); empty -> full log
+    local _RCPT_OFFSET; _RCPT_OFFSET="$(last_run_offset)"   # scope to last run (matches 'sluice learn'); empty -> full log
     blocked="$(blocked_new 2>/dev/null || true)"
     if [ -n "$blocked" ]; then
       _doc egress "${C_RED}$(printf '%s\n' "$blocked" | grep -c .) host(s) blocked${C_RST} (last run) - run 'sluice learn' to allow:"
@@ -811,7 +811,7 @@ cmd_doctor_json() {
   fi
 
   local running_b=false blocked=""
-  if [ -n "$eng" ] && running; then running_b=true; local _RCPT_OFFSET="$(last_run_offset)"; blocked="$(blocked_new 2>/dev/null || true)"; fi
+  if [ -n "$eng" ] && running; then running_b=true; local _RCPT_OFFSET; _RCPT_OFFSET="$(last_run_offset)"; blocked="$(blocked_new 2>/dev/null || true)"; fi
 
   local nsd=0 _sd; for _sd in ${SLUICE_STATE_DIRS:-}; do nsd=$((nsd+1)); done
 
@@ -1740,7 +1740,7 @@ EOF
   fi
   "$RUNNER" exec "$container" sh -c 'cd "$1" && tar -cf - .' _ "$PROJECT_DIR" 2>/dev/null | tar -C "$PROJECT_DIR" -xf - 2>/dev/null
   "$RUNNER" exec "$container" sh -c 'cd /mnt/sluice-orig && find . -mindepth 1 | sort > /tmp/o; cd "$1" && find . -mindepth 1 | sort > /tmp/w; comm -23 /tmp/o /tmp/w' _ "$PROJECT_DIR" 2>/dev/null \
-    | while IFS= read -r p; do [ -n "$p" ] && rm -rf "$PROJECT_DIR/${p#./}" 2>/dev/null; done
+    | while IFS= read -r p; do [ -n "$p" ] && rm -rf "${PROJECT_DIR:?}/${p#./}" 2>/dev/null; done
   echo "[sluice] applied $a added, $m modified, $d deleted to $PROJECT_DIR."
 }
 
@@ -1933,6 +1933,7 @@ EOF
   "$RUNNER" rm -f "$audit_container" >/dev/null 2>&1 || true
   # Bake the names into the trap now (the local is gone by the time EXIT fires) so the ephemeral
   # container is always torn down - normal exit, die, or Ctrl-C. It never leaves audit mode.
+  # shellcheck disable=SC2064  # expand $audit_container/$RUNNER NOW: the local is gone when the trap fires
   trap "'$RUNNER' rm -f '$audit_container' >/dev/null 2>&1 || true" EXIT
 
   # Credential-stripped run args: project mount + git common dir + the proxy sysctls + SLUICE_AUDIT.

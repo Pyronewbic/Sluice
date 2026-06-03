@@ -1,0 +1,5 @@
+# shellcheck config for sluice. bin/sluice targets bash 3.2 (macOS default); core/ scripts are POSIX
+# sh sourced inside the container. Disable the dynamic-source-follow warnings (we source runtime config
+# paths shellcheck can't resolve statically); keep the rest as a gate.
+shell=bash
+disable=SC1090,SC1091
