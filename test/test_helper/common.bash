@@ -32,6 +32,16 @@ chown_back_tree() {
   "$ENG" run --rm --user root -v "$2:$2" --entrypoint chown "$1" -R "$(id -u):$(id -g)" "$2" >/dev/null 2>&1 || true
 }
 
+# nuke_tree <image> <dir>: delete a tree the box chowned to uid 1000, working under BOTH docker and
+# rootless podman. A throwaway root container rm's the contents - container-root can unlink them even
+# under rootless podman, where the box's uid-1000 files land on a host SUBUID the runner can't delete
+# directly (so a bare `rm -rf` EACCESes). The host then removes the now-empty top dir. Override the
+# entrypoint (the real one configures the firewall) so the throwaway just runs rm.
+nuke_tree() {
+  "$ENG" run --rm --user root -v "$2:$2" --entrypoint sh "$1" -c "cd '$2' && rm -rf -- ..?* .[!.]* * 2>/dev/null; true" >/dev/null 2>&1 || true
+  rm -rf "$2" 2>/dev/null || true
+}
+
 # egress_reaches <box-dir> <url>: 0 if the box reached the host (4xx still counts), with retries.
 egress_reaches() {
   local d="$1" url="$2" n=1

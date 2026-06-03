@@ -13,11 +13,10 @@ setup_file() {
 }
 
 teardown_file() {
-  "${SLUICE_ENGINE:-docker}" exec --user root sluice-empty chown -R "$(id -u):$(id -g)" "$WORK/empty" >/dev/null 2>&1 || true
   ( cd "$WORK/empty" 2>/dev/null && "$ROOT/bin/sluice" stop ) >/dev/null 2>&1 || true
-  "${SLUICE_ENGINE:-docker}" rm -f -v sluice-empty >/dev/null 2>&1 || true
-  "${SLUICE_ENGINE:-docker}" rmi -f sluice-empty >/dev/null 2>&1 || true
-  rm -rf "$WORK"
+  "$ENG" rm -f -v sluice-empty >/dev/null 2>&1 || true
+  nuke_tree sluice-empty "$WORK"   # rootless-podman-safe (the box chowned the mount to a host subuid)
+  "$ENG" rmi -f sluice-empty >/dev/null 2>&1 || true
 }
 
 @test "empty box builds" {
