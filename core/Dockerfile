@@ -48,7 +48,8 @@ COPY doh-endpoints.txt /etc/squid/doh-endpoints.txt
 COPY init-firewall.sh /usr/local/bin/init-firewall.sh
 COPY entrypoint.sh    /usr/local/bin/entrypoint.sh
 COPY smoke-test.sh    /usr/local/bin/smoke-test.sh
-RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh /usr/local/bin/smoke-test.sh
+COPY dns-allow.sh     /usr/local/bin/sluice-dns-allow
+RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh /usr/local/bin/smoke-test.sh /usr/local/bin/sluice-dns-allow
 
 # Starts as root (entrypoint configures iptables, then idles); sessions exec in as sluice.
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

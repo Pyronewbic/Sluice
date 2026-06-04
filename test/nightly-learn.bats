@@ -73,3 +73,9 @@ teardown_file() {
   local code; code="$(cat "$WORK/applycode" 2>/dev/null)"
   [ -n "$code" ] && [ "$code" != 000 ]
 }
+@test "learn/enforce: --apply hot-reloads DNS (pypi.org resolves, no rebuild)" {
+  # Resolution is allowlist-scoped, so pypi.org only resolves if --apply refreshed the DNS
+  # servers-file too (not just squid). Isolates the DNS-reload layer from the reachability check above.
+  run bash -c "'$ENG' exec --user sluice sluice-learntest sh -c 'dig +short +time=4 +tries=2 A pypi.org 2>/dev/null | grep -E \"^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+\$\"'"
+  assert_output --regexp '[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+'
+}

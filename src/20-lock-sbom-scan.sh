@@ -3,9 +3,17 @@ cmd_egress() {
   running || die "no running sandbox. Start it ('sluice'), exercise it, then run 'sluice egress'."
   rows="$(egress_rows 2>/dev/null || true)"
   TAB="$(printf '\t')"
+  # SLUICE_EGRESS_MAX_BYTES: a volume budget on what LEFT the box (tx to reached hosts). Over the cap,
+  # this command exits non-zero so CI can gate it - bounds how much can be laundered through an
+  # allowed host. Unset -> no gate (always exit 0, unchanged).
+  local cap="${SLUICE_EGRESS_MAX_BYTES:-}" tx over=0
+  case "$cap" in *[!0-9]*) cap="";; esac   # non-numeric (or empty) -> no budget
+  tx="$(egress_tx_total 2>/dev/null || echo 0)"; case "$tx" in ''|*[!0-9]*) tx=0;; esac
+  [ -n "$cap" ] && [ "$tx" -gt "$cap" ] && over=1
   if [ "$mode" = --json ]; then
     # Back-compat host arrays + a detailed hosts array (class/requests/bytes) for the control plane.
-    local allowed blocked hosts_json="" first=1 cls host cnt byt
+    local allowed blocked hosts_json="" first=1 cls host cnt byt over_json=false
+    [ "$over" = 1 ] && over_json=true
     allowed="$(printf '%s\n' "$rows" | awk -F"$TAB" '$1=="reached"{print $2}')"
     blocked="$(printf '%s\n' "$rows" | awk -F"$TAB" '$1=="blocked"{print $2}')"
     while IFS="$TAB" read -r cls host cnt byt; do
@@ -15,21 +23,31 @@ cmd_egress() {
     done <<EOF
 $rows
 EOF
-    printf '{"box":"%s","allowed":%s,"blocked":%s,"hosts":[%s]}\n' "$(_json_esc "$container")" \
-      "$(printf '%s\n' "$allowed" | _json_arr)" "$(printf '%s\n' "$blocked" | _json_arr)" "$hosts_json"
-    return 0
+    printf '{"box":"%s","allowed":%s,"blocked":%s,"tx_bytes":%s,"budget":%s,"over_budget":%s,"hosts":[%s]}\n' \
+      "$(_json_esc "$container")" \
+      "$(printf '%s\n' "$allowed" | _json_arr)" "$(printf '%s\n' "$blocked" | _json_arr)" \
+      "$tx" "${cap:-null}" "$over_json" "$hosts_json"
+    return "$over"
   fi
   echo "${C_BLD}$container egress${C_RST}"
-  [ -n "$rows" ] || { echo "  ${C_DIM}(nothing yet - exercise the app, then re-run)${C_RST}"; return 0; }
-  # host | verdict | requests | bytes (reached): reached first (by bytes desc), then blocked.
-  printf '%s\n' "$rows" | sort -t"$TAB" -k1,1r -k4,4nr -k2,2 \
-    | awk -F"$TAB" -v grn="$C_GRN" -v red="$C_RED" -v rst="$C_RST" '
-        function human(b){ if(b<1024) return b" B"; else if(b<1048576) return sprintf("%.1f KB",b/1024); else return sprintf("%.1f MB",b/1048576) }
-        { c[NR]=$1; h[NR]=$2; n[NR]=$3; b[NR]=$4; if(length($2)>w) w=length($2) }
-        END { for(i=1;i<=NR;i++){
-                if(c[i]=="reached") printf "  %-*s  %s[reached]%s  %3d req   %s\n", w, h[i], grn, rst, n[i], human(b[i]);
-                else                printf "  %-*s  %s[blocked]%s  %3d req\n",        w, h[i], red, rst, n[i];
-              } }'
+  if [ -n "$rows" ]; then
+    # host | verdict | requests | bytes (reached): reached first (by bytes desc), then blocked.
+    printf '%s\n' "$rows" | sort -t"$TAB" -k1,1r -k4,4nr -k2,2 \
+      | awk -F"$TAB" -v grn="$C_GRN" -v red="$C_RED" -v rst="$C_RST" '
+          function human(b){ if(b<1024) return b" B"; else if(b<1048576) return sprintf("%.1f KB",b/1024); else return sprintf("%.1f MB",b/1048576) }
+          { c[NR]=$1; h[NR]=$2; n[NR]=$3; b[NR]=$4; if(length($2)>w) w=length($2) }
+          END { for(i=1;i<=NR;i++){
+                  if(c[i]=="reached") printf "  %-*s  %s[reached]%s  %3d req   %s\n", w, h[i], grn, rst, n[i], human(b[i]);
+                  else                printf "  %-*s  %s[blocked]%s  %3d req\n",        w, h[i], red, rst, n[i];
+                } }'
+  else
+    echo "  ${C_DIM}(nothing yet - exercise the app, then re-run)${C_RST}"
+  fi
+  if [ -n "$cap" ]; then
+    if [ "$over" = 1 ]; then echo "  ${C_RED}egress budget EXCEEDED${C_RST}: $(_human_bytes "$tx") sent > $(_human_bytes "$cap") cap (SLUICE_EGRESS_MAX_BYTES)"
+    else echo "  ${C_DIM}egress budget: $(_human_bytes "$tx") sent / $(_human_bytes "$cap") cap${C_RST}"; fi
+  fi
+  return "$over"
 }
 
 # sluice.lock: a committable inventory of the built image. base ref + every apk

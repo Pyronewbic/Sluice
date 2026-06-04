@@ -67,8 +67,9 @@ SLUICE_BASE_IMAGE=""
 # listed or the proxy blocks it (sluice flags the host at exit; 'sluice learn' to allow).
 SLUICE_ALLOW_DOMAINS=""
 
-# Fixed IPs/CIDRs for NON-HTTP services (e.g. a database) - direct egress on any port,
-# bypassing the hostname proxy. Space-separated. Keep minimal. e.g. "203.0.113.7/32"
+# Fixed IPs/CIDRs for NON-HTTP services (e.g. a database) - direct egress, bypassing the hostname
+# proxy. Space-separated; scope each to one port with ip:port[/proto] (a bare ip/cidr opens EVERY
+# port). Keep minimal. e.g. "10.0.0.5:5432" (Postgres) "10.0.0.6:6379/tcp" (Redis) "203.0.113.7/32"
 SLUICE_ALLOW_IPS=""
 
 # Central egress policy: a URL (http/https/file) returning a plain-text allowlist (one host per
@@ -90,6 +91,21 @@ SLUICE_BUMP_DOMAINS=""
 # pattern so it scopes to one bumped host. Space/newline-separated. Empty = allow each bumped host
 # wholesale but log its full URLs. e.g. "^https?://api\.internal\.example\.com/v1/"
 SLUICE_BUMP_URLS=""
+
+# DNS resolution is scoped to the allowlist by default: a name the box isn't allowed to reach won't
+# resolve (closes DNS-label exfil to an off-allowlist nameserver). Set =1 to restore forward-all
+# resolution (weakens the guarantee) - e.g. if a tool resolves names it never connects to.
+SLUICE_DNS_OPEN=""
+
+# Laundering-host gate: an allowlisted host an attacker can also WRITE to (S3, gists, pastebins, LLM
+# APIs) can be used to leak data even though it's allowlisted (we splice, never decrypt). sluice warns
+# at session start. =1 acknowledges + silences it; SLUICE_STRICT_LAUNDERING=1 refuses to run instead.
+SLUICE_LAUNDERING_OK=""
+SLUICE_STRICT_LAUNDERING=""
+
+# Egress volume budget (bytes SENT OUT this run). Over it, 'sluice egress' exits non-zero (gate CI)
+# and the run's receipt warns - bounds how much can be laundered through an allowed host. Empty = off.
+SLUICE_EGRESS_MAX_BYTES=""
 
 # --- hardening (opt-in; off by default) -----------------------------------------
 

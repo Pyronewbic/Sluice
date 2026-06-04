@@ -78,7 +78,7 @@ cmd_doctor() {
     if [ "${SLUICE_ALLOW_DOH:-}" = 1 ]; then _doc "" "${C_YEL}note${C_RST}: DoH resolver(s) allowed AND SLUICE_ALLOW_DOH=1 -${_doh} - DNS-over-HTTPS exfil is possible"
     else _doc "" "${C_DIM}note: DoH resolver(s) on the allowlist -${_doh} - still BLOCKED (DoH exfil channel); SLUICE_ALLOW_DOH=1 to permit${C_RST}"; fi
   fi
-  [ -n "${SLUICE_ALLOW_IPS:-}" ] && _doc "" "ips:  $SLUICE_ALLOW_IPS ${C_DIM}(direct egress, any port, no hostname filter)${C_RST}"
+  [ -n "${SLUICE_ALLOW_IPS:-}" ] && _doc "" "ips:  $SLUICE_ALLOW_IPS ${C_DIM}(direct egress, bypasses the hostname filter; bare ip = any port, ip:port scopes it)${C_RST}"
   [ -n "${SLUICE_POLICY_URL:-}" ] && _doc policy "$SLUICE_POLICY_URL"
 
   if [ -n "${SLUICE_ENV:-}" ]; then

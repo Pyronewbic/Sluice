@@ -154,6 +154,25 @@ warn_auth_unset() {
 }
 case "${1:-run-default}" in run-default) warn_auth_unset ;; esac
 
+# Laundering-host gate: an allowlisted host an attacker can also write to (S3, gists, pastebins, LLM
+# APIs) lets data leak out even though it's allowlisted - we splice, never decrypt, so a request body
+# to an allowed host isn't inspected (THREAT_MODEL "allowed-host laundering"). Nudge at session start;
+# SLUICE_LAUNDERING_OK=1 acknowledges + silences, SLUICE_STRICT_LAUNDERING=1 refuses to run.
+warn_laundering() {
+  local risky="" h
+  for h in ${SLUICE_ALLOW_DOMAINS:-}; do laundering_host "$h" && risky="$risky $h"; done
+  [ -n "$risky" ] || return 0
+  [ "${SLUICE_LAUNDERING_OK:-}" = 1 ] && return 0
+  if [ "${SLUICE_STRICT_LAUNDERING:-}" = 1 ]; then
+    echo "${E_RED}[sluice] refusing:${E_RST} allowlisted host(s) an attacker can also write to -${risky}" >&2
+    echo "         data can be laundered out through them (we splice, not decrypt). Drop them, or set SLUICE_LAUNDERING_OK=1 to allow." >&2
+    exit 1
+  fi
+  echo "${E_YEL}[sluice] note:${E_RST} allowlisted host(s) an attacker can also write to -${risky} - data can be laundered out (splice, not decrypt)." >&2
+  echo "         keep the allowlist tight; SLUICE_LAUNDERING_OK=1 to acknowledge (silences this), SLUICE_STRICT_LAUNDERING=1 to refuse." >&2
+}
+case "${1:-run-default}" in run-default|run|shell) warn_laundering ;; esac
+
 # build: assemble a temp context (core + this project's config) and build
 # Verify a published base image's cosign signature (keyless/OIDC). Soft by default: warn if
 # cosign is absent or the image is unsigned; SLUICE_REQUIRE_SIGNED=1 makes either case fatal.

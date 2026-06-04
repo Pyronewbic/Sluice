@@ -30,6 +30,38 @@ show_egress_receipt() {
       }
       if(nb==0) printf "  %sall egress was allowlisted%s\n", grn, rst;
     }' >&2
+
+  # Persist a durable receipt to the state dir (host-side, outside the box the agent can reach) so the
+  # run's egress is auditable after the fact: hosts reached/blocked + bytes, a network SBOM for the
+  # session. JSON is the artifact; `sluice egress` is the live human view.
+  local _dir _hj="" _first=1 _cls _host _cnt _byt _reached _blocked _tot
+  _dir="${XDG_STATE_HOME:-$HOME/.local/state}/sluice/$slug"
+  if mkdir -p "$_dir" 2>/dev/null; then
+    while IFS="$TAB" read -r _cls _host _cnt _byt; do
+      [ -n "$_host" ] || continue
+      [ "$_first" = 1 ] && _first=0 || _hj="$_hj,"
+      _hj="$_hj{\"host\":\"$(_json_esc "$_host")\",\"class\":\"$_cls\",\"requests\":$_cnt,\"bytes\":$_byt}"
+    done <<EOF
+$rows
+EOF
+    _reached="$(printf '%s\n' "$rows" | awk -F"$TAB" '$1=="reached"' | grep -c . || true)"
+    _blocked="$(printf '%s\n' "$rows" | awk -F"$TAB" '$1=="blocked"' | grep -c . || true)"
+    _tot="$(printf '%s\n' "$rows" | awk -F"$TAB" '{t+=$4} END{print t+0}')"
+    printf '{"box":"%s","generated":"%s","confighash":"%s","allowlist":%s,"totals":{"reached":%s,"blocked":%s,"bytes":%s},"hosts":[%s]}\n' \
+      "$(_json_esc "$container")" "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" "$(config_hash 2>/dev/null || true)" \
+      "$(printf '%s\n' $(allowed_domains) | _json_arr)" "${_reached:-0}" "${_blocked:-0}" "$_tot" "$_hj" \
+      > "$_dir/egress-receipt.json" 2>/dev/null || true
+  fi
+
+  # SLUICE_EGRESS_MAX_BYTES: loud warning when this run sent more than the cap (bounds laundering
+  # through an allowed host). `sluice egress` is the CI gate (exits non-zero); the receipt just nudges.
+  case "${SLUICE_EGRESS_MAX_BYTES:-}" in
+    ''|*[!0-9]*) ;;
+    *) local _tx; _tx="$(egress_tx_total 2>/dev/null || echo 0)"; case "$_tx" in ''|*[!0-9]*) _tx=0;; esac
+       [ "$_tx" -gt "$SLUICE_EGRESS_MAX_BYTES" ] && \
+         printf '%s[sluice] egress budget exceeded:%s %s sent > %s cap - `sluice egress` will fail CI.\n' \
+           "$red" "$rst" "$(_human_bytes "$_tx")" "$(_human_bytes "$SLUICE_EGRESS_MAX_BYTES")" >&2 ;;
+  esac
 }
 
 # Write/replace the SLUICE_ALLOW_DOMAINS line in the project config (interactive + --apply share this).
@@ -53,12 +85,14 @@ merge_allow() {
 
 # Append entries to the box's squid allowlist + SIGHUP squid (reconfigure: re-reads the acl files) so
 # picks go live with no rebuild. squid runs `squid -N` (no pid file, so `squid -k` can't signal it),
-# hence pkill. Non-zero if the box is down or the reload fails.
+# hence pkill. Also regenerate the DNS servers-file from the new allowlist + SIGHUP dnsmasq, so a
+# newly-allowed host resolves too (resolution is allowlist-scoped). Non-zero if the box is down or the
+# reload fails; the DNS step is best-effort (no-op on SLUICE_DNS_OPEN boxes / older images).
 reload_allowlist() {
   [ "$#" -gt 0 ] || return 0
   running || return 1
   printf '%s\n' "$@" | "$RUNNER" exec -i "$container" sh -c \
-    'cat >> /etc/squid/allowlist.txt && sort -u /etc/squid/allowlist.txt -o /etc/squid/allowlist.txt && pkill -HUP -x squid' \
+    'cat >> /etc/squid/allowlist.txt && sort -u /etc/squid/allowlist.txt -o /etc/squid/allowlist.txt && pkill -HUP -x squid && { [ -x /usr/local/bin/sluice-dns-allow ] && /usr/local/bin/sluice-dns-allow && pkill -HUP -x dnsmasq; true; }' \
     >/dev/null 2>&1
 }
 

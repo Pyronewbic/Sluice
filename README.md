@@ -247,13 +247,15 @@ The guardrail that makes running untrusted code defensible:
   proxy (squid) that allows by **Host / TLS-SNI** - spliced, never decrypted - so the
   decision is by *domain* and survives IP rotation. Only the base hosts (npm/yarn
   registries, GitHub git/release hosts) plus `SLUICE_ALLOW_DOMAINS` are reachable;
-  `SLUICE_ALLOW_IPS` adds direct egress for non-HTTP services. IPv6 and direct-IP are blocked.
-  The firewall self-tests at boot (a denied host must fail; a base host must work).
+  `SLUICE_ALLOW_IPS` adds direct egress for non-HTTP services (scope it with `ip:port`). IPv6 and
+  direct-IP are blocked, and **DNS resolves only allowlisted names** so data can't tunnel out as DNS
+  labels. The firewall self-tests at boot (a denied host must fail; a base host must work).
 - **Non-root** (uid 1000) with only `NET_ADMIN`/`NET_RAW`; no Docker-in-Docker.
 - **Filesystem isolation:** only the project dir is mounted (plus its git common dir
   when it's a worktree). The sluice can't see the rest of your machine.
 - The allowlist is **host-granular** (not per-URL); keep it tight, and avoid allowing
-  shared cloud hosts that could double as an exfil path. For a host you control,
+  shared cloud hosts that could double as an exfil path - sluice flags such a host at run, and
+  `SLUICE_EGRESS_MAX_BYTES` caps a run's egress volume. For a host you control,
   `SLUICE_BUMP_DOMAINS` opts into decrypting it for per-URL filtering (off by default;
   see [THREAT_MODEL](THREAT_MODEL.md#scoped-tls-interception-opt-in-off-by-default)).
 - **Signed core (opt-in).** Build FROM a cosign-signed base image (`SLUICE_BASE_IMAGE`)

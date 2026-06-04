@@ -137,6 +137,18 @@ _human_bytes() {
   awk -v b="${1:-0}" 'BEGIN{ if (b<1024) printf "%d B", b; else if (b<1048576) printf "%.1f KB", b/1024; else printf "%.1f MB", b/1048576 }'
 }
 
+# Total bytes the box SENT OUT to hosts it actually reached (tx=%>st, the upload/request side) - the
+# exfil-relevant volume for the SLUICE_EGRESS_MAX_BYTES budget. Blocked requests never left the proxy,
+# so they don't count. Offset-aware via _squid_log (scoped to the run for the receipt).
+egress_tx_total() {
+  _squid_log "$@" | awk '
+    { tx=0; status=$3;
+      if (status ~ /NONE_NONE/ || status ~ /TCP_DENIED/ || status ~ /\/000/) next;   # blocked: did not leave
+      for (i=1;i<=NF;i++) if ($i ~ /^tx=/) tx=substr($i,4)+0;
+      total += tx;
+    } END { print total+0 }'
+}
+
 # The proxy-log byte offset captured at the start of the last `sluice` run (written to /run by the run
 # arms). Lets `sluice learn` scope to that run instead of the whole boot; empty if no run / box rebooted.
 last_run_offset() { "$RUNNER" exec "$container" cat /run/sluice-run-offset 2>/dev/null | tr -dc 0-9; }
