@@ -45,7 +45,7 @@ CFG
   # 4d. --enforce: passes in sync, gates on drift, refuses a stale image
   ( cd "$WORK/lock" && "$SLUICE" lock ) >/dev/null 2>&1 || true
   rc=0; ( cd "$WORK/lock" && "$SLUICE" lock --enforce ) >/dev/null 2>&1 || rc=$?; echo "$rc" > "$WORK/enforce_insync.rc"
-  printf 'SLUICE_EXTRA_PKGS="ripgrep python-3.12 py3.12-pip go rust tree"\n' >> "$WORK/lock/sluice.config.sh"
+  printf 'SLUICE_EXTRA_PKGS="ripgrep python-3.12 py3.12-pip go rust tree htop"\n' >> "$WORK/lock/sluice.config.sh"   # htop is NEW (tree was already locked above) -> real drift
   ( cd "$WORK/lock" && "$SLUICE" build ) >/dev/null 2>&1 || true
   rc=0; ( cd "$WORK/lock" && "$SLUICE" lock --enforce ) >/dev/null 2>&1 || rc=$?; echo "$rc" > "$WORK/enforce_drift.rc"
   ( cd "$WORK/lock" && "$SLUICE" lock ) >/dev/null 2>&1 || true
