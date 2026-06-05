@@ -14,5 +14,6 @@ SLUICE_ENV="OPENAI_API_KEY ANTHROPIC_API_KEY"
 # Aider's chat history lives in-repo (.aider.*, already persisted via the mount); this keeps
 # its model-metadata cache across runs too. (Not .local - that's where pip --user installs it.)
 SLUICE_STATE_DIRS=".aider"
-# --yes-always auto-confirms edits/commands. Drop it for interactive.
-SLUICE_RUN_CMD='export PATH="$HOME/.local/bin:$PATH"; aider --yes-always'
+# --yes-always auto-confirms edits/commands; --no-check-update skips aider's pypi.org version ping;
+# LITELLM_LOCAL_MODEL_COST_MAP uses litellm's bundled price map (else it fetches one off-allowlist). Drop --yes-always for interactive.
+SLUICE_RUN_CMD='export PATH="$HOME/.local/bin:$PATH"; LITELLM_LOCAL_MODEL_COST_MAP=True aider --yes-always --no-check-update'
