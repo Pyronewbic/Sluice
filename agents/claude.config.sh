@@ -7,7 +7,9 @@
 # Auth: export ANTHROPIC_API_KEY (or CLAUDE_CODE_OAUTH_TOKEN) on the HOST before running -
 # it's forwarded into the box, never baked. Browser OAuth can't complete headless, use a key.
 SLUICE_EXTRA_NPM="@anthropic-ai/claude-code"
-SLUICE_ALLOW_DOMAINS="api.anthropic.com platform.claude.com claude.ai statsig.com"
+# statsig.{com,anthropic.com} are Claude Code's feature-flag/metrics hosts (flags can affect behavior,
+# so both are allowed, matching upstream init-firewall). sentry.io error reporting is left blocked.
+SLUICE_ALLOW_DOMAINS="api.anthropic.com platform.claude.com claude.ai statsig.com statsig.anthropic.com"
 SLUICE_DESC="Claude Code (Anthropic)"
 SLUICE_ENV="ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN"
 # Persist Claude Code's sessions/history/auth-cache across runs (host-side, per project).

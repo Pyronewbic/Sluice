@@ -7,6 +7,8 @@
 # Auth: export GEMINI_API_KEY (from Google AI Studio) on the HOST (forwarded, never baked).
 SLUICE_EXTRA_NPM="@google/gemini-cli"
 # API-key path only. The free "login with Google" OAuth tier needs a browser (not headless).
+# Gemini's usage-stats telemetry (Clearcut, to play.googleapis.com) is left blocked; disable it with
+# privacy.usageStatisticsEnabled=false in .gemini/settings.json to drop the per-run warning.
 SLUICE_ALLOW_DOMAINS="generativelanguage.googleapis.com"
 SLUICE_DESC="Gemini CLI (Google)"
 SLUICE_ENV="GEMINI_API_KEY GOOGLE_API_KEY"
