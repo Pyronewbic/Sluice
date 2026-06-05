@@ -92,9 +92,10 @@ SLUICE_BUMP_DOMAINS=""
 # wholesale but log its full URLs. e.g. "^https?://api\.internal\.example\.com/v1/"
 SLUICE_BUMP_URLS=""
 
-# DNS resolution is scoped to the allowlist by default: a name the box isn't allowed to reach won't
-# resolve (closes DNS-label exfil to an off-allowlist nameserver). Set =1 to restore forward-all
-# resolution (weakens the guarantee) - e.g. if a tool resolves names it never connects to.
+# DNS resolution is scoped to the allowlist by default: a non-allowlisted name resolves to a dead-end
+# sink answered locally (never forwarded), closing DNS-label exfil to an off-allowlist nameserver while
+# the blocked attempt still shows up for `sluice learn`. Set =1 to restore forward-all resolution
+# (weakens the guarantee) - e.g. if a tool resolves names it never connects to.
 SLUICE_DNS_OPEN=""
 
 # Laundering-host gate: an allowlisted host an attacker can also WRITE to (S3, gists, pastebins, LLM

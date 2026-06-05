@@ -248,8 +248,9 @@ The guardrail that makes running untrusted code defensible:
   decision is by *domain* and survives IP rotation. Only the base hosts (npm/yarn
   registries, GitHub git/release hosts) plus `SLUICE_ALLOW_DOMAINS` are reachable;
   `SLUICE_ALLOW_IPS` adds direct egress for non-HTTP services (scope it with `ip:port`). IPv6 and
-  direct-IP are blocked, and **DNS resolves only allowlisted names** so data can't tunnel out as DNS
-  labels. The firewall self-tests at boot (a denied host must fail; a base host must work).
+  direct-IP are blocked, and **DNS for a non-allowlisted name is answered locally** (a dead sink,
+  never forwarded) so data can't tunnel out as DNS labels. The firewall self-tests at boot (a denied
+  host must fail; a base host must work).
 - **Non-root** (uid 1000) with only `NET_ADMIN`/`NET_RAW`; no Docker-in-Docker.
 - **Filesystem isolation:** only the project dir is mounted (plus its git common dir
   when it's a worktree). The sluice can't see the rest of your machine.

