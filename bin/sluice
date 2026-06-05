@@ -342,7 +342,7 @@ allowed_domains() { printf '%s %s' "${SLUICE_ALLOW_DOMAINS:-}" "$(base_domains)"
 laundering_host() {
   case "$1" in
     *s3.amazonaws.com|*.s3.*.amazonaws.com|storage.googleapis.com|*.blob.core.windows.net|*.r2.cloudflarestorage.com|*.digitaloceanspaces.com) return 0 ;;
-    gist.github.com|gist.githubusercontent.com|*pastebin.com|paste.*|transfer.sh|0x0.st|file.io|*.tmpfiles.org) return 0 ;;
+    gist.github.com|gist.githubusercontent.com|raw.githubusercontent.com|*pastebin.com|paste.*|transfer.sh|0x0.st|file.io|*.tmpfiles.org) return 0 ;;
     webhook.site|*.ngrok.io|*.ngrok-free.app|hooks.slack.com|*.requestbin.com|*.pipedream.net) return 0 ;;
     api.openai.com|api.anthropic.com|generativelanguage.googleapis.com|api.cohere.ai) return 0 ;;
   esac
