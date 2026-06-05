@@ -8,7 +8,8 @@
 # never baked). The run cmd points it at DashScope's OpenAI-compatible endpoint.
 SLUICE_EXTRA_NPM="@qwen-code/qwen-code"
 # DashScope's OpenAI-compatible API. The intl endpoint is the default; for mainland China swap
-# OPENAI_BASE_URL to dashscope.aliyuncs.com (drop -intl). Both hosts are allowlisted.
+# OPENAI_BASE_URL to dashscope.aliyuncs.com (drop -intl). Both hosts are allowlisted. Qwen Code is a
+# Gemini-CLI fork; its inherited Clearcut telemetry to play.googleapis.com is left blocked.
 SLUICE_ALLOW_DOMAINS="dashscope-intl.aliyuncs.com dashscope.aliyuncs.com"
 SLUICE_DESC="Qwen Code (Alibaba)"
 SLUICE_ENV="OPENAI_API_KEY DASHSCOPE_API_KEY"

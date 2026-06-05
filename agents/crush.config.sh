@@ -7,7 +7,8 @@
 # Auth: export your provider key (ANTHROPIC_API_KEY / OPENAI_API_KEY / ...) on the HOST.
 SLUICE_EXTRA_NPM="@charmland/crush"
 # api.anthropic.com / api.openai.com cover the common providers; catwalk.charm.land is Crush's
-# model catalog. For another provider, add its host (or run `sluice learn`).
+# model catalog. For another provider, add its host (or run `sluice learn`). Crush's default PostHog
+# telemetry to data.charm.land is left blocked.
 SLUICE_ALLOW_DOMAINS="api.anthropic.com api.openai.com catwalk.charm.land"
 SLUICE_DESC="Crush (Charm)"
 SLUICE_ENV="ANTHROPIC_API_KEY OPENAI_API_KEY"
