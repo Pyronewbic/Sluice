@@ -6,7 +6,8 @@
 # still rewrite this dir and use any forwarded creds, so commit your work first.
 # Auth: export OPENAI_API_KEY on the HOST before running (forwarded, never baked).
 SLUICE_EXTRA_NPM="@openai/codex"
-# API-key path only. ChatGPT sign-in (adds auth.openai.com chatgpt.com) can't complete headless.
+# API-key path only. ChatGPT sign-in (auth.openai.com chatgpt.com) can't complete headless; Codex's
+# default telemetry to ab.chatgpt.com stays blocked too (set [otel] metrics_exporter="none" to silence).
 SLUICE_ALLOW_DOMAINS="api.openai.com"
 SLUICE_DESC="Codex CLI (OpenAI)"
 SLUICE_ENV="OPENAI_API_KEY"
