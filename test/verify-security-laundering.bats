@@ -33,6 +33,14 @@ cfg() { printf 'SLUICE_NAME="sectest-laundering"\nSLUICE_ALLOW_DOMAINS="gist.git
   refute_output --partial "refusing"
 }
 
+@test "laundering: raw.githubusercontent.com is flagged (write-capable via any repo)" {
+  printf 'SLUICE_NAME="sectest-laundering"\nSLUICE_ALLOW_DOMAINS="raw.githubusercontent.com"\nSLUICE_RUN_CMD="true"\n' > "$WORK/p/sluice.config.sh"
+  run bash -c "cd '$WORK/p' && SLUICE_ENGINE=false '$SLUICE' run true"
+  assert_output --partial "laundered"
+  assert_output --partial "raw.githubusercontent.com"
+  refute_output --partial "refusing"
+}
+
 @test "laundering: a non-laundering allowlist is silent" {
   printf 'SLUICE_NAME="sectest-laundering"\nSLUICE_ALLOW_DOMAINS="api.example.com"\nSLUICE_RUN_CMD="true"\n' > "$WORK/p/sluice.config.sh"
   run bash -c "cd '$WORK/p' && SLUICE_ENGINE=false '$SLUICE' run true"
