@@ -49,7 +49,7 @@ EOF
     _tot="$(printf '%s\n' "$rows" | awk -F"$TAB" '{t+=$4} END{print t+0}')"
     printf '{"box":"%s","generated":"%s","confighash":"%s","allowlist":%s,"totals":{"reached":%s,"blocked":%s,"bytes":%s},"hosts":[%s]}\n' \
       "$(_json_esc "$container")" "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" "$(config_hash 2>/dev/null || true)" \
-      "$(printf '%s\n' $(allowed_domains) | _json_arr)" "${_reached:-0}" "${_blocked:-0}" "$_tot" "$_hj" \
+      "$(allowed_domains | tr ' ' '\n' | _json_arr)" "${_reached:-0}" "${_blocked:-0}" "$_tot" "$_hj" \
       > "$_dir/egress-receipt.json" 2>/dev/null || true
   fi
 

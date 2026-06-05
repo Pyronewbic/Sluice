@@ -141,7 +141,7 @@ _human_bytes() {
 # exfil-relevant volume for the SLUICE_EGRESS_MAX_BYTES budget. Blocked requests never left the proxy,
 # so they don't count. Offset-aware via _squid_log (scoped to the run for the receipt).
 egress_tx_total() {
-  _squid_log "$@" | awk '
+  _squid_log | awk '
     { tx=0; status=$3;
       if (status ~ /NONE_NONE/ || status ~ /TCP_DENIED/ || status ~ /\/000/) next;   # blocked: did not leave
       for (i=1;i<=NF;i++) if ($i ~ /^tx=/) tx=substr($i,4)+0;
