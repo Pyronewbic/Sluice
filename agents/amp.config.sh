@@ -6,8 +6,9 @@
 # still rewrite this dir and use any forwarded creds, so commit your work first.
 # Auth: export AMP_API_KEY (from ampcode.com/settings) on the HOST (forwarded, never baked).
 SLUICE_EXTRA_NPM="@ampcode/cli"
-# Amp proxies models through ampcode.com; static.ampcode.com is the update/version check.
-SLUICE_ALLOW_DOMAINS="ampcode.com static.ampcode.com"
+# ampcode.com = service + installer; static.ampcode.com = binary/version updates; auth.ampcode.com =
+# auth handshake; production.ampworkers.com = the Amp client's WebSocket (all per ampcode.com/security).
+SLUICE_ALLOW_DOMAINS="ampcode.com static.ampcode.com auth.ampcode.com production.ampworkers.com"
 SLUICE_DESC="Amp (Sourcegraph)"
 SLUICE_ENV="AMP_API_KEY"
 # Persist amp's settings/auth across runs (host-side, per project).

@@ -9,7 +9,7 @@
 # the binary under ~/.local, so we symlink it onto PATH. Runs at build, pre-firewall (free egress).
 SLUICE_SETUP_CMDS='curl https://cursor.com/install -fsS | bash && mkdir -p "$HOME/.npm-global/bin" && ln -sf "$HOME/.local/bin/cursor-agent" "$HOME/.npm-global/bin/cursor-agent"'
 # api2.cursor.sh = most API; .api5.cursor.sh = agent requests + regional agent.* subdomains; authenticate/
-# authenticator/.authentication.cursor.sh = login; downloads.cursor.com = self-update. cursor.sh carries the model/agent stream (laundering surface, THREAT_MODEL #2/#4).
+# authenticator/.authentication.cursor.sh = login; downloads.cursor.com = self-update. the .api5 agent hosts carry the model/agent stream (laundering surface, THREAT_MODEL #2/#4).
 SLUICE_ALLOW_DOMAINS="cursor.com api2.cursor.sh .api5.cursor.sh authenticate.cursor.sh authenticator.cursor.sh .authentication.cursor.sh downloads.cursor.com"
 SLUICE_DESC="Cursor CLI (cursor-agent)"
 SLUICE_ENV="CURSOR_API_KEY"
