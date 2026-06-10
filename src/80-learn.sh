@@ -102,7 +102,7 @@ learn_apply() {   # $1 = newline-separated entries (hosts and/or .domains)
   apply_allowlist "$(merge_allow "$entries")"
   # shellcheck disable=SC2086
   echo "[sluice] ${C_GRN}allowing:${C_RST} $(printf '%s ' $entries | sed 's/  */ /g; s/ *$//')"
-  echo "[sluice] wrote $PROJECT_CONFIG"
+  echo "[sluice] wrote $(_tilde "$PROJECT_CONFIG")"
   # shellcheck disable=SC2086
   if reload_allowlist $entries; then
     echo "[sluice] reloaded the running box (squid reconfigure) - ${C_GRN}live now, no rebuild.${C_RST}"
