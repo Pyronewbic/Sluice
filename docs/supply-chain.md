@@ -6,9 +6,9 @@ What is in the box, and where the base came from. Knob reference:
 ## `sluice lock`: image inventory
 
 `sluice lock` builds the image if needed and writes a committable `./sluice.lock`: the base image
-ref (digest when available) plus every package the image carries - apk, global npm, pip, gem, go
-binaries, cargo installs - sorted for stable diffs. Re-locking prints the supply-chain delta since
-the last lock.
+ref (digest when available) plus every package the image carries - apk, global npm, pip (system,
+the project's `--user` site, and pipx apps), gem, go binaries, cargo installs - sorted for stable
+diffs. Re-locking prints the supply-chain delta since the last lock.
 
 ```bash
 sluice lock              # write ./sluice.lock, commit it
