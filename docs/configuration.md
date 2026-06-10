@@ -97,7 +97,9 @@ How-to and trade-offs: [hardening](hardening.md).
 - `SLUICE_READONLY_ROOT` - `=1` makes the rootfs immutable: tmpfs the ephemeral system
   paths; `/etc/squid` + `/home/sluice` become writable anonymous volumes.
 - `SLUICE_WORKSPACE` - `overlay` mounts the host repo read-only and gives the box a
-  throwaway copy; review with `sluice diff`, write back with `sluice apply`.
+  throwaway copy; review with `sluice diff`, write back with `sluice apply`. `apply` refuses
+  non-interactively unless `SLUICE_YES=1`; `SLUICE_APPLY_NO_DELETE=1` (env) writes adds and
+  modifications but never deletes a host file.
 - `SLUICE_MASK` - in-repo secret masking: space-separated project-relative globs shadowed at
   launch (empty read-only bind over a file, empty tmpfs over a dir). Patterns expand when
   the container starts - a file created later is not masked. The agent presets default to

@@ -172,6 +172,10 @@ fi
 # is untouched until `sluice apply`. The chown loop below then hands the copy to the sluice user.
 if [ "${SLUICE_WORKSPACE:-}" = overlay ] && [ -d /mnt/sluice-orig ] && [ -n "${SLUICE_WORKDIR:-}" ]; then
   cp -a /mnt/sluice-orig/. "$SLUICE_WORKDIR"/ 2>/dev/null || true
+  # Snapshot the orig file list at seed time. `sluice apply` diffs the working copy against THIS
+  # baseline to find box deletions - never the /mnt/sluice-orig bind, which is LIVE: a file the host
+  # creates mid-session would otherwise look like a box deletion and be removed from the host repo.
+  ( cd /mnt/sluice-orig && find . -mindepth 1 | sort ) > /run/sluice-orig-manifest 2>/dev/null || true
 fi
 
 # User-writable npm prefix (NPM_CONFIG_PREFIX=/home/sluice/.npm-global) for runtime installs.
