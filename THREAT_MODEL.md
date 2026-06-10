@@ -9,8 +9,9 @@ see the [README](README.md).
 sluice is **anti-exfiltration + isolation-from-your-own-machine** for code you mostly
 trust but can't fully vouch for - your coding agent, AI-generated code, a dependency
 tree. It is **not** hostile-multi-tenant isolation: it does not safely run a stranger's
-deliberately malicious code next to other tenants. That job needs a microVM
-(Firecracker) or gVisor; sluice uses a normal container (shared kernel) on purpose.
+deliberately malicious code next to other tenants. That job needs hypervisor-grade
+isolation; sluice uses a normal container (shared kernel) on purpose - `SLUICE_RUNTIME=kata`
+is the opt-in own-kernel runtime.
 
 ## Assets being protected
 
@@ -83,8 +84,12 @@ The guarantees below hold only while these do:
   endpoints** (`core/doh-endpoints.txt`) are denied *even if allowlisted* - otherwise an agent could
   tunnel exfil as DNS-over-HTTPS to an allowed resolver and bypass the SNI filter. `SLUICE_ALLOW_DOH=1`
   re-allows a DoH resolver; `SLUICE_DNS_OPEN=1` restores forward-all resolution (both weaken this).
+- **Inbound exposure of published ports** -> `SLUICE_PORTS` publishes on host loopback only
+  (`127.0.0.1`), so only host-local processes can reach the app - never the LAN; the in-box
+  firewall opens a matching inbound ACCEPT for just those ports.
 - **Reading/altering the rest of your machine** -> only the project dir (and its git
-  common dir, for worktrees) is mounted. Nothing else is visible.
+  common dir, for worktrees) is mounted. Nothing else is visible by default; `SLUICE_MOUNTS`,
+  `SLUICE_STATE_DIRS`, and `SLUICE_OVERLAY_DIRS` add only what the config author lists.
 - **Reading in-repo secrets (opt-in mask)** -> the project dir is mounted read-write,
   *including* its own `.env`/key files - "can't read your secrets" historically meant files
   *outside* the repo. `SLUICE_MASK` closes the in-repo gap: matching files get an empty
@@ -118,21 +123,12 @@ The guarantees below hold only while these do:
   *running* container is locked to the allowlist.
 - **Tampered sandbox core** -> the generic core (proxy, firewall, entrypoint, non-root user)
   can be pulled as a **cosign-signed base image** from GHCR (opt-in via `SLUICE_BASE_IMAGE`);
-  `sluice` verifies the keyless signature before building on it (`SLUICE_REQUIRE_SIGNED=1` to
-  enforce). CI also attaches a keyless **CycloneDX SBOM attestation** (in-toto) to the signed
-  digest, and `sluice` soft-verifies it alongside the signature, so a verified base carries a
-  signed inventory of what it contains. (The attested SBOM is amd64-derived; the apk/npm set is
-  arch-invariant, only the purl arch qualifier differs.) The image carries no private key (the
-  splice cert is generated per-container).
-  Your declared `SLUICE_EXTRA_PKGS` are your own layer on top - `sluice lock` records a
-  committable inventory (every apk, npm, pip, gem, go, and cargo package with its version + digest) so
-  you can review and drift-detect exactly what's installed (`sluice doctor` flags drift; `sluice lock
-  --check` gates CI on drift, `--enforce` the strict variant; `sluice lock --sbom` emits a deterministic
-  CycloneDX or SPDX SBOM (`--format`), with apk integrity hashes, for scanners). It's an audit/drift aid,
-  not a reproducibility guarantee (Wolfi apk is a rolling repo). `sluice lock --scan` runs that SBOM
-  through a **host** Grype/Trivy (never baked) and can gate on severity - advisory, though: a clean
-  result means "no *known* CVE in the scanner's DB,"
-  not proof of safety.
+  `sluice` verifies the keyless signature - and the SBOM attestation alongside it - before
+  building on it (`SLUICE_REQUIRE_SIGNED=1` to enforce). The image carries no private key (the
+  splice cert is generated per-container). Your own layer on top is covered by `sluice lock`:
+  a committable package inventory with drift detection, plus an advisory host-side CVE scan -
+  a clean scan means "no *known* CVE in the scanner's DB," not proof of safety. Full tour:
+  [docs/supply-chain.md](docs/supply-chain.md).
 
 ## What it does NOT defend against (be explicit)
 
@@ -148,7 +144,7 @@ The guarantees below hold only while these do:
 3. **Exfil through `SLUICE_ALLOW_IPS`.** Reviewed fixed IPs get *direct* egress (the escape hatch for
    non-HTTP services like a database) - bypassing the proxy, so unfiltered by hostname. Scope each
    entry to one port with `ip:port` (a bare ip/cidr opens *every* port); keep the list minimal and specific.
-4. **A squid vulnerability or a loose allowlist.** The egress policy now rests on squid +
+4. **A squid vulnerability or a loose allowlist.** The egress policy rests on squid +
    the allowlist file. A squid CVE or an over-broad `SLUICE_ALLOW_DOMAINS` is the trust anchor
    to guard - including the `.domain` wildcards `sluice learn` can write (a leading-dot entry
    matches *every* subdomain, so it's offered, never forced; prefer exact hosts when you can).
@@ -167,7 +163,8 @@ The guarantees below hold only while these do:
 8. **Persisted state on the host.** `SLUICE_STATE_DIRS` (the agent presets use it) bind-mounts
    the agent's home subdirs to `~/.local/state/sluice/<project>/` - outside the project tree and
    kept across runs. The sandboxed agent reads/writes it (its own config/sessions and any tokens
-   it caches there); treat that dir as sensitive, host-side state.
+   it caches there); treat that dir as sensitive, host-side state. `SLUICE_OVERLAY_DIRS` volumes
+   likewise persist across container recreation; `sluice rm`/`prune` removes them with the box.
 9. **`learn --audit` opens egress on purpose.** The opt-in discovery pass runs your command once
    with egress open to **all** HTTP/HTTPS hosts (incl. direct-IP on 80/443), so trusted code could
    exfiltrate over any host during that one run. It is gated precisely for this: **credential-stripped**
