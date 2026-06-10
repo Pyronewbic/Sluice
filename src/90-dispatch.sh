@@ -4,7 +4,11 @@ case "${1:-run-default}" in
   apply)   cmd_workspace_apply; exit $? ;;
   rebuild) build; start; exit 0 ;;
   stop)    "$RUNNER" rm -f -v "$container" >/dev/null 2>&1 || true; echo "[sluice] $container stopped"; exit 0 ;;
-  rm)      "$RUNNER" rm -f -v "$container" >/dev/null 2>&1 || true; "$ENGINE" rmi -f "$tag" >/dev/null 2>&1 || true; echo "[sluice] removed $container (container + image)"; exit 0 ;;
+  rm)
+    "$RUNNER" rm -f -v "$container" >/dev/null 2>&1 || true; "$ENGINE" rmi -f "$tag" >/dev/null 2>&1 || true
+    _nov="$(remove_box_volumes "$container")"   # SLUICE_OVERLAY_DIRS volumes ride the box's lifecycle
+    _ovmsg=""; [ "${_nov:-0}" -gt 0 ] && _ovmsg=" + $_nov overlay volume(s)"
+    echo "[sluice] removed $container (container + image$_ovmsg)"; exit 0 ;;
   logs)    "$RUNNER" logs -f "$container" ;;
   smoke)
     maybe_build

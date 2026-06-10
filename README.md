@@ -233,6 +233,7 @@ Everything is driven by `sluice.config.sh`. Copy [`sluice.config.example.sh`](sl
 | `SLUICE_PORTS` | TCP ports to publish (firewall opens a matching inbound rule) |
 | `SLUICE_ENV` | host env var names to forward into the session |
 | `SLUICE_MASK` | in-repo secret globs shadowed from the box (agent presets default `.env*`) |
+| `SLUICE_OVERLAY_DIRS` | project dirs given a box-local volume (e.g. `node_modules`) - host contents untouched |
 
 The rest - build-time setup, a central egress policy (`SLUICE_POLICY_URL`), scoped TLS
 interception (`SLUICE_BUMP_DOMAINS`/`SLUICE_BUMP_URLS`), persisted state, credential staging

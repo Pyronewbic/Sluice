@@ -147,3 +147,24 @@ d = json.load(sys.stdin)
 assert d['broken_symlinks'] == ['dangler'], d['broken_symlinks']
 "
 }
+
+# --- SLUICE_OVERLAY_DIRS surfacing --------------------------------------------------------------
+
+@test "doctor: lists overlay dirs" {
+  printf 'SLUICE_OVERLAY_DIRS="node_modules"\nSLUICE_RUN_CMD="bash"\n' > "$WORK/sluice.config.sh"
+  run bash -c "cd '$WORK' && '$SLUICE' doctor"
+  assert_success
+  assert_output --partial "overlays"
+  assert_output --partial "node_modules"
+}
+
+@test "doctor --json: overlay_dirs from the config" {
+  printf 'SLUICE_OVERLAY_DIRS="node_modules .venv"\nSLUICE_RUN_CMD="bash"\n' > "$WORK/sluice.config.sh"
+  run bash -c "cd '$WORK' && '$SLUICE' doctor --json 2>/dev/null"
+  assert_success
+  echo "$output" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+assert d['overlay_dirs'] == ['node_modules', '.venv'], d['overlay_dirs']
+"
+}

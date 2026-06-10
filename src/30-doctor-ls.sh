@@ -185,6 +185,8 @@ cmd_doctor() {
     _doc state "$nsd dir(s) persisted at ${XDG_STATE_HOME:-$HOME/.local/state}/sluice/$slug"
   fi
 
+  [ -n "${SLUICE_OVERLAY_DIRS:-}" ] && _doc overlays "$SLUICE_OVERLAY_DIRS ${C_DIM}(box-local volume per dir, host contents untouched; 'sluice rm' deletes)${C_RST}"
+
   [ -n "${SLUICE_PORTS:-}" ] && _doc ports "$SLUICE_PORTS ${C_DIM}(published on 127.0.0.1)${C_RST}"
   _doc allowlist "${SLUICE_ALLOW_DOMAINS:-(none beyond base)}"
   _doc "" "base: $(base_domains)"
@@ -274,14 +276,16 @@ cmd_doctor_json() {
   mask_hits="$(mask_matches 2>/dev/null | _json_arr || true)"
   mask_unm="$(unmasked_secrets 2>/dev/null | _json_arr || true)"
   links_json="$(symlinks_outside_scope 2>/dev/null | cut -f1 | _json_arr || true)"
+  local overlays_json
+  overlays_json="$(printf '%s' "${SLUICE_OVERLAY_DIRS:-}" | tr ' \t' '\n\n' | _json_arr)"
 
   # shellcheck disable=SC2086
-  printf '{"engine":"%s","daemon":%s,"config":"%s","project_dir":"%s","name":"%s","desc":"%s","image":{"tag":"%s","built":%s,"stale":%s},"lock":"%s","allowlist":%s,"base":%s,"ports":%s,"allow_ips":%s,"base_image":"%s","policy_url":"%s","state_dirs":%s,"auth":%s,"mask":{"patterns":%s,"masked":%s,"unmasked_secrets":%s},"broken_symlinks":%s,"egress":{"running":%s,"blocked":%s}}\n' \
+  printf '{"engine":"%s","daemon":%s,"config":"%s","project_dir":"%s","name":"%s","desc":"%s","image":{"tag":"%s","built":%s,"stale":%s},"lock":"%s","allowlist":%s,"base":%s,"ports":%s,"allow_ips":%s,"base_image":"%s","policy_url":"%s","state_dirs":%s,"overlay_dirs":%s,"auth":%s,"mask":{"patterns":%s,"masked":%s,"unmasked_secrets":%s},"broken_symlinks":%s,"egress":{"running":%s,"blocked":%s}}\n' \
     "$(_json_esc "$engine_ver")" "$daemon" "$(_json_esc "$PROJECT_CONFIG")" "$(_json_esc "$PROJECT_DIR")" "$(_json_esc "$tag")" "$(_json_esc "${SLUICE_DESC:-}")" \
     "$(_json_esc "$tag")" "$img_built" "$img_stale" "$lock" \
     "$(printf '%s\n' ${SLUICE_ALLOW_DOMAINS:-} | _json_arr)" "$(base_domains | tr ' ' '\n' | _json_arr)" \
     "$(printf '%s\n' ${SLUICE_PORTS:-} | _json_arr)" "$(printf '%s\n' ${SLUICE_ALLOW_IPS:-} | _json_arr)" "$(_json_esc "${SLUICE_BASE_IMAGE:-}")" \
-    "$(_json_esc "${SLUICE_POLICY_URL:-}")" "$nsd" "$auth_json" \
+    "$(_json_esc "${SLUICE_POLICY_URL:-}")" "$nsd" "$overlays_json" "$auth_json" \
     "$mask_pats" "$mask_hits" "$mask_unm" "$links_json" \
     "$running_b" "$(printf '%s\n' $blocked | _json_arr)"
 }
@@ -320,8 +324,8 @@ cmd_ls() {
 
   # Gather labels + container state into parallel arrays, applying filters as we go. (Kept as a plain
   # while-loop, NOT a $(...) capture: a case pattern's ) inside command substitution mis-parses on bash 3.2.)
-  local names=() stats=() projs=() stacks=() descs=() curs=() orphs=() allows=() ports_=() locks=() blocks=()
-  local name proj stack desc status cur orphan allowcount portslbl lock blocked
+  local names=() stats=() projs=() stacks=() descs=() curs=() orphs=() allows=() ports_=() locks=() blocks=() ovls=()
+  local name proj stack desc status cur orphan allowcount portslbl lock blocked ovl
   while IFS= read -r name; do
     [ -n "$name" ] || continue
     proj="$( "$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.project" }}' "$name" 2>/dev/null || true)"
@@ -329,11 +333,13 @@ cmd_ls() {
     desc="$( "$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.desc" }}'    "$name" 2>/dev/null || true)"
     allowcount="$("$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.allowcount" }}' "$name" 2>/dev/null || true)"
     portslbl="$(  "$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.ports" }}'      "$name" 2>/dev/null || true)"
+    ovl="$(       "$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.overlays" }}'   "$name" 2>/dev/null || true)"
     case "$proj"       in "<no value>") proj=""       ;; esac
     case "$stack"      in "<no value>") stack=""      ;; esac
     case "$desc"       in "<no value>") desc=""       ;; esac
     case "$allowcount" in "<no value>") allowcount="" ;; esac
     case "$portslbl"   in "<no value>") portslbl=""   ;; esac
+    case "$ovl"        in "<no value>") ovl=""        ;; esac
     orphan=false; [ -n "$proj" ] && [ ! -d "$proj" ] && orphan=true
     if   "$RUNNER" ps    --filter "name=$name" --filter status=running --format '{{.Names}}' 2>/dev/null | grep -qx "$name"; then status=running
     elif "$RUNNER" ps -a --filter "name=$name" --format '{{.Names}}' 2>/dev/null | grep -qx "$name"; then status=stopped
@@ -346,7 +352,7 @@ cmd_ls() {
     lock="-"; [ -n "$proj" ] && [ -f "$proj/sluice.lock" ] && lock=locked
     blocked=""; [ -n "$egress" ] && [ "$status" = running ] && blocked="$(box_blocked_count "$name")"   # opt-in: execs into the box
     names+=("$name"); stats+=("$status"); projs+=("$proj"); stacks+=("$stack"); descs+=("$desc"); curs+=("$cur"); orphs+=("$orphan")
-    allows+=("$allowcount"); ports_+=("$portslbl"); locks+=("$lock"); blocks+=("$blocked")
+    allows+=("$allowcount"); ports_+=("$portslbl"); locks+=("$lock"); blocks+=("$blocked"); ovls+=("$ovl")
   done <<EOF
 $imgs
 EOF
@@ -374,7 +380,7 @@ EOF
 $sorted
 EOF
 
-  local i j ac lk pjson bjson
+  local i j ac lk pjson ojson bjson
   if [ "$mode" = --json ]; then
     printf '['
     for j in "${!order[@]}"; do
@@ -384,13 +390,14 @@ EOF
       lk=false; [ "${locks[$i]}" = locked ] && lk=true
       # shellcheck disable=SC2086
       pjson="$(printf '%s\n' ${ports_[$i]} | _json_arr)"
+      ojson="$(printf '%s' "${ovls[$i]}" | tr ' \t' '\n\n' | _json_arr)"
       bjson=""; if [ -n "$egress" ]; then
         if [ "${stats[$i]}" = running ]; then bjson=",\"blocked\":${blocks[$i]:-0}"; else bjson=',"blocked":null'; fi
       fi
-      printf '{"name":"%s","status":"%s","stack":"%s","path":"%s","description":"%s","current":%s,"orphan":%s,"allow_count":%s,"ports":%s,"locked":%s%s}' \
+      printf '{"name":"%s","status":"%s","stack":"%s","path":"%s","description":"%s","current":%s,"orphan":%s,"allow_count":%s,"ports":%s,"overlay_dirs":%s,"locked":%s%s}' \
         "$(_json_esc "${names[$i]}")" "$(_json_esc "${stats[$i]}")" "$(_json_esc "${stacks[$i]}")" \
         "$(_json_esc "${projs[$i]}")" "$(_json_esc "${descs[$i]}")" "${curs[$i]}" "${orphs[$i]}" \
-        "$ac" "$pjson" "$lk" "$bjson"
+        "$ac" "$pjson" "$ojson" "$lk" "$bjson"
     done
     printf ']\n'; return 0
   fi

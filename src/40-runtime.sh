@@ -77,6 +77,16 @@ runtime_run() {
   if [ "${#RUNTIME_RUN_OPTS[@]}" -gt 0 ]; then "$RUNNER" run -d "${RUNTIME_RUN_OPTS[@]}" "$@"; else "$RUNNER" run -d "$@"; fi
 }
 
+# Remove the box's per-dir overlay volumes (SLUICE_OVERLAY_DIRS; labeled sluice.box=<container> at
+# creation, so no config sourcing is needed - prune and orphan rm work too). Echoes the count removed.
+remove_box_volumes() {
+  local v n=0
+  for v in $("$RUNNER" volume ls -q --filter "label=sluice.box=$1" 2>/dev/null || true); do
+    "$RUNNER" volume rm -f "$v" >/dev/null 2>&1 && n=$((n+1)) || true
+  done
+  echo "$n"
+}
+
 # Map a -b/--box <name> to a built box: accept the short slug (qwen) or the full image (sluice-qwen),
 # verify it's a real sluice box, and stash its recorded project dir for the box-aware find_config below.
 resolve_box_target() {

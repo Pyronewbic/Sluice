@@ -49,7 +49,10 @@ EOF
   elif [ "${SLUICE_YES:-}" != 1 ]; then
     echo "[sluice] non-interactive: re-run with SLUICE_YES=1 to confirm pruning."; return 0
   fi
-  for i in $imgs; do "$RUNNER" rm -f "$i" >/dev/null 2>&1 || true; "$ENGINE" rmi -f "$i" >/dev/null 2>&1 || true; done
+  for i in $imgs; do
+    "$RUNNER" rm -f "$i" >/dev/null 2>&1 || true; "$ENGINE" rmi -f "$i" >/dev/null 2>&1 || true
+    remove_box_volumes "$i" >/dev/null   # per-box SLUICE_OVERLAY_DIRS volumes go with the box
+  done
   echo "[sluice] ${C_GRN}pruned $(printf '%s\n' "$imgs" | grep -c .) box(es).${C_RST}"
 }
 if [ "${1:-}" = prune ]; then
@@ -106,7 +109,7 @@ if ! PROJECT_CONFIG="$(find_config)"; then
     container="$SLUICE_BOX_IMAGE"; tag="$SLUICE_BOX_IMAGE"
     case "${1:-run-default}" in
       stop) "$RUNNER" rm -f -v "$container" >/dev/null 2>&1 || true; echo "[sluice] $container stopped"; exit 0 ;;
-      rm)   "$RUNNER" rm -f -v "$container" >/dev/null 2>&1 || true; "$ENGINE" rmi -f "$tag" >/dev/null 2>&1 || true; echo "[sluice] removed $container (container + image)"; exit 0 ;;
+      rm)   "$RUNNER" rm -f -v "$container" >/dev/null 2>&1 || true; "$ENGINE" rmi -f "$tag" >/dev/null 2>&1 || true; remove_box_volumes "$container" >/dev/null; echo "[sluice] removed $container (container + image + overlay volumes)"; exit 0 ;;
       *)    die "box '$SLUICE_BOX_SLUG' is an orphan (project dir ${BOX_PROJECT:-?} is gone) - 'sluice -b $SLUICE_BOX_SLUG rm' to remove it" ;;
     esac
   fi
