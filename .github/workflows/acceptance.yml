@@ -78,6 +78,8 @@ jobs:
         with: { submodules: recursive }
       - name: version --json, per-command --help, parent_of, completions
         run: test/bats/bin/bats --print-output-on-failure test/verify-cli.bats
+      - name: doctor project scans (mask, symlinks, overlays) + agent scaffold
+        run: test/bats/bin/bats --print-output-on-failure test/verify-doctor-checks.bats test/verify-agent-scaffold.bats
 
   docker:
     name: Linux, Docker

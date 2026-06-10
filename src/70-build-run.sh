@@ -274,7 +274,7 @@ EOF
       opaths="$opaths $PROJECT_DIR/$od"; odirs="$odirs $od"
     done
     run_args+=(-e "SLUICE_OVERLAY_PATHS=$opaths")
-    echo "[sluice] overlay dirs (box-local volumes, host contents untouched):$odirs"
+    echo "[sluice] overlay dirs (box-local volumes, host contents untouched):$odirs" >&2
   fi
 
   # SLUICE_MASK: shadow in-repo secrets (empty ro bind / tmpfs over each match). Evaluated NOW -
@@ -282,7 +282,7 @@ EOF
   mask_build_args
   if [ "${#MASK_ARGS[@]}" -gt 0 ]; then
     run_args+=("${MASK_ARGS[@]}")
-    echo "[sluice] masking (unreadable in the box): $MASKED_PATHS"
+    echo "[sluice] masking (unreadable in the box): $MASKED_PATHS" >&2
   fi
 
   # Publish declared ports on host loopback only; init-firewall.sh opens the inbound ACCEPT.
