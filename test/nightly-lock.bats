@@ -12,6 +12,7 @@ setup_file() {
 SLUICE_EXTRA_PKGS="ripgrep python-3.12 py3.12-pip go rust"
 SLUICE_EXTRA_NPM="cowsay lodash@4.17.4"
 SLUICE_SETUP_ROOT_CMDS="pip3 install --break-system-packages --quiet requests && go install rsc.io/2fa@latest && mkdir -p /root/.cargo && printf '%s' '{\"installs\":{\"ripgrep 14.1.1 (registry+https://github.com/rust-lang/crates.io-index)\":{}},\"v\":4}' > /root/.cargo/.crates2.json"
+SLUICE_SETUP_CMDS="pip install --user --break-system-packages --quiet six"
 SLUICE_RUN_CMD="bash"
 CFG
   local rc
@@ -83,6 +84,9 @@ teardown_file() {
   grep -qE '^pip +requests ' "$WORK/lock1.txt"
   grep -qE '^go +rsc\.io/2fa ' "$WORK/lock1.txt"
   grep -qE '^cargo +ripgrep ' "$WORK/lock1.txt"
+}
+@test "lock: pip --user site is inventoried, not just system pip (B2)" {
+  grep -qE '^pip +six ' "$WORK/lock1.txt"
 }
 @test "lock --diff: read-only, exit 0 in sync" { [ "$(cat "$WORK/diff1.rc")" = 0 ]; }
 @test "lock --check --json: in_sync=true when clean" { grep -q '"in_sync":true' "$WORK/checkjson1.txt"; }
