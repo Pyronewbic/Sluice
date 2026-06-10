@@ -248,7 +248,7 @@ EOF
   mask_build_args
   if [ "${#MASK_ARGS[@]}" -gt 0 ]; then
     run_args+=("${MASK_ARGS[@]}")
-    echo "[sluice] masking (unreadable in the box): $MASKED_PATHS"
+    echo "[sluice] masking (unreadable in the box): $MASKED_PATHS" >&2
   fi
 
   echo "[sluice] starting ephemeral audit container $audit_container ..."

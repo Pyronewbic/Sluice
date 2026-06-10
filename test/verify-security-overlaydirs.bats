@@ -47,7 +47,7 @@ teardown_file() {
 @test "overlay: the volume persists across container recreation" {
   ( cd "$WORK/ovl" && "$SLUICE" stop ) >/dev/null 2>&1 || true
   run bash -c "cd '$WORK/ovl' && '$SLUICE' run cat node_modules/box-marker.txt 2>/dev/null"
-  assert_output "box-built"
+  assert_output --partial "box-built"   # --partial: the restart interleaves start lines
 }
 
 @test "overlay: the volume is labeled for this box" {
@@ -73,6 +73,7 @@ assert boxes['sluice-sectest-ovl']['overlay_dirs'] == ['node_modules'], boxes['s
 }
 
 @test "overlay: sluice rm removes the volume" {
+  chown_back_tree sluice-sectest-ovl "$WORK"   # before rm deletes the image teardown would need
   ( cd "$WORK/ovl" && "$SLUICE" rm ) >/dev/null 2>&1 || true
   run bash -c "'$ENG' volume ls -q --filter label=sluice.box=sluice-sectest-ovl"
   assert_output ""

@@ -78,6 +78,6 @@ teardown_file() {
   echo "SECRET=visible" > "$WORK/mask-off/.env"
   printf 'SLUICE_NAME="sectest-mask-off"\nSLUICE_MASK=""\nSLUICE_RUN_CMD="bash"\n' > "$WORK/mask-off/sluice.config.sh"
   run bash -c "cd '$WORK/mask-off' && '$SLUICE' run cat .env 2>/dev/null"
-  assert_output "SECRET=visible"
+  assert_output --partial "SECRET=visible"   # --partial: the first run interleaves build/start lines
   ( cd "$WORK/mask-off" 2>/dev/null && "$SLUICE" rm ) >/dev/null 2>&1 || true
 }
