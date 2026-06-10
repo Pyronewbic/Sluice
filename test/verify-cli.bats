@@ -74,3 +74,23 @@ load test_helper/common
   run zsh -n "$ROOT/completion/_sluice"
   assert_success
 }
+
+# A config found by walking up from a subdir prints an advisory naming the source (a stub docker on
+# PATH lets the run path reach the note before the real build would run).
+@test "run paths note when the config comes from a parent dir" {
+  WORK="$(mktemp -d)"; mkdir -p "$WORK/bin" "$WORK/proj/sub"
+  printf '#!/bin/sh\nexit 1\n' > "$WORK/bin/docker"; chmod +x "$WORK/bin/docker"
+  printf 'SLUICE_NAME="paritytest"\nSLUICE_RUN_CMD="true"\n' > "$WORK/proj/sluice.config.sh"
+  run bash -c "cd '$WORK/proj/sub' && PATH='$WORK/bin:$PATH' SLUICE_ENGINE=docker '$SLUICE' build 2>&1"
+  assert_output --partial "config from"
+  rm -rf "$WORK"
+}
+
+@test "no parent note from the project root itself" {
+  WORK="$(mktemp -d)"; mkdir -p "$WORK/bin" "$WORK/proj"
+  printf '#!/bin/sh\nexit 1\n' > "$WORK/bin/docker"; chmod +x "$WORK/bin/docker"
+  printf 'SLUICE_NAME="paritytest"\nSLUICE_RUN_CMD="true"\n' > "$WORK/proj/sluice.config.sh"
+  run bash -c "cd '$WORK/proj' && PATH='$WORK/bin:$PATH' SLUICE_ENGINE=docker '$SLUICE' build 2>&1"
+  refute_output --partial "config from"
+  rm -rf "$WORK"
+}

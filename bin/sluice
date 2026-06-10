@@ -1899,6 +1899,15 @@ PROJECT_DIR="$(cd "$(dirname "$PROJECT_CONFIG")" && pwd)"
 # per-project image + container names (SLUICE_NAME overrides the dir-name default)
 derive_names
 
+# Advisory: in a monorepo it's easy to build/run against a config found by walking UP from a subdir
+# without noticing. Name the source (like `-b` announces its target). Run/build paths only; skipped
+# under `-b` (PROJECT_DIR is then the targeted box's dir, already echoed).
+case "${1:-run-default}" in
+  run-default|run|shell|build|rebuild)
+    [ "$PROJECT_DIR" != "$PWD" ] && [ -z "${SLUICE_BOX_TARGET:-}" ] \
+      && echo "${E_DIM}[sluice]${E_RST} config from $(_tilde "$PROJECT_CONFIG") (box for $(_tilde "$PROJECT_DIR"))" >&2 ;;
+esac
+
 # Pre-run nudge: a config that declares auth vars (SLUICE_ENV) with none set on the host and no
 # persisted session will likely fail to authenticate (the key is forwarded from your shell, never
 # baked; headless OAuth can't complete). Warn, don't block; run-default path only.
