@@ -92,7 +92,7 @@ help_for() {
     rebuild) echo "sluice rebuild          - build + recreate the container (apply config/allowlist edits)." ;;
     update)  echo "sluice update           - rebuild from scratch (re-resolve packages) + refresh sluice.lock." ;;
     diff)    echo "sluice diff             - (SLUICE_WORKSPACE=overlay) show what the box changed vs your repo." ;;
-    apply)   echo "sluice apply            - (SLUICE_WORKSPACE=overlay) write the box's changes back onto your repo." ;;
+    apply)   echo "sluice apply            - (SLUICE_WORKSPACE=overlay) write the box's changes back onto your repo (confirms; SLUICE_YES=1 non-interactive, SLUICE_APPLY_NO_DELETE=1 keeps deleted host files)." ;;
     stop)    echo "sluice stop             - remove the project's container." ;;
     rm)      echo "sluice rm               - remove the project's container AND image." ;;
     prune)   echo "sluice prune [--orphans] - remove every sluice container + image (or only orphans); confirms." ;;

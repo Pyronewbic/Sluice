@@ -321,15 +321,22 @@ workspace_is_overlay() { [ "${SLUICE_WORKSPACE:-}" = overlay ]; }
 
 # Echo "added modified deleted" counts between the protected orig and the working copy (0 0 0 if down).
 # The working-copy path is passed as $1 (docker exec does NOT inherit the run-time -e SLUICE_WORKDIR).
+# Deletions are counted against the boot-time snapshot (/run/sluice-orig-manifest), matching what
+# `sluice apply` removes - so a file the host added mid-session never inflates the deleted count.
 workspace_counts() {
   running || { echo "0 0 0"; return 0; }
   "$RUNNER" exec "$container" sh -c '
     O=/mnt/sluice-orig; W="$1"; [ -d "$O" ] || { echo "0 0 0"; exit 0; }
     d="$(diff -rq "$O" "$W" 2>/dev/null)"
-    printf "%s %s %s\n" \
-      "$(printf "%s\n" "$d" | grep -c "^Only in $W")" \
-      "$(printf "%s\n" "$d" | grep -c " differ$")" \
-      "$(printf "%s\n" "$d" | grep -c "^Only in $O")"
+    added="$(printf "%s\n" "$d" | grep -c "^Only in $W")"
+    modified="$(printf "%s\n" "$d" | grep -c " differ$")"
+    if [ -f /run/sluice-orig-manifest ]; then
+      cd "$W" && find . -mindepth 1 | sort > /tmp/w
+      deleted="$(comm -23 /run/sluice-orig-manifest /tmp/w | grep -c .)"
+    else
+      deleted="$(printf "%s\n" "$d" | grep -c "^Only in $O")"   # pre-snapshot box: legacy live compare
+    fi
+    printf "%s %s %s\n" "$added" "$modified" "$deleted"
   ' _ "$PROJECT_DIR" 2>/dev/null || echo "0 0 0"
 }
 
@@ -348,15 +355,37 @@ cmd_workspace_apply() {
 $(workspace_counts)
 EOF
   if [ "$((a + m + d))" -eq 0 ]; then echo "[sluice] working copy matches the repo - nothing to apply"; return 0; fi
+  # apply WRITES to the host repo - confirm interactively, and refuse non-interactively unless
+  # SLUICE_YES=1 (matching 'sluice prune'). The old code fell through and applied on any non-tty.
   if [ -t 0 ] && [ -t 1 ] && [ "${SLUICE_YES:-}" != 1 ]; then
     printf '[sluice] write %s added, %s modified, %s deleted to %s? [y/N] ' "$a" "$m" "$d" "$PROJECT_DIR"
     local ans; read -r ans || ans=n
     case "$ans" in [yY]|[yY][eE][sS]) ;; *) echo "[sluice] not applied."; return 0 ;; esac
+  elif [ "${SLUICE_YES:-}" != 1 ]; then
+    echo "[sluice] non-interactive: re-run with SLUICE_YES=1 to write these changes to $PROJECT_DIR."
+    return 0
   fi
-  "$RUNNER" exec "$container" sh -c 'cd "$1" && tar -cf - .' _ "$PROJECT_DIR" 2>/dev/null | tar -C "$PROJECT_DIR" -xf - 2>/dev/null
-  "$RUNNER" exec "$container" sh -c 'cd /mnt/sluice-orig && find . -mindepth 1 | sort > /tmp/o; cd "$1" && find . -mindepth 1 | sort > /tmp/w; comm -23 /tmp/o /tmp/w' _ "$PROJECT_DIR" 2>/dev/null \
-    | while IFS= read -r p; do [ -n "$p" ] && rm -rf "${PROJECT_DIR:?}/${p#./}" 2>/dev/null; done
-  echo "[sluice] applied $a added, $m modified, $d deleted to $PROJECT_DIR."
+  # Adds + modifications: tar the working copy over the host repo. Surface failures (no 2>/dev/null,
+  # check the pipe status) instead of printing a false 'applied'.
+  if ! "$RUNNER" exec "$container" sh -c 'cd "$1" && tar -cf - .' _ "$PROJECT_DIR" | tar -C "$PROJECT_DIR" -xf -; then
+    die "apply failed writing to $PROJECT_DIR (check permissions and free space; the host repo may be partially updated)"
+  fi
+  # Deletions: remove host files the box deleted, against the BOOT-TIME snapshot (not the live ro
+  # mount), so a file the host created mid-session is never mistaken for a box deletion (B4).
+  # SLUICE_APPLY_NO_DELETE=1 keeps them; a box built before the snapshot existed fails safe.
+  local applied_del="$d"
+  if [ "$d" -eq 0 ]; then :
+  elif [ "${SLUICE_APPLY_NO_DELETE:-}" = 1 ]; then
+    echo "[sluice] ${E_YEL}SLUICE_APPLY_NO_DELETE=1${E_RST} - keeping the $d host file(s) the box deleted." >&2
+    applied_del=0
+  elif "$RUNNER" exec "$container" sh -c 'test -f /run/sluice-orig-manifest' 2>/dev/null; then
+    "$RUNNER" exec "$container" sh -c 'cd "$1" && find . -mindepth 1 | sort > /tmp/w; comm -23 /run/sluice-orig-manifest /tmp/w' _ "$PROJECT_DIR" 2>/dev/null \
+      | while IFS= read -r p; do [ -n "$p" ] && rm -rf "${PROJECT_DIR:?}/${p#./}" 2>/dev/null; done
+  else
+    echo "[sluice] ${E_YEL}note:${E_RST} this box predates the apply-safety snapshot - skipping the $d deletion(s); 'sluice rebuild' then re-apply to propagate them." >&2
+    applied_del=0
+  fi
+  echo "[sluice] applied $a added, $m modified, $applied_del deleted to $PROJECT_DIR."
 }
 
 # After a run-default session, print an egress receipt: hosts the box reached (hit counts, most-hit

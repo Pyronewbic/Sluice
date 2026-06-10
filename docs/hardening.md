@@ -52,8 +52,14 @@ back from the host:
 
 ```bash
 sluice diff    # unified diff: working copy vs the protected original (.git excluded)
-sluice apply   # write adds/mods/deletes back to the host repo (asks first; SLUICE_YES=1 skips)
+sluice apply   # write adds/mods/deletes back to the host repo
 ```
+
+`apply` confirms interactively and **refuses non-interactively** unless `SLUICE_YES=1` (it writes to
+your repo, so it never applies unprompted). Deletions are computed against the repo state captured
+when the box started, not the live mount, so a file you create on the host mid-session is never
+mistaken for a box deletion. `SLUICE_APPLY_NO_DELETE=1` writes adds and modifications but leaves the
+host files the box deleted in place. A write failure aborts loudly rather than reporting success.
 
 After a session sluice prints the changeset counts as a nudge. Cost: the git common dir is not
 mounted (an rw mount would bypass the protection), so a git worktree can't resolve refs in the
