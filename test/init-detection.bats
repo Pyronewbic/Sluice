@@ -13,7 +13,7 @@ setup_file() {
   local d
   for d in node-vite node-pnpm-port node-next node-bun node-yarn node-bound \
            py-fastapi py-django py-uv py-flask py-ver py-pipenv deno ruby ruby-rails \
-           rust go rust-lock go-lock ruby-lock java-maven java-gradle php dotnet elixir dart gmake generic poly force upd; do mkdir -p "$WORK/$d"; done
+           rust go rust-lock go-lock ruby-lock java-maven java-gradle php dotnet elixir dart gmake generic poly force upd upd-prefetch node-noscript; do mkdir -p "$WORK/$d"; done
 
   printf '{"scripts":{"dev":"vite"},"devDependencies":{"vite":"^5"}}\n' > "$WORK/node-vite/package.json"; _init node-vite
   printf '{"scripts":{"dev":"vite --port 4000"},"devDependencies":{"vite":"^5"}}\n' > "$WORK/node-pnpm-port/package.json"; : > "$WORK/node-pnpm-port/pnpm-lock.yaml"; _init node-pnpm-port
@@ -54,6 +54,15 @@ setup_file() {
   printf '{"scripts":{"dev":"vite"},"devDependencies":{"vite":"^5"}}\n' > "$WORK/upd/package.json"
   printf 'SLUICE_EXTRA_PKGS="oldpkg"\nSLUICE_PORTS="9999"\nSLUICE_RUN_CMD="echo stale"\nSLUICE_ALLOW_DOMAINS="my.custom.host"\nSLUICE_ENV="MY_TOKEN"\nSLUICE_SECCOMP=hardened\n' > "$WORK/upd/sluice.config.sh"
   ( cd "$WORK/upd" && SLUICE_YES=1 "$SLUICE" init --update ) >/dev/null 2>&1
+
+  # --update must not duplicate init-managed PREFETCH lines on each run (B1): init, then update x2.
+  printf 'module x\ngo 1.22\n' > "$WORK/upd-prefetch/go.mod"; : > "$WORK/upd-prefetch/go.sum"
+  ( cd "$WORK/upd-prefetch" && "$SLUICE" init ) >/dev/null 2>&1
+  ( cd "$WORK/upd-prefetch" && SLUICE_YES=1 "$SLUICE" init --update ) >/dev/null 2>&1
+  ( cd "$WORK/upd-prefetch" && SLUICE_YES=1 "$SLUICE" init --update ) >/dev/null 2>&1
+
+  # node with no dev/start/serve script: run cmd is a guess, so a NOTE must say so (B7).
+  printf '{"name":"x","dependencies":{"express":"^4"}}\n' > "$WORK/node-noscript/package.json"; _init node-noscript
 }
 
 teardown_file() { rm -rf "$WORK"; }
@@ -221,4 +230,14 @@ hasnt() { ! grep -qF -- "$2" "$WORK/$1/sluice.config.sh"; }
 @test "update: refuses when there is no config to update" {
   run bash -c "d=\"\$(mktemp -d)\"; cd \"\$d\" && '$SLUICE' init --update"
   assert_failure
+}
+@test "update: PREFETCH lines don't duplicate across repeated --update (B1)" {
+  run grep -c '^SLUICE_PREFETCH_FILES=' "$WORK/upd-prefetch/sluice.config.sh"
+  assert_output "1"
+  run grep -c '^SLUICE_PREFETCH_CMD=' "$WORK/upd-prefetch/sluice.config.sh"
+  assert_output "1"
+}
+@test "node: no dev/start script gets a NOTE about the guessed run cmd (B7)" {
+  has node-noscript '# NOTE:' &&
+  has node-noscript 'no dev/start/serve script'
 }
