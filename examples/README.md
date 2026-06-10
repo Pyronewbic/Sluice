@@ -3,76 +3,68 @@
 Drop-in `sluice.config.sh` presets. Copy one into a project, run `sluice` - and it's
 non-root, sees only that directory, and can only reach the hosts the preset allows.
 
-Each demo below is self-contained (no repo of your own needed) and shows a **different**
-slice of what sluice does - read the "shows" column to pick one.
+Four demos live here, each self-contained (no repo of your own needed) - the "shows" column says which slice of sluice it demonstrates.
 
 | preset | shows | copy & run |
 |---|---|---|
-| [firewall](firewall.config.sh) | the **egress firewall as a security control** - a fetch to an allowlisted host succeeds, an exfil attempt to a non-allowlisted host (and a raw IP) is **blocked**; surfaced by `sluice doctor`. Runs to completion, no server. | `mkdir d && cp examples/firewall.config.sh d/sluice.config.sh && cd d && sluice` |
+| [firewall](firewall.config.sh) | the **egress firewall as a security control** - a fetch to an allowlisted host succeeds, an exfil attempt to a non-allowlisted host (and a raw IP) is **blocked**. Runs to completion, no server. | `mkdir d && cp examples/firewall.config.sh d/sluice.config.sh && cd d && sluice` |
 | [jupyter](jupyter.config.sh) | **serving a web app** (Python/pip, JupyterLab on `:8888`) that needs **no** runtime egress at all - the firewall stays fully locked while it serves. | `mkdir d && cp examples/jupyter.config.sh d/sluice.config.sh && cd d && sluice` |
-| [nix](nix.config.sh) | **Nix composed with sluice**: a reproducible, pinned toolchain fetched + baked at **build** time, then run at **runtime** with the firewall fully locked (no egress). Heavy (~1.5GB image). | `mkdir d && cp examples/nix.config.sh d/sluice.config.sh && cd d && sluice` |
+| [nix](nix.config.sh) | **Nix composed with sluice**: a reproducible, pinned toolchain fetched + baked at **build** time, then run with the firewall fully locked (no egress). Heavy (~1.5GB image). | `mkdir d && cp examples/nix.config.sh d/sluice.config.sh && cd d && sluice` |
 | [database](database.config.sh) | the **`SLUICE_ALLOW_IPS` escape hatch** for a non-HTTP service: a reviewed fixed IP gets direct egress on any port (Postgres/Redis/MySQL), while every other IP stays default-DROP. Made visible with a raw TCP probe; no server. | `mkdir d && cp examples/database.config.sh d/sluice.config.sh && cd d && sluice` |
 
 ## Your own stack
 
-No preset needed: run **`sluice init`** in your repo - it detects the stack (Node/Vite/Next,
-Python/FastAPI, Deno, Ruby/Rails, Rust, Go, Java, PHP, .NET, Elixir, Dart) and scaffolds the config,
-then **`sluice learn`** fills the egress allowlist from what the app actually tried to reach. Any
-other language runs too via `SLUICE_EXTRA_PKGS` + `SLUICE_RUN_CMD` (see the [main README](../README.md#use)).
+No preset needed: `sluice init` detects 11 stacks (list in the [main README](../README.md#use);
+anything else runs via the generic base) and scaffolds the config, then `sluice learn` (below)
+fills the egress allowlist from what the app actually tried to reach.
 
 ## Stronger isolation (Linux)
 
 Any preset above - or your own repo - runs under an own-kernel micro-VM with
-**`SLUICE_RUNTIME=kata`** (Linux + containerd/nerdctl), so a kernel escape can't reach the host.
-Same firewall, non-root, and project-only mount underneath; only the kernel boundary changes, so
-there's nothing new to see in the demo - that's the point. See
-[`THREAT_MODEL.md`](../THREAT_MODEL.md) for when it's worth the setup.
+`SLUICE_RUNTIME=kata`; setup and trade-offs in [docs/hardening.md](../docs/hardening.md).
 
 ## Discovering the allowlist with `sluice learn`
 
-You don't have to guess the egress allowlist up front. Run the app, let the firewall block any
-host it didn't expect, then let `sluice learn` read those blocks and propose the fix:
-
-```bash
-cd my-app
-sluice            # build + run; a host the app needs but you didn't allow gets blocked
-                  #   (on exit, sluice prints a one-line hint of what it blocked)
-sluice learn      # reads the proxy log, lists the blocked hosts, proposes + writes them on [y]
-sluice rebuild    # apply the new allowlist - the app works, still sandboxed
-```
-
-Shortcuts: **`sluice learn --apply`** writes the allowlist and rebuilds in one step (the loop above,
-collapsed); **`sluice learn --print`** just emits the proposed list to stdout, for review or CI.
-
-The loop above relies on the app *continuing* past a block so the proxy logs every host it wants.
-If instead your command is a trusted fetcher that **aborts on the first blocked host**, one enforce
-run only reveals one host. For that, **`sluice learn --audit`** runs it once with egress open (in a
-throwaway, credential-stripped container) and proposes the full list from everything it reached - a
-loudly-warned, trusted-code-only escape hatch (see [`THREAT_MODEL.md`](../THREAT_MODEL.md)).
-
-`sluice learn` proposes only the real hosts your app reached - the firewall's own self-test
-canaries and raw IPs are filtered out:
+You don't have to guess the allowlist up front. Run the app under enforcement; on exit,
+sluice prints an egress receipt of what the firewall passed and what it blocked:
 
 ```
-[sluice] hosts your app reached that the firewall BLOCKED:
-    raw.githubusercontent.com
-[sluice] suggested:  SLUICE_ALLOW_DOMAINS="raw.githubusercontent.com"
-[sluice] write this into .../sluice.config.sh? [y/N]
+[sluice] egress receipt: sluice-my-app   1 reached, 1 blocked, 13.1 KB
+  reached   api.github.com               3 req   11.9 KB
+  blocked   raw.githubusercontent.com    2 req   not allowlisted (sluice learn)
 ```
 
-`sluice doctor` shows the same blocked-host list any time, even before anything is built.
+Then, with the box still running, `sluice learn` reviews the last run's blocked hosts:
 
-## Coding agents - run any agent YOLO, safely
+```
+$ sluice learn
+[sluice] blocked during the last run - allow which? ('s' leaves a host blocked)
 
-The wedge: one command drops you into a coding agent that's non-root, sees only this repo, and
-can reach only its own model API - so running it with approvals off is defensible.
+  raw.githubusercontent.com      2 req    1.2 KB   [a]llow / [s]kip / [d]omain(.githubusercontent.com) / [q]uit? a
 
-```bash
-export ANTHROPIC_API_KEY=sk-ant-...   # forwarded into the box, never baked
-cd my-repo && sluice agent claude     # Claude Code, --dangerously-skip-permissions, sandboxed
+[sluice] allowing: raw.githubusercontent.com
+[sluice] wrote /home/you/my-app/sluice.config.sh
+[sluice] reloaded the running box (squid reconfigure) - live now, no rebuild.
 ```
 
-Presets ([`../agents/`](../agents/), run `sluice agent` to list): **claude, codex, gemini,
-aider, cursor, opencode, amp, qwen, crush** - each declares its tool, API hosts, and the auth env var to
-forward. Verified end-to-end via [`../test/nightly-agents.bats`](../test/nightly-agents.bats)
-(binary installs + runs, API hosts reachable, non-allowlisted hosts blocked, auth forwarded).
+Picks are written to the config **and** hot-loaded into the running box - no rebuild.
+`[d]omain` allows the whole `.parent` wildcard, and when 2+ blocked hosts share a parent,
+learn offers the collapse up front. Flags:
+
+- `--all` widens the scope from the last run to everything since the box booted.
+- `--print` emits the merged allowlist (existing + blocked) to stdout - for review or CI.
+- `--apply` allows every blocked host with no prompts - also the non-tty path.
+
+That loop relies on the app *continuing* past a block so the proxy logs every host it wants.
+If your command is a trusted fetcher that **aborts on the first blocked host**, `sluice learn
+--audit` runs it once with egress open to all HTTP/HTTPS hosts in a throwaway,
+credential-stripped container (`SLUICE_ENV`, prelaunch, and persisted auth stripped), then
+offers the same per-host review over everything it reached - a loudly-warned,
+trusted-code-only escape hatch (see [THREAT_MODEL.md](../THREAT_MODEL.md)).
+
+While the box is running, `sluice doctor` shows the same last-run blocked list.
+
+## Coding agents
+
+`sluice agent claude` drops a sandboxed coding agent into the repo - presets, auth
+forwarding, and the YOLO rationale are in [docs/agents.md](../docs/agents.md).

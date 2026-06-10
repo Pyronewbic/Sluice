@@ -7,8 +7,7 @@ kernel?** `startup.sh` installs Docker + Kata + nerdctl + CNI so the box boots r
 ## Use
 
 ```bash
-# auth as the personal account (the VM lives in its project)
-gcloud auth application-default login   # account: kan.nam.dev2@gmail.com
+gcloud auth application-default login    # personal account kan.nam.dev2@gmail.com (the VM lives in its project)
 terraform init
 terraform apply                          # creates the VM (~$0.19/hr, n1-standard-4)
 
@@ -19,14 +18,10 @@ eval "$(terraform output -raw ssh)"             # SSH in over IAP
 terraform destroy                        # tear it all down
 ```
 
-## Running the sluice-under-Kata test (on the box)
+## The sluice-under-Kata test (historical - `SLUICE_RUNTIME=kata` now automates this path)
 
 ```bash
 git clone --depth 1 https://github.com/Pyronewbic/Sluice.git
-# Docker 29.5.x bug workaround: COPY --chmod=0644 sets the auto-created /usr/local/share to 0644
-# (no execute -> uid 1000 can't traverse it). Force the dir mode:
-sed -i 's|COPY --chmod=0644 sluice.config.sh /usr/local/share/sluice.config.sh|&\nRUN chmod 0755 /usr/local/share|' Sluice/core/Dockerfile
-
 mkdir -p /tmp/empty && printf 'SLUICE_RUN_CMD="bash"\n' > /tmp/empty/sluice.config.sh && chmod 644 /tmp/empty/sluice.config.sh
 ( cd /tmp/empty && sudo ~/Sluice/bin/sluice build )          # build with docker
 sudo docker save sluice-empty | sudo nerdctl load            # docker -> containerd (nerdctl ns)
@@ -52,13 +47,13 @@ sudo nerdctl exec sk curl -sS  --max-time 15 https://registry.npmjs.org/   # rea
 - **sluice runs UNCHANGED under Kata** (via nerdctl): the firewall comes up (`[sluice] ready`), `--sysctl`
   applies in the guest, the iptables nat REDIRECT is present, and the egress matrix passes (example.com
   blocked, npmjs reached, direct-IP 1.1.1.1 blocked). The "policy travels with the box" property holds.
-- **Two real sluice follow-ups surfaced:**
-  1. `core/Dockerfile`: the `COPY --chmod=0644 sluice.config.sh ...` breaks on Docker 29.5.x (parent dir
-     gets 0644). Pre-create `/usr/local/share` (0755) before the COPY.
-  2. A future `SLUICE_RUNTIME` knob can't be a plain Docker `--runtime` flag - it needs a containerd/nerdctl
-     run path (or Edera's `protect` launch interface). The core stack itself needs no change.
+- **Two follow-ups surfaced, both landed 2026-06-02:** `core/Dockerfile` now pre-creates
+  `/usr/local/share` before the config `COPY --chmod` (the Docker 29.5.x parent-dir mode bug), and
+  `SLUICE_RUNTIME=kata` shipped in `src/40-runtime.sh` (nerdctl + the Kata runtime, image loaded across).
 
-## Next: Edera (Track B)
+## Closure
 
-Same VM. Request access at edera.dev/contact for the GAR installer key, install Edera standalone, then
-`protect workload launch` the sluice image with the same caps/sysctls and re-run the egress matrix.
+- 2026-06-03: negative result on a user-space-kernel runtime (`runsc`) - its netstack has no
+  in-container iptables NAT, so the in-box firewall cannot boot; no `SLUICE_RUNTIME` arm added.
+- 2026-06-11: the second isolation track (Edera, same VM, `protect workload launch` with the same
+  caps/sysctls) is still pending vendor access.
