@@ -34,12 +34,17 @@ not pursue or support legal action against you for that research.
 
 **Out of scope** (documented non-goals - see [THREAT_MODEL.md](THREAT_MODEL.md)):
 - Exfiltration *through an allowed host* - the allowlist is host-granular by design.
-- Multi-tenant / kernel-level isolation of deliberately hostile code (use a microVM).
+- Multi-tenant / kernel-level isolation of deliberately hostile code (a non-goal;
+  `SLUICE_RUNTIME=kata` covers the kernel-escape vector).
 - Whatever a malicious `sluice.config.sh` / `SLUICE_PRELAUNCH` does - you author those.
+- Behavior behind documented opt-out knobs (`SLUICE_ALLOW_IPS`, `SLUICE_DNS_OPEN`,
+  `SLUICE_ALLOW_DOH`, `learn --audit`): setting an open-egress knob and observing open
+  egress is working as documented, not a vulnerability.
 
 ## Supported versions
 
-Pre-1.0: only the latest `main` is supported. Pin a commit or tag for reproducibility.
+Security fixes land on the latest minor release line only; older releases are not patched.
+Pin a commit or tag for reproducibility.
 
 ## Verifying a release
 
@@ -55,6 +60,16 @@ cosign verify-blob sluice-<version>.tar.gz \     # authenticity
 ```
 
 The tarball is reproducible: `git archive --format=tar --prefix=sluice-<version>/ v<version> |
-gzip -n9` regenerates the same bytes, so the sha is independently checkable. The opt-in GHCR base
-image (`SLUICE_BASE_IMAGE`) is signed the same way; `sluice` verifies it at build time, soft by
-default or enforced with `SLUICE_REQUIRE_SIGNED=1`.
+gzip -n9` regenerates the same bytes, so the sha is independently checkable.
+
+The opt-in GHCR base image (`SLUICE_BASE_IMAGE`) is signed the same way; `sluice` verifies it
+at build time, soft by default or enforced with `SLUICE_REQUIRE_SIGNED=1`. To verify it yourself:
+
+```sh
+cosign verify ghcr.io/pyronewbic/sluice-base:latest \
+  --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp='^https://github.com/Pyronewbic/Sluice/'
+```
+
+The same flags with `cosign verify-attestation --type cyclonedx` check the image's attached
+SBOM attestation. Details: [docs/supply-chain.md](docs/supply-chain.md).
