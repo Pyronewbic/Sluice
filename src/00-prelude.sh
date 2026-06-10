@@ -25,6 +25,10 @@ _json_esc() { local s="$1"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; s="${s//$'\t'/
 # without a trailing newline still counts - base_domains emits one).
 _json_arr() { local first=1 line; printf '['; while IFS= read -r line || [ -n "$line" ]; do [ -n "$line" ] || continue; [ "$first" = 1 ] && first=0 || printf ','; printf '"%s"' "$(_json_esc "$line")"; done; printf ']'; }
 
+# Home-relative display form of a path (~/...), for HUMAN output only - ls already renders paths
+# this way; doctor/learn share it via this helper. JSON output keeps raw absolute paths.
+_tilde() { case "$1" in "$HOME"/*) printf '~%s' "${1#"$HOME"}";; "$HOME") printf '~';; *) printf '%s' "$1";; esac; }
+
 # color: gated on a stdout TTY + NO_COLOR, so piped/redirected output stays plain ASCII
 # (the --json paths print no color regardless; the TTY gate also blanks these when piped.)
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then

@@ -25,6 +25,10 @@ _json_esc() { local s="$1"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; s="${s//$'\t'/
 # without a trailing newline still counts - base_domains emits one).
 _json_arr() { local first=1 line; printf '['; while IFS= read -r line || [ -n "$line" ]; do [ -n "$line" ] || continue; [ "$first" = 1 ] && first=0 || printf ','; printf '"%s"' "$(_json_esc "$line")"; done; printf ']'; }
 
+# Home-relative display form of a path (~/...), for HUMAN output only - ls already renders paths
+# this way; doctor/learn share it via this helper. JSON output keeps raw absolute paths.
+_tilde() { case "$1" in "$HOME"/*) printf '~%s' "${1#"$HOME"}";; "$HOME") printf '~';; *) printf '%s' "$1";; esac; }
+
 # color: gated on a stdout TTY + NO_COLOR, so piped/redirected output stays plain ASCII
 # (the --json paths print no color regardless; the TTY gate also blanks these when piped.)
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
@@ -831,13 +835,13 @@ cmd_doctor() {
   if ! PROJECT_CONFIG="$(find_config)"; then
     _doc config "${C_RED}none${C_RST} - run 'sluice init' to scaffold one"; return 0
   fi
-  _doc config "$PROJECT_CONFIG"
+  _doc config "$(_tilde "$PROJECT_CONFIG")"
   PROJECT_DIR="$(cd "$(dirname "$PROJECT_CONFIG")" && pwd)"
   # shellcheck disable=SC1090
   . "$PROJECT_CONFIG"
   derive_names
   [ -n "${SLUICE_DESC:-}" ] && _doc desc "$SLUICE_DESC"
-  if [ -n "${SLUICE_MOUNTS:-}" ]; then _doc mount "$PROJECT_DIR ${C_DIM}(+ extra mounts)${C_RST}"; else _doc mount "$PROJECT_DIR"; fi
+  if [ -n "${SLUICE_MOUNTS:-}" ]; then _doc mount "$(_tilde "$PROJECT_DIR") ${C_DIM}(+ extra mounts)${C_RST}"; else _doc mount "$(_tilde "$PROJECT_DIR")"; fi
 
   # SLUICE_MASK posture: what's shadowed now, and secret-looking files the box CAN still read.
   if [ -n "${SLUICE_MASK:-}" ]; then
@@ -893,7 +897,7 @@ cmd_doctor() {
   if [ -n "${SLUICE_STATE_DIRS:-}" ]; then
     local nsd=0 _sd
     for _sd in ${SLUICE_STATE_DIRS}; do nsd=$((nsd+1)); done
-    _doc state "$nsd dir(s) persisted at ${XDG_STATE_HOME:-$HOME/.local/state}/sluice/$slug"
+    _doc state "$nsd dir(s) persisted at $(_tilde "${XDG_STATE_HOME:-$HOME/.local/state}/sluice/$slug")"
   fi
 
   [ -n "${SLUICE_OVERLAY_DIRS:-}" ] && _doc overlays "$SLUICE_OVERLAY_DIRS ${C_DIM}(box-local volume per dir, host contents untouched; 'sluice rm' deletes)${C_RST}"
@@ -2357,7 +2361,7 @@ learn_apply() {   # $1 = newline-separated entries (hosts and/or .domains)
   apply_allowlist "$(merge_allow "$entries")"
   # shellcheck disable=SC2086
   echo "[sluice] ${C_GRN}allowing:${C_RST} $(printf '%s ' $entries | sed 's/  */ /g; s/ *$//')"
-  echo "[sluice] wrote $PROJECT_CONFIG"
+  echo "[sluice] wrote $(_tilde "$PROJECT_CONFIG")"
   # shellcheck disable=SC2086
   if reload_allowlist $entries; then
     echo "[sluice] reloaded the running box (squid reconfigure) - ${C_GRN}live now, no rebuild.${C_RST}"

@@ -120,13 +120,13 @@ cmd_doctor() {
   if ! PROJECT_CONFIG="$(find_config)"; then
     _doc config "${C_RED}none${C_RST} - run 'sluice init' to scaffold one"; return 0
   fi
-  _doc config "$PROJECT_CONFIG"
+  _doc config "$(_tilde "$PROJECT_CONFIG")"
   PROJECT_DIR="$(cd "$(dirname "$PROJECT_CONFIG")" && pwd)"
   # shellcheck disable=SC1090
   . "$PROJECT_CONFIG"
   derive_names
   [ -n "${SLUICE_DESC:-}" ] && _doc desc "$SLUICE_DESC"
-  if [ -n "${SLUICE_MOUNTS:-}" ]; then _doc mount "$PROJECT_DIR ${C_DIM}(+ extra mounts)${C_RST}"; else _doc mount "$PROJECT_DIR"; fi
+  if [ -n "${SLUICE_MOUNTS:-}" ]; then _doc mount "$(_tilde "$PROJECT_DIR") ${C_DIM}(+ extra mounts)${C_RST}"; else _doc mount "$(_tilde "$PROJECT_DIR")"; fi
 
   # SLUICE_MASK posture: what's shadowed now, and secret-looking files the box CAN still read.
   if [ -n "${SLUICE_MASK:-}" ]; then
@@ -182,7 +182,7 @@ cmd_doctor() {
   if [ -n "${SLUICE_STATE_DIRS:-}" ]; then
     local nsd=0 _sd
     for _sd in ${SLUICE_STATE_DIRS}; do nsd=$((nsd+1)); done
-    _doc state "$nsd dir(s) persisted at ${XDG_STATE_HOME:-$HOME/.local/state}/sluice/$slug"
+    _doc state "$nsd dir(s) persisted at $(_tilde "${XDG_STATE_HOME:-$HOME/.local/state}/sluice/$slug")"
   fi
 
   [ -n "${SLUICE_OVERLAY_DIRS:-}" ] && _doc overlays "$SLUICE_OVERLAY_DIRS ${C_DIM}(box-local volume per dir, host contents untouched; 'sluice rm' deletes)${C_RST}"
