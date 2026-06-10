@@ -168,3 +168,66 @@ d = json.load(sys.stdin)
 assert d['overlay_dirs'] == ['node_modules', '.venv'], d['overlay_dirs']
 "
 }
+
+# --- hardening / risk / mounts posture (R4/R5) --------------------------------------------------
+
+@test "doctor: human harden line lists active opt-ins" {
+  printf 'SLUICE_SECCOMP=hardened\nSLUICE_READONLY_ROOT=1\nSLUICE_RUN_CMD="bash"\n' > "$WORK/sluice.config.sh"
+  run bash -c "cd '$WORK' && '$SLUICE' doctor"
+  assert_success
+  assert_output --partial "harden"
+  assert_output --partial "seccomp=hardened"
+  assert_output --partial "readonly-root"
+}
+
+@test "doctor --json: hardening object reflects the knobs" {
+  printf 'SLUICE_SECCOMP=browser\nSLUICE_WORKSPACE=overlay\nSLUICE_MEMORY=2g\nSLUICE_RUN_CMD="bash"\n' > "$WORK/sluice.config.sh"
+  run bash -c "cd '$WORK' && '$SLUICE' doctor --json 2>/dev/null"
+  assert_success
+  echo "$output" | python3 -c "
+import sys, json
+h = json.load(sys.stdin)['hardening']
+assert h['seccomp'] == 'browser', h
+assert h['workspace_overlay'] is True, h
+assert h['memory'] == '2g', h
+assert h['pids_limit'] == '4096', h
+assert h['readonly_root'] is False, h
+"
+}
+
+@test "doctor --json: risk flags laundering + DoH allowlisted hosts" {
+  printf 'SLUICE_ALLOW_DOMAINS="api.openai.com cloudflare-dns.com github.com"\nSLUICE_RUN_CMD="bash"\n' > "$WORK/sluice.config.sh"
+  run bash -c "cd '$WORK' && '$SLUICE' doctor --json 2>/dev/null"
+  assert_success
+  echo "$output" | python3 -c "
+import sys, json
+r = json.load(sys.stdin)['risk']
+assert r['laundering_hosts'] == ['api.openai.com'], r
+assert r['doh_hosts'] == ['cloudflare-dns.com'], r
+assert r['allow_doh'] is False, r
+"
+}
+
+@test "doctor --json: mounts array surfaces extra binds" {
+  printf 'SLUICE_MOUNTS="/tmp/x:/home/sluice/x:ro"\nSLUICE_RUN_CMD="bash"\n' > "$WORK/sluice.config.sh"
+  run bash -c "cd '$WORK' && '$SLUICE' doctor --json 2>/dev/null"
+  assert_success
+  echo "$output" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+assert d['mounts'] == ['/tmp/x:/home/sluice/x:ro'], d['mounts']
+"
+}
+
+@test "doctor --json: no hardening configured -> defaults, still valid" {
+  printf 'SLUICE_RUN_CMD="bash"\n' > "$WORK/sluice.config.sh"
+  run bash -c "cd '$WORK' && '$SLUICE' doctor --json 2>/dev/null"
+  assert_success
+  echo "$output" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+assert d['hardening']['seccomp'] == 'default', d['hardening']
+assert d['risk'] == {'laundering_hosts': [], 'doh_hosts': [], 'allow_doh': False}, d['risk']
+assert d['mounts'] == [], d['mounts']
+"
+}
