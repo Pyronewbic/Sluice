@@ -62,7 +62,7 @@ Inspect:
   ls               list all boxes + posture (status, stack, allow/ports/lock, path); --running/--orphans/--stack <name>/--egress/--json
   egress           show what this box reached vs. was blocked (--json)
   logs             follow firewall + readiness logs
-  lock             record installed apk+npm+pip+gem+go versions to sluice.lock (supply-chain audit)
+  lock             record installed apk+npm+pip+gem+go+cargo versions to sluice.lock (supply-chain audit)
                    --check fails on drift (CI gate, --json); --diff shows it; --sbom emits CycloneDX;
                    --scan vuln-checks via a host Grype/Trivy (--fail-on <sev> to gate)
   smoke            build (if needed) + run the image smoke test
@@ -71,12 +71,12 @@ Meta:
   version          show version + host runtime (engine, OS)
   help             show this help
 
-Env: SLUICE_ENGINE  SLUICE_NO_BANNER  SLUICE_YES  SLUICE_NO_UPDATE_CHECK  NO_COLOR
+Env: SLUICE_ENGINE  SLUICE_RUNTIME=kata  SLUICE_NO_BANNER  SLUICE_YES  SLUICE_NO_UPDATE_CHECK  NO_COLOR
      SLUICE_PIDS_LIMIT (default 4096)  SLUICE_MEMORY (e.g. 4g; unset = no cap)
-     SLUICE_ALLOW_DOH=1 (permit DoH/DoT resolvers; blocked by default as an exfil channel)
      SLUICE_SECCOMP=hardened|browser|audit (extra syscall filter; hardened >= engine default)
      SLUICE_READONLY_ROOT=1 (immutable rootfs; tmpfs + anon-volume the writable paths)
      SLUICE_WORKSPACE=overlay (host repo read-only; box edits a copy - see 'diff'/'apply')
+     Config knobs (sluice.config.sh): see sluice.config.example.sh + docs/configuration.md
 Docs: https://github.com/Pyronewbic/Sluice
 EOF
 }
