@@ -47,6 +47,7 @@ build() {
     --label "sluice.stack=$(config_stack)"
     --label "sluice.allowcount=$(printf '%s' "${SLUICE_ALLOW_DOMAINS:-}" | wc -w | tr -d ' ')"
     --label "sluice.ports=${SLUICE_PORTS:-}"
+    --label "sluice.overlays=${SLUICE_OVERLAY_DIRS:-}"
     --label "sluice.desc=${SLUICE_DESC:-}" "$@")   # extra flags, e.g. --no-cache
   if [ -n "${SLUICE_BASE_IMAGE:-}" ]; then
     verify_base "$SLUICE_BASE_IMAGE"
@@ -256,6 +257,24 @@ EOF
       state_paths="$state_paths /home/sluice/$sd"
     done
     run_args+=(-e "SLUICE_STATE_PATHS=$state_paths")
+  fi
+
+  # SLUICE_OVERLAY_DIRS: a per-box named volume over each project-relative dir, so the box keeps its
+  # own contents (e.g. Linux-built node_modules) while the host's stay untouched. The volume starts
+  # EMPTY (install in the box), persists across container recreation, and is labeled for cleanup
+  # ('sluice rm'/'prune'). The entrypoint chowns a fresh volume to the sluice user (SLUICE_OVERLAY_PATHS).
+  if [ -n "${SLUICE_OVERLAY_DIRS:-}" ]; then
+    local od ovol opaths="" odirs=""
+    for od in ${SLUICE_OVERLAY_DIRS}; do
+      case "$od" in /*|*..*) die "SLUICE_OVERLAY_DIRS entry must be a relative path inside the project (no leading /, no ..): $od" ;; esac
+      od="${od%/}"
+      ovol="sluice-$slug-ov-$(printf '%s' "$od" | tr '[:upper:]' '[:lower:]' | tr -C 'a-z0-9' '-')"
+      "$RUNNER" volume create --label "sluice.box=$container" "$ovol" >/dev/null 2>&1 || true
+      run_args+=(-v "$ovol":"$PROJECT_DIR/$od")
+      opaths="$opaths $PROJECT_DIR/$od"; odirs="$odirs $od"
+    done
+    run_args+=(-e "SLUICE_OVERLAY_PATHS=$opaths")
+    echo "[sluice] overlay dirs (box-local volumes, host contents untouched):$odirs"
   fi
 
   # SLUICE_MASK: shadow in-repo secrets (empty ro bind / tmpfs over each match). Evaluated NOW -

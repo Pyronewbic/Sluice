@@ -167,6 +167,14 @@ SLUICE_MOUNTS=""
 # Space/newline-separated. e.g. ".claude"  or  ".myagent .config/myagent"
 SLUICE_STATE_DIRS=""
 
+# Project-relative dirs to OVERLAY with a per-box named volume (mounted over the project bind), so
+# the box keeps its own contents while the host's stay untouched - for platform-specific dirs like
+# node_modules when the host OS differs from the box (no more host-vs-box install flip-flop). The
+# volume starts EMPTY on first run (install inside the box), persists across container recreation,
+# and is removed by `sluice rm` / `sluice prune`. Relative paths only (no leading / or ..).
+# Space-separated. e.g. "node_modules"  or  "node_modules .venv"
+SLUICE_OVERLAY_DIRS=""
+
 # Name of a shell function defined in THIS file, run on the host before launch - use
 # it to mint/stage short-lived credentials (write a token file, then expose its path
 # via SLUICE_MOUNTS, or export an env var named in SLUICE_ENV). Keeps cred plumbing in the
