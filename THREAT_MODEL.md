@@ -149,7 +149,9 @@ The guarantees below hold only while these do:
    to guard - including the `.domain` wildcards `sluice learn` can write (a leading-dot entry
    matches *every* subdomain, so it's offered, never forced; prefer exact hosts when you can).
    `learn` applies your picks live (an in-place squid reload, no rebuild), but only ever **adds**
-   the hosts you chose - it never weakens the non-HTTP/IPv6/non-root/direct-IP guarantees. (squid
+   the hosts you chose - it never weakens the non-HTTP/IPv6/non-root/direct-IP guarantees, and it
+   applies the **same DoH/DoT filter the boot path does**: a resolver pick is refused (not written,
+   not live) unless `SLUICE_ALLOW_DOH=1`, so the live box never diverges from a rebuilt one. (squid
    runs as its own uid; only that uid is granted direct egress, so app code can't reach the network
    except through it.)
 5. **Destruction within the project dir.** By default it's mounted read-write, so the sluice

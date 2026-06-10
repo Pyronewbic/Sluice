@@ -97,14 +97,42 @@ reload_allowlist() {
 }
 
 # Persist chosen entries to the project config AND make them live on the running box (no rebuild).
+# Before either, filter the picks the same way the boot path does (core/entrypoint.sh drop_doh):
+# a DoH/DoT resolver is an exfil channel blocked even when allowlisted, so learn must NOT add it -
+# to config or live - unless SLUICE_ALLOW_DOH=1. Without this the live squid reload (which appends
+# straight to the post-filter allowlist) would re-open DoH while a rebuilt box re-blocks it, so the
+# running box would silently diverge from its own config. Laundering hosts are allowed (boot allows
+# them too) but warned, matching the session-start gate.
 learn_apply() {   # $1 = newline-separated entries (hosts and/or .domains)
-  local entries="$1"
-  apply_allowlist "$(merge_allow "$entries")"
+  local entries="$1" keep="" doh="" launder="" e h
+  while IFS= read -r e; do
+    [ -n "$e" ] || continue
+    h="${e#.}"   # a .domain wildcard matches by its bare host
+    if [ "${SLUICE_ALLOW_DOH:-}" != 1 ] && doh_listed "$h"; then doh="$doh $e"; continue; fi
+    laundering_host "$h" && launder="$launder $e"
+    keep="$keep $e"
+  done <<EOF
+$entries
+EOF
+  keep="${keep# }"
+
+  if [ -n "$doh" ]; then
+    echo "[sluice] ${E_YEL}not allowing DoH/DoT resolver(s):${E_RST}$doh" >&2
+    echo "         these tunnel DNS over HTTPS past the SNI filter - blocked even when allowlisted." >&2
+    echo "         set SLUICE_ALLOW_DOH=1 (weakens the guarantee) and re-run 'sluice learn' to permit." >&2
+  fi
+  if [ -z "$keep" ]; then
+    echo "[sluice] ${C_DIM}nothing added.${C_RST}"
+    return 0
+  fi
+  [ -n "$launder" ] && echo "[sluice] ${E_YEL}note:${E_RST} allowlisted host(s) an attacker can also write to -$launder - data can be laundered out (splice, not decrypt); keep the list tight." >&2
+
+  apply_allowlist "$(merge_allow "$keep")"
   # shellcheck disable=SC2086
-  echo "[sluice] ${C_GRN}allowing:${C_RST} $(printf '%s ' $entries | sed 's/  */ /g; s/ *$//')"
+  echo "[sluice] ${C_GRN}allowing:${C_RST} $(printf '%s ' $keep | sed 's/  */ /g; s/ *$//')"
   echo "[sluice] wrote $(_tilde "$PROJECT_CONFIG")"
   # shellcheck disable=SC2086
-  if reload_allowlist $entries; then
+  if reload_allowlist $keep; then
     echo "[sluice] reloaded the running box (squid reconfigure) - ${C_GRN}live now, no rebuild.${C_RST}"
   else
     echo "[sluice] config saved - run 'sluice rebuild' to apply (couldn't hot-reload)."
