@@ -1711,6 +1711,46 @@ if [ "${1:-}" = prune ]; then
   case "${2:-}" in ""|--orphans) cmd_prune "${2:-}"; exit $? ;; *) die "usage: sluice prune [--orphans]" ;; esac
 fi
 
+# Package-registry hosts for the stack detected in $PWD (a manifest sniff mirroring cmd_init's
+# per-stack allowlists - kept lean here, full detection lives in cmd_init). Always the full registry
+# set: an agent installs deps at RUNTIME inside the box, so the init prefetch shortcut doesn't apply.
+# Echoes "<label>|<hosts>"; nothing when no stack is recognized.
+_stack_registry_hosts() {
+  local dir="$PWD" pm
+  if [ -f "$dir/package.json" ]; then
+    pm="npm"
+    if   [ -f "$dir/bun.lockb" ] || [ -f "$dir/bun.lock" ]; then pm="bun"
+    elif [ -f "$dir/pnpm-lock.yaml" ]; then pm="pnpm"
+    elif [ -f "$dir/yarn.lock" ];      then pm="yarn"; fi
+    case "$pm" in
+      yarn) echo "node/yarn|registry.yarnpkg.com" ;;
+      *)    echo "node/$pm|registry.npmjs.org" ;;
+    esac
+  elif [ -f "$dir/requirements.txt" ] || [ -f "$dir/pyproject.toml" ] || [ -f "$dir/Pipfile" ]; then
+    echo "python|pypi.org files.pythonhosted.org"
+  elif [ -f "$dir/deno.json" ] || [ -f "$dir/deno.jsonc" ]; then
+    echo "deno|deno.land jsr.io registry.npmjs.org esm.sh cdn.jsdelivr.net"
+  elif [ -f "$dir/Gemfile" ]; then
+    echo "ruby|rubygems.org index.rubygems.org"
+  elif [ -f "$dir/Cargo.toml" ]; then
+    echo "rust|static.crates.io index.crates.io"
+  elif [ -f "$dir/go.mod" ]; then
+    echo "go|proxy.golang.org sum.golang.org"
+  elif [ -f "$dir/pom.xml" ]; then
+    echo "java/maven|repo.maven.apache.org repo1.maven.org"
+  elif [ -f "$dir/build.gradle" ] || [ -f "$dir/build.gradle.kts" ]; then
+    echo "java/gradle|repo.maven.apache.org repo1.maven.org plugins.gradle.org services.gradle.org"
+  elif [ -f "$dir/composer.json" ]; then
+    echo "php|repo.packagist.org packagist.org"
+  elif [ -n "$(ls "$dir"/*.csproj "$dir"/*.sln 2>/dev/null)" ]; then
+    echo "dotnet|api.nuget.org www.nuget.org"
+  elif [ -f "$dir/mix.exs" ]; then
+    echo "elixir|repo.hex.pm builds.hex.pm"
+  elif [ -f "$dir/pubspec.yaml" ]; then
+    echo "dart|pub.dev pub.dartlang.org"
+  fi
+}
+
 # `sluice agent [name] [args...]`: write the agents/<name>.config.sh preset, then build+run.
 # Trailing args after the name are forwarded to the agent (one-shot), e.g. `sluice agent claude -p '...'`.
 AGENT_EXTRA_ARGS=()
@@ -1737,10 +1777,13 @@ if [ "${1:-}" = agent ]; then
   agent_name="$1"; shift
   [ "$#" -gt 0 ] && AGENT_EXTRA_ARGS=("$@")   # forward trailing args to the agent (one-shot)
   if cfg="$(find_config)"; then
-    # If that config is verbatim a DIFFERENT agent's preset, the requested one is being ignored -
-    # the box is keyed to the project dir, so a repo holds one agent at a time. Flag it (don't block).
+    # If that config came from a DIFFERENT agent's preset, the requested one is being ignored - the
+    # box is keyed to the project dir, so a repo holds one agent at a time. Flag it (don't block).
+    # Matched on the preset's first-line banner: a scaffolded config keeps it even after the stack-
+    # host append below or a `sluice learn` edit (a verbatim cmp went blind on the first edit).
+    h1="$(head -1 "$cfg" 2>/dev/null || true)"
     for af in "$agents_dir"/*.config.sh; do
-      cmp -s "$cfg" "$af" || continue
+      [ "$h1" = "$(head -1 "$af")" ] || continue
       other="$(basename "$af" .config.sh)"
       [ "$other" = "$agent_name" ] || echo "[sluice] ${E_YEL}note${E_RST}: this project is set up for the '$other' agent - to run '$agent_name', use a separate dir or 'git worktree add', or remove $cfg." >&2
       break
@@ -1748,6 +1791,21 @@ if [ "${1:-}" = agent ]; then
     echo "[sluice] using existing config: $cfg"
   else
     cp "$preset" "$PWD/sluice.config.sh"
+    # Union the detected stack's package-registry hosts into the scaffolded allowlist (the preset
+    # FILE stays tool-only), so the agent's first install doesn't trip the firewall into a learn
+    # cycle. One assignment line is kept - `sluice learn` rewrites the first SLUICE_ALLOW_DOMAINS=.
+    stackreg="$(_stack_registry_hosts)"
+    if [ -n "$stackreg" ]; then
+      stacklbl="${stackreg%%|*}"; stackhosts="${stackreg#*|}"
+      cfg_tmp="$(mktemp)"
+      awk -v add="$stackhosts" -v lbl="$stacklbl" '
+        /^SLUICE_ALLOW_DOMAINS="/ && !done { print "# from stack detection: " lbl; sub(/"[[:space:]]*$/, " " add "\""); done=1 }
+        { print }
+        END { if (!done) print "SLUICE_ALLOW_DOMAINS=\"" add "\"   # from stack detection: " lbl }
+      ' "$PWD/sluice.config.sh" > "$cfg_tmp" && mv "$cfg_tmp" "$PWD/sluice.config.sh"
+      chmod 0644 "$PWD/sluice.config.sh" 2>/dev/null || true   # mktemp is 0600; the build sources it
+      echo "[sluice] allowlist += $stackhosts (stack detection: $stacklbl)"
+    fi
     echo "[sluice] wrote $PWD/sluice.config.sh from the '$agent_name' agent preset."
     echo "[sluice] export the agent's auth env var on your host first (see the file's header)."
   fi
