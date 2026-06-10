@@ -9,3 +9,6 @@ Thumbs.db
 # Logs & scratch
 *.log
 *.tmp
+
+# demo-recording scratch (vhs work dirs + renders; assets/ holds the committed gifs)
+.demos/
