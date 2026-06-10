@@ -63,6 +63,13 @@ brew upgrade --fetch-HEAD Pyronewbic/tap/sluice    # dev stream (latest main)
 curl -fsSL https://raw.githubusercontent.com/Pyronewbic/Sluice/main/install.sh | sh   # script install: re-run to git-pull
 ```
 
+Switching an existing **stable** brew install to the dev stream needs an uninstall first
+(`brew reinstall --HEAD` is not a valid brew invocation):
+
+```bash
+brew uninstall sluice && brew install --HEAD Pyronewbic/tap/sluice
+```
+
 `sluice version` flags a newer release when one is out (`SLUICE_NO_UPDATE_CHECK=1` skips the check).
 
 ## Use
