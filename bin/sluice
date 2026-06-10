@@ -1771,10 +1771,11 @@ if [ "${1:-}" = agent ]; then
       [ -f "$f" ] || continue
       nm="$(basename "$f" .config.sh)"
       desc="$(. "$f"; printf '%s' "${SLUICE_DESC:-}")"
-      v1="$(. "$f"; printf '%s' "${SLUICE_ENV:-}")"; v1="${v1%% *}"
-      if   [ -z "$v1" ];            then auth=""
-      elif [ -n "${!v1:-}" ];       then auth="$v1 ${C_GRN}(set)${C_RST}"
-      else                               auth="$v1 ${C_DIM}(unset)${C_RST}"; fi
+      vars="$(. "$f"; printf '%s' "${SLUICE_ENV:-}")"; v1="${vars%% *}" setvar=""
+      for v in $vars; do [ -n "${!v:-}" ] && { setvar="$v"; break; }; done   # a preset may accept any of several
+      if   [ -z "$v1" ];     then auth=""
+      elif [ -n "$setvar" ]; then auth="$setvar ${C_GRN}(set)${C_RST}"
+      else                        auth="$v1 ${C_DIM}(unset)${C_RST}"; fi
       printf "  %-10s %-26s %s\n" "$nm" "$desc" "$auth"
     done
     exit 0

@@ -80,6 +80,17 @@ _verify_agent() {
   _agent_teardown "$c" "$work"
 }
 
+# `sluice agent` listing reports (set) when ANY of a preset's SLUICE_ENV vars is set, not just the
+# first (B6): claude accepts ANTHROPIC_API_KEY OR CLAUDE_CODE_OAUTH_TOKEN.
+@test "agent: listing shows (set) for a non-first auth var" {
+  run env -u ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN=demo "$SLUICE" agent
+  assert_output --partial "CLAUDE_CODE_OAUTH_TOKEN (set)"   # claude's row, only its second var
+}
+@test "agent: listing shows (unset) for the first var when none is set" {
+  run env -u ANTHROPIC_API_KEY -u CLAUDE_CODE_OAUTH_TOKEN "$SLUICE" agent
+  assert_output --partial "ANTHROPIC_API_KEY (unset)"
+}
+
 @test "agent: claude preset (cred-free + optional live)"   { _want claude   || skip "not in AGENTS"; _verify_agent claude; }
 @test "agent: codex preset (cred-free + optional live)"    { _want codex    || skip "not in AGENTS"; _verify_agent codex; }
 @test "agent: gemini preset (cred-free + optional live)"   { _want gemini   || skip "not in AGENTS"; _verify_agent gemini; }
