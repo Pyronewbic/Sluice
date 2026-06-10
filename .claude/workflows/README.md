@@ -1,6 +1,6 @@
 # Claude workflows
 
-Multi-agent orchestration scripts for Claude Code (not GitHub Actions — those live in
+Multi-agent orchestration scripts for Claude Code (not GitHub Actions - those live in
 `.github/workflows/`). Each `*.js` here fans work out across subagents.
 
 Run one by asking Claude to "run the `review-launcher` workflow" or via `/review-launcher`.
@@ -13,5 +13,6 @@ of tokens, so Claude only starts one when you explicitly ask.
 | `audit-egress` | Cross-checks every `agents/*.config.sh` preset's egress hosts against the allowlist + `THREAT_MODEL.md`, then adversarially verifies each finding against upstream before reporting it. |
 | `triage-tests` | Runs the bats suites, clusters failures, root-causes each cluster in parallel. Pass `args.suite` to scope. |
 
-Anatomy: a pure-literal `export const meta = {...}` (name, description, phases) then a body using
-`agent()` / `parallel()` / `pipeline()` / `phase()` / `log()`. Copy any file here as a template.
+Anatomy: a pure-literal `export const meta = {...}` (name, description, whenToUse, phases) then a body
+using `agent()` (takes a structured-output `schema`; invocation `args` are in scope) / `parallel()` /
+`pipeline()` / `phase()` / `log()`. Copy any file here as a template.
