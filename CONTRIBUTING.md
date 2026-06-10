@@ -54,8 +54,4 @@ POSIX `sh` (space/newline strings, no bash arrays). `make lint` runs **shellchec
 - Keep docs lean - link to a single source of truth instead of duplicating it.
 - Tests green (above); note the OS + engine you tested on (maintainers cover the Linux/Podman legs in CI).
 
-## Code of conduct
-
-This project has a [Code of Conduct](CODE_OF_CONDUCT.md); by taking part you agree to it.
-
 By contributing you agree your work is licensed under the repo's [Apache-2.0](LICENSE) license.
