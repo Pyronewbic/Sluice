@@ -82,7 +82,9 @@ and any it tried but the firewall blocked - so you see at a glance everything yo
 agent talked to, and a failed fetch points you straight at `sluice learn`. `sluice egress`
 shows the same per-host on demand, and `sluice doctor` reports the engine, the mounted project dir,
 image freshness, published ports, the effective allowlist, auth env, and the hosts your last run was
-blocked from - even before anything is built.
+blocked from - even before anything is built. It also warns about what would silently misbehave
+in-box: unmasked secret-looking files (see `SLUICE_MASK`) and symlinks that point outside the
+mounted scope (they work on the host but dangle inside the box).
 
 <p align="center"><img src="assets/doctor-demo.gif" width="680" alt="sluice doctor prints a one-screen health panel: the container engine, the mounted project dir (the box's only host path), image freshness (config current), the supply-chain lock (in sync), the published port, the auth env var (set), and the hosts the last run was blocked from (api.openai.com) with a 'sluice learn' hint - green for ok, red for blocked"></p>
 

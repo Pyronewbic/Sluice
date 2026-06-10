@@ -52,6 +52,51 @@ unmasked_secrets() {
       done
 }
 
+# Squash //, /./ and resolve .. TEXTUALLY (no symlink deref - the target may not exist). Enough to
+# decide inside-vs-outside the mount; set -f keeps odd path segments from globbing.
+_canon_path() {
+  local p="$1" out="" seg oldIFS="$IFS"
+  set -f; IFS=/
+  for seg in $p; do
+    case "$seg" in ''|.) ;; ..) out="${out%/*}" ;; *) out="$out/$seg" ;; esac
+  done
+  IFS="$oldIFS"; set +f
+  printf '%s' "${out:-/}"
+}
+
+# Symlinks in the project dir whose target resolves OUTSIDE the mounted scope (the project dir, plus
+# the git common dir when this is a worktree) - they work on the host but are broken inside the box
+# (real case: .claude/CLAUDE.md -> ~/.claude/shared/... dangled silently and the agent ran without
+# its instructions). Emits "rel<TAB>target". Bounded so doctor stays fast: depth 6, .git/vendor dirs
+# pruned, first 200 links considered.
+symlinks_outside_scope() {
+  local proj common="" l tgt abs d TAB; TAB="$(printf '\t')"
+  # Compare PHYSICAL paths throughout - on macOS /var is itself a symlink, and git reports the
+  # common dir in physical form while $PROJECT_DIR/link targets may be logical.
+  proj="$(cd "$PROJECT_DIR" 2>/dev/null && pwd -P || printf '%s' "$PROJECT_DIR")"
+  if command -v git >/dev/null 2>&1 && git -C "$PROJECT_DIR" rev-parse --git-common-dir >/dev/null 2>&1; then
+    common="$(git -C "$PROJECT_DIR" rev-parse --git-common-dir)"
+    case "$common" in /*) ;; *) common="$PROJECT_DIR/$common";; esac
+    common="$(cd "$common" 2>/dev/null && pwd -P || true)"
+    case "$common/" in "$proj"/*) common="" ;; esac   # inside the project: already in scope
+  fi
+  find "$PROJECT_DIR" -maxdepth 6 \
+      \( -name .git -o -name node_modules -o -name vendor -o -name .venv -o -name venv \
+         -o -name target -o -name dist -o -name build -o -name .next -o -name __pycache__ \) -prune \
+      -o -type l -print 2>/dev/null \
+    | head -200 | while IFS= read -r l; do
+        tgt="$(readlink "$l" 2>/dev/null)" || continue
+        [ -n "$tgt" ] || continue
+        case "$tgt" in /*) abs="$tgt" ;; *) abs="$(dirname "$l")/$tgt" ;; esac
+        # physical resolution when the target's parent exists; textual squash for dangling targets
+        if d="$(cd "$(dirname "$abs")" 2>/dev/null && pwd -P)"; then abs="$d/$(basename "$abs")"
+        else abs="$(_canon_path "$abs")"; fi
+        case "$abs/" in "$proj"/*|"$PROJECT_DIR"/*) continue ;; esac
+        if [ -n "$common" ]; then case "$abs/" in "$common"/*) continue ;; esac; fi
+        printf '%s%s%s\n' "${l#"$PROJECT_DIR"/}" "$TAB" "$tgt"
+      done
+}
+
 _doc() { printf '  %-10s %s\n' "$1" "$2"; }
 cmd_doctor() {
   [ "${1:-}" = --json ] && { cmd_doctor_json; return $?; }
@@ -91,6 +136,18 @@ cmd_doctor() {
   local _unm
   _unm="$(unmasked_secrets 2>/dev/null | head -6 | tr '\n' ' ' | sed 's/ *$//' || true)"
   [ -n "$_unm" ] && _doc "" "${C_YEL}note${C_RST}: secret-looking file(s) readable in the box - $_unm - shadow them: SLUICE_MASK=\".env*\" (sluice.config.example.sh)"
+
+  # Symlinks that leave the mounted scope work on the host but dangle inside the box - warn.
+  local _links _nl _lp _lt _TAB; _TAB="$(printf '\t')"
+  _links="$(symlinks_outside_scope 2>/dev/null || true)"
+  if [ -n "$_links" ]; then
+    _nl="$(printf '%s\n' "$_links" | grep -c . || true)"
+    _doc symlinks "${C_YEL}$_nl link(s) point outside the box mount${C_RST} - will be broken inside the box:"
+    printf '%s\n' "$_links" | head -10 | while IFS="$_TAB" read -r _lp _lt; do
+      printf '             %s -> %s\n' "$_lp" "$_lt"
+    done
+    [ "$_nl" -gt 10 ] && _doc "" "${C_DIM}(+ $((_nl - 10)) more)${C_RST}"
+  fi
 
   if [ -n "$eng" ]; then
     if "$eng" image inspect "$tag" >/dev/null 2>&1; then
@@ -211,20 +268,21 @@ cmd_doctor_json() {
   done
   auth_json="$auth_json]"
 
-  local mask_pats mask_hits mask_unm
+  local mask_pats mask_hits mask_unm links_json
   # tr (not word-splitting) keeps the glob patterns literal - no pathname expansion against $PWD
   mask_pats="$(printf '%s' "${SLUICE_MASK:-}" | tr ' \t' '\n\n' | _json_arr)"
   mask_hits="$(mask_matches 2>/dev/null | _json_arr || true)"
   mask_unm="$(unmasked_secrets 2>/dev/null | _json_arr || true)"
+  links_json="$(symlinks_outside_scope 2>/dev/null | cut -f1 | _json_arr || true)"
 
   # shellcheck disable=SC2086
-  printf '{"engine":"%s","daemon":%s,"config":"%s","project_dir":"%s","name":"%s","desc":"%s","image":{"tag":"%s","built":%s,"stale":%s},"lock":"%s","allowlist":%s,"base":%s,"ports":%s,"allow_ips":%s,"base_image":"%s","policy_url":"%s","state_dirs":%s,"auth":%s,"mask":{"patterns":%s,"masked":%s,"unmasked_secrets":%s},"egress":{"running":%s,"blocked":%s}}\n' \
+  printf '{"engine":"%s","daemon":%s,"config":"%s","project_dir":"%s","name":"%s","desc":"%s","image":{"tag":"%s","built":%s,"stale":%s},"lock":"%s","allowlist":%s,"base":%s,"ports":%s,"allow_ips":%s,"base_image":"%s","policy_url":"%s","state_dirs":%s,"auth":%s,"mask":{"patterns":%s,"masked":%s,"unmasked_secrets":%s},"broken_symlinks":%s,"egress":{"running":%s,"blocked":%s}}\n' \
     "$(_json_esc "$engine_ver")" "$daemon" "$(_json_esc "$PROJECT_CONFIG")" "$(_json_esc "$PROJECT_DIR")" "$(_json_esc "$tag")" "$(_json_esc "${SLUICE_DESC:-}")" \
     "$(_json_esc "$tag")" "$img_built" "$img_stale" "$lock" \
     "$(printf '%s\n' ${SLUICE_ALLOW_DOMAINS:-} | _json_arr)" "$(base_domains | tr ' ' '\n' | _json_arr)" \
     "$(printf '%s\n' ${SLUICE_PORTS:-} | _json_arr)" "$(printf '%s\n' ${SLUICE_ALLOW_IPS:-} | _json_arr)" "$(_json_esc "${SLUICE_BASE_IMAGE:-}")" \
     "$(_json_esc "${SLUICE_POLICY_URL:-}")" "$nsd" "$auth_json" \
-    "$mask_pats" "$mask_hits" "$mask_unm" \
+    "$mask_pats" "$mask_hits" "$mask_unm" "$links_json" \
     "$running_b" "$(printf '%s\n' $blocked | _json_arr)"
 }
 
