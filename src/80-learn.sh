@@ -244,6 +244,13 @@ EOF
     fi
   fi
 
+  # Egress is OPEN for this run - keep SLUICE_MASK shadowing in force so in-repo secrets stay unreadable.
+  mask_build_args
+  if [ "${#MASK_ARGS[@]}" -gt 0 ]; then
+    run_args+=("${MASK_ARGS[@]}")
+    echo "[sluice] masking (unreadable in the box): $MASKED_PATHS"
+  fi
+
   echo "[sluice] starting ephemeral audit container $audit_container ..."
   runtime_sync_image
   runtime_run --name "$audit_container" "${run_args[@]}" "$tag" >/dev/null

@@ -11,6 +11,8 @@ SLUICE_EXTRA_NPM="@anthropic-ai/claude-code"
 # so both are allowed, matching upstream init-firewall). sentry.io error reporting is left blocked.
 SLUICE_ALLOW_DOMAINS="api.anthropic.com platform.claude.com claude.ai statsig.com statsig.anthropic.com"
 SLUICE_DESC="Claude Code (Anthropic)"
+# In-repo secrets: .env* files are shadowed (unreadable in the box); SLUICE_MASK="" to disable.
+SLUICE_MASK=".env*"
 SLUICE_ENV="ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN"
 # Persist Claude Code's sessions/history/auth-cache across runs (host-side, per project).
 SLUICE_STATE_DIRS=".claude"

@@ -11,6 +11,8 @@ SLUICE_EXTRA_NPM="@charmland/crush"
 # telemetry to data.charm.land is left blocked.
 SLUICE_ALLOW_DOMAINS="api.anthropic.com api.openai.com catwalk.charm.land"
 SLUICE_DESC="Crush (Charm)"
+# In-repo secrets: .env* files are shadowed (unreadable in the box); SLUICE_MASK="" to disable.
+SLUICE_MASK=".env*"
 SLUICE_ENV="ANTHROPIC_API_KEY OPENAI_API_KEY"
 # Persist Crush's sessions/db across runs (its data dir). NOT .config/crush - that's just config.
 SLUICE_STATE_DIRS=".local/share/crush"

@@ -12,6 +12,8 @@ SLUICE_SETUP_CMDS='curl https://cursor.com/install -fsS | bash && mkdir -p "$HOM
 # authenticator/.authentication.cursor.sh = login; downloads.cursor.com = self-update. the .api5 agent hosts carry the model/agent stream (laundering surface, THREAT_MODEL #2/#4).
 SLUICE_ALLOW_DOMAINS="cursor.com api2.cursor.sh .api5.cursor.sh authenticate.cursor.sh authenticator.cursor.sh .authentication.cursor.sh downloads.cursor.com"
 SLUICE_DESC="Cursor CLI (cursor-agent)"
+# In-repo secrets: .env* files are shadowed (unreadable in the box); SLUICE_MASK="" to disable.
+SLUICE_MASK=".env*"
 SLUICE_ENV="CURSOR_API_KEY"
 # Persist cursor-agent's config/auth across runs (.cursor holds cli-config.json). NOT .local -
 # that's where the installed binary lives, and a mount would shadow it.

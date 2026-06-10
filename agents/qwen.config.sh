@@ -12,6 +12,8 @@ SLUICE_EXTRA_NPM="@qwen-code/qwen-code"
 # Gemini-CLI fork; its inherited Clearcut telemetry to play.googleapis.com is left blocked.
 SLUICE_ALLOW_DOMAINS="dashscope-intl.aliyuncs.com dashscope.aliyuncs.com"
 SLUICE_DESC="Qwen Code (Alibaba)"
+# In-repo secrets: .env* files are shadowed (unreadable in the box); SLUICE_MASK="" to disable.
+SLUICE_MASK=".env*"
 SLUICE_ENV="OPENAI_API_KEY DASHSCOPE_API_KEY"
 # Persist Qwen Code's sessions/settings across runs (host-side, per project).
 SLUICE_STATE_DIRS=".qwen"

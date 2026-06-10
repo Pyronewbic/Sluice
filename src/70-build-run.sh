@@ -80,6 +80,47 @@ image_stale() {
   [ -n "$have" ] && [ "$have" != "$want" ]
 }
 
+# SLUICE_MASK launch wiring: validate the patterns (die early; the doctor-side expander skips bad
+# ones), then build the mount flags that shadow each CURRENT match - an empty read-only bind for a
+# file, a tmpfs for a dir. The box still sees the path exists; it cannot read the contents. The
+# empty source file lives in the sluice state root (stable across reboots, unlike a mktemp).
+mask_validate() {
+  local pat
+  set -f   # validate the PATTERNS, not whatever they happen to glob to in $PWD
+  for pat in ${SLUICE_MASK:-}; do
+    case "$pat" in /*|*..*) die "SLUICE_MASK pattern must be a relative glob inside the project (no leading /, no ..): $pat" ;; esac
+  done
+  set +f
+}
+# Fills MASK_ARGS (engine mount flags) + MASKED_PATHS (display list) from the current matches.
+mask_build_args() {
+  MASK_ARGS=(); MASKED_PATHS=""
+  [ -n "${SLUICE_MASK:-}" ] || return 0
+  mask_validate
+  local matches mp empty
+  matches="$(mask_matches 2>/dev/null || true)"
+  [ -n "$matches" ] || return 0
+  empty="${XDG_STATE_HOME:-$HOME/.local/state}/sluice/.mask-empty"
+  mkdir -p "${empty%/*}" 2>/dev/null || true
+  [ -f "$empty" ] || : > "$empty" 2>/dev/null || true
+  chmod 0444 "$empty" 2>/dev/null || true
+  while IFS= read -r mp; do
+    [ -n "$mp" ] || continue
+    # Overlay workspace: mask the read-only original too, or the entrypoint's seed copy reads it.
+    if [ -d "$PROJECT_DIR/$mp" ]; then
+      MASK_ARGS+=(--tmpfs "$PROJECT_DIR/$mp")
+      [ "${SLUICE_WORKSPACE:-}" = overlay ] && MASK_ARGS+=(--tmpfs "/mnt/sluice-orig/$mp")
+    else
+      MASK_ARGS+=(-v "$empty":"$PROJECT_DIR/$mp":ro)
+      [ "${SLUICE_WORKSPACE:-}" = overlay ] && MASK_ARGS+=(-v "$empty":"/mnt/sluice-orig/$mp":ro)
+    fi
+    MASKED_PATHS="$MASKED_PATHS $mp"
+  done <<EOF
+$matches
+EOF
+  MASKED_PATHS="${MASKED_PATHS# }"
+}
+
 # start: run the idle container (firewall comes up in the entrypoint)
 start() {
   "$RUNNER" rm -f -v "$container" >/dev/null 2>&1 || true
@@ -215,6 +256,14 @@ EOF
       state_paths="$state_paths /home/sluice/$sd"
     done
     run_args+=(-e "SLUICE_STATE_PATHS=$state_paths")
+  fi
+
+  # SLUICE_MASK: shadow in-repo secrets (empty ro bind / tmpfs over each match). Evaluated NOW -
+  # a file created later in the run is not masked (THREAT_MODEL.md).
+  mask_build_args
+  if [ "${#MASK_ARGS[@]}" -gt 0 ]; then
+    run_args+=("${MASK_ARGS[@]}")
+    echo "[sluice] masking (unreadable in the box): $MASKED_PATHS"
   fi
 
   # Publish declared ports on host loopback only; init-firewall.sh opens the inbound ACCEPT.

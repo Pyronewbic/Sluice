@@ -1,3 +1,57 @@
+# --- in-repo protection scans (SLUICE_MASK; read by doctor here and mounted by the run path) ------
+
+# Expand SLUICE_MASK (space-separated, project-root-relative globs) to the paths matching RIGHT NOW,
+# one per line. Plain shell glob semantics: a slash-less pattern matches root-level entries only
+# ("packages/*/.env" reaches deeper). Symlink matches are skipped - a mount over a link would shadow
+# its TARGET, not the link. Invalid patterns (absolute, ..) are skipped here so doctor still reports
+# the rest; the run path dies on them (mask_validate).
+mask_matches() {
+  [ -n "${SLUICE_MASK:-}" ] || return 0
+  ( cd "$PROJECT_DIR" 2>/dev/null || exit 0
+    set -f   # keep the PATTERNS literal while splitting; glob only in the inner loop
+    for pat in ${SLUICE_MASK}; do
+      case "$pat" in /*|*..*) continue ;; esac
+      set +f
+      for m in $pat; do
+        [ -L "$m" ] && continue
+        if [ -f "$m" ] || [ -d "$m" ]; then printf '%s\n' "$m"; fi
+      done
+      set -f
+    done ) | sort -u
+}
+
+# True when some SLUICE_MASK pattern covers $1 (a project-relative path), mirroring the launch
+# semantics above: a slash-less pattern only ever matches a root-level entry.
+mask_covers() {
+  local rel="$1" pat rc=1
+  set -f   # the patterns must stay literal (case still glob-MATCHES under set -f)
+  for pat in ${SLUICE_MASK:-}; do
+    # shellcheck disable=SC2254  # $pat IS a glob - unquoted on purpose
+    case "$pat" in
+      /*|*..*) continue ;;
+      */*) case "$rel" in $pat) rc=0; break ;; esac ;;
+      *)   case "$rel" in */*) ;; $pat) rc=0; break ;; esac ;;
+    esac
+  done
+  set +f
+  return "$rc"
+}
+
+# Secret-looking files in the mount that no SLUICE_MASK pattern covers - doctor warns on these.
+# Bounded so doctor stays fast: depth 3, vendor dirs pruned, first 50 hits. .example/.sample/
+# .template variants are scaffolding, not secrets.
+unmasked_secrets() {
+  find "$PROJECT_DIR" -maxdepth 3 \
+      \( -name .git -o -name node_modules -o -name vendor -o -name .venv -o -name venv \) -prune \
+      -o -type f \( -name '.env*' -o -name '*.pem' -o -name '*key*.json' -o -name 'id_rsa*' \
+                    -o -name 'id_ed25519*' -o -name '*.p12' -o -name '*.pfx' \) \
+      ! -name '*.example' ! -name '*.sample' ! -name '*.template' -print 2>/dev/null \
+    | head -50 | while IFS= read -r f; do
+        f="${f#"$PROJECT_DIR"/}"
+        mask_covers "$f" || printf '%s\n' "$f"
+      done
+}
+
 _doc() { printf '  %-10s %s\n' "$1" "$2"; }
 cmd_doctor() {
   [ "${1:-}" = --json ] && { cmd_doctor_json; return $?; }
@@ -28,6 +82,15 @@ cmd_doctor() {
   derive_names
   [ -n "${SLUICE_DESC:-}" ] && _doc desc "$SLUICE_DESC"
   if [ -n "${SLUICE_MOUNTS:-}" ]; then _doc mount "$PROJECT_DIR ${C_DIM}(+ extra mounts)${C_RST}"; else _doc mount "$PROJECT_DIR"; fi
+
+  # SLUICE_MASK posture: what's shadowed now, and secret-looking files the box CAN still read.
+  if [ -n "${SLUICE_MASK:-}" ]; then
+    local _nm; _nm="$(mask_matches 2>/dev/null | grep -c . || true)"
+    _doc mask "$SLUICE_MASK ${C_DIM}($_nm path(s) masked at launch)${C_RST}"
+  fi
+  local _unm
+  _unm="$(unmasked_secrets 2>/dev/null | head -6 | tr '\n' ' ' | sed 's/ *$//' || true)"
+  [ -n "$_unm" ] && _doc "" "${C_YEL}note${C_RST}: secret-looking file(s) readable in the box - $_unm - shadow them: SLUICE_MASK=\".env*\" (sluice.config.example.sh)"
 
   if [ -n "$eng" ]; then
     if "$eng" image inspect "$tag" >/dev/null 2>&1; then
@@ -110,7 +173,7 @@ cmd_doctor_json() {
   elif command -v docker >/dev/null 2>&1; then eng=docker
   elif command -v podman >/dev/null 2>&1; then eng=podman; fi
   if [ -n "$eng" ] && command -v "$eng" >/dev/null 2>&1; then
-    ENGINE="$eng"; engine_ver="$("$eng" --version 2>/dev/null | head -1)"
+    ENGINE="$eng"; resolve_runner; engine_ver="$("$eng" --version 2>/dev/null | head -1)"
     "$eng" info >/dev/null 2>&1 && daemon=true || eng=""
   else eng=""; fi
 
@@ -148,13 +211,21 @@ cmd_doctor_json() {
   done
   auth_json="$auth_json]"
 
+  local mask_pats mask_hits mask_unm
+  # tr (not word-splitting) keeps the glob patterns literal - no pathname expansion against $PWD
+  mask_pats="$(printf '%s' "${SLUICE_MASK:-}" | tr ' \t' '\n\n' | _json_arr)"
+  mask_hits="$(mask_matches 2>/dev/null | _json_arr || true)"
+  mask_unm="$(unmasked_secrets 2>/dev/null | _json_arr || true)"
+
   # shellcheck disable=SC2086
-  printf '{"engine":"%s","daemon":%s,"config":"%s","project_dir":"%s","name":"%s","desc":"%s","image":{"tag":"%s","built":%s,"stale":%s},"lock":"%s","allowlist":%s,"base":%s,"ports":%s,"allow_ips":%s,"base_image":"%s","policy_url":"%s","state_dirs":%s,"auth":%s,"egress":{"running":%s,"blocked":%s}}\n' \
+  printf '{"engine":"%s","daemon":%s,"config":"%s","project_dir":"%s","name":"%s","desc":"%s","image":{"tag":"%s","built":%s,"stale":%s},"lock":"%s","allowlist":%s,"base":%s,"ports":%s,"allow_ips":%s,"base_image":"%s","policy_url":"%s","state_dirs":%s,"auth":%s,"mask":{"patterns":%s,"masked":%s,"unmasked_secrets":%s},"egress":{"running":%s,"blocked":%s}}\n' \
     "$(_json_esc "$engine_ver")" "$daemon" "$(_json_esc "$PROJECT_CONFIG")" "$(_json_esc "$PROJECT_DIR")" "$(_json_esc "$tag")" "$(_json_esc "${SLUICE_DESC:-}")" \
     "$(_json_esc "$tag")" "$img_built" "$img_stale" "$lock" \
     "$(printf '%s\n' ${SLUICE_ALLOW_DOMAINS:-} | _json_arr)" "$(base_domains | tr ' ' '\n' | _json_arr)" \
     "$(printf '%s\n' ${SLUICE_PORTS:-} | _json_arr)" "$(printf '%s\n' ${SLUICE_ALLOW_IPS:-} | _json_arr)" "$(_json_esc "${SLUICE_BASE_IMAGE:-}")" \
-    "$(_json_esc "${SLUICE_POLICY_URL:-}")" "$nsd" "$auth_json" "$running_b" "$(printf '%s\n' $blocked | _json_arr)"
+    "$(_json_esc "${SLUICE_POLICY_URL:-}")" "$nsd" "$auth_json" \
+    "$mask_pats" "$mask_hits" "$mask_unm" \
+    "$running_b" "$(printf '%s\n' $blocked | _json_arr)"
 }
 
 # `sluice ls`: a derived, read-only table of every built sluice box on this machine

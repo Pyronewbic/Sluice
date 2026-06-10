@@ -10,6 +10,8 @@ SLUICE_EXTRA_PKGS="python-3.12 py3.12-pip"
 SLUICE_SETUP_CMDS='pip install --user --no-input aider-chat'
 SLUICE_ALLOW_DOMAINS="api.openai.com api.anthropic.com"
 SLUICE_DESC="Aider (pair programmer)"
+# In-repo secrets: .env* files are shadowed (unreadable in the box); SLUICE_MASK="" to disable.
+SLUICE_MASK=".env*"
 SLUICE_ENV="OPENAI_API_KEY ANTHROPIC_API_KEY"
 # Aider's chat history lives in-repo (.aider.*, already persisted via the mount); this keeps
 # its model-metadata cache across runs too. (Not .local - that's where pip --user installs it.)
