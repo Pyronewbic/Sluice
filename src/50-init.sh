@@ -77,11 +77,11 @@ cmd_init() {
     elif _init_pkg_has "$pj" 'vite';          then fw="vite";       port=5173
     fi
 
-    local script="" s
+    local script="" s noscript=""
     for s in "$pref" dev develop serve start; do
       if _init_has_script "$pj" "$s"; then script="$s"; break; fi
     done
-    [ -z "$script" ] && script="$pref"
+    [ -z "$script" ] && { script="$pref"; noscript=1; }   # nothing matched - flag it (note set below)
 
     # honor a host/port the dev script already sets, rather than fighting it
     local sval ep
@@ -104,6 +104,7 @@ cmd_init() {
         run_cmd="$inst && $run_script -- $hostflag $portflag $port"
         note="npm/yarn registries are allowed; add runtime CDNs/APIs or run 'sluice learn'." ;;
     esac
+    [ -n "$noscript" ] && note="package.json has no dev/start/serve script - '$run_script' is a guess; set SLUICE_RUN_CMD to your real start command."
     detected="node/$pm${fw:+ ($fw)}"
 
   elif [ -f "$dir/requirements.txt" ] || [ -f "$dir/pyproject.toml" ] || [ -f "$dir/Pipfile" ]; then
@@ -292,7 +293,7 @@ cmd_init() {
   if [ "$update" -eq 1 ]; then
     _ea="$(grep -E '^SLUICE_ALLOW_DOMAINS=' "$cfg" 2>/dev/null | head -1 | sed -E 's/^SLUICE_ALLOW_DOMAINS=//; s/[[:space:]]+#.*$//; s/^"//; s/"$//')"
     [ -n "$_ea" ] && allow="$_ea"                          # keep the user's allowlist, not the detected base
-    preserved_extra="$(grep -E '^SLUICE_[A-Z_]+=' "$cfg" 2>/dev/null | grep -vE '^SLUICE_(EXTRA_PKGS|EXTRA_NPM|SETUP_CMDS|PORTS|RUN_CMD|ALLOW_DOMAINS)=' || true)"
+    preserved_extra="$(grep -E '^SLUICE_[A-Z_]+=' "$cfg" 2>/dev/null | grep -vE '^SLUICE_(EXTRA_PKGS|EXTRA_NPM|SETUP_CMDS|PREFETCH_FILES|PREFETCH_CMD|PORTS|RUN_CMD|ALLOW_DOMAINS)=' || true)"
     out="$(mktemp)"
   fi
 
