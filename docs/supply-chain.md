@@ -51,7 +51,12 @@ sluice lock --scan --fail-on high   # non-zero on a finding at high or above
 ```
 
 Severities: `negligible|low|medium|high|critical`. With no scanner installed it prints a note and
-exits 0 - but dies if `--fail-on` was given.
+exits 0 - but dies if `--fail-on` was given. `--scan --json` passes the scanner's own JSON through
+verbatim (Grype's or Trivy's schema), so unlike the other `--json` outputs its shape is the
+scanner's, not sluice's.
+
+Note: `sluice doctor` reports lock drift but never gates on it (it always exits 0); use `sluice lock
+--check` / `--enforce` for the CI gate.
 
 ## Base image identity
 

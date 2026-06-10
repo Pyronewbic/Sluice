@@ -63,8 +63,8 @@ Inspect:
   egress           show what this box reached vs. was blocked (--json)
   logs             follow firewall + readiness logs
   lock             record installed apk+npm+pip+gem+go+cargo versions to sluice.lock (supply-chain audit)
-                   --check fails on drift (CI gate, --json); --diff shows it; --sbom emits CycloneDX;
-                   --scan vuln-checks via a host Grype/Trivy (--fail-on <sev> to gate)
+                   --check fails on drift (CI gate, --json); --enforce is the strict variant; --diff shows it;
+                   --sbom emits CycloneDX (--format spdx for SPDX); --scan vuln-checks via a host Grype/Trivy (--fail-on <sev>)
   smoke            build (if needed) + run the image smoke test
 
 Meta:
@@ -86,7 +86,7 @@ help_for() {
     run)     echo "sluice run <cmd...>     - run an ad-hoc command in the sandbox (builds/starts if needed)." ;;
     shell)   echo "sluice shell            - a bash shell in the sandbox (non-root sluice user)." ;;
     agent)   echo "sluice agent [name] [args] - scaffold + run a coding-agent preset; args after the name run it one-shot; no name lists them." ;;
-    init)    echo "sluice init [--force]   - scaffold a sluice.config.sh by detecting the stack." ;;
+    init)    echo "sluice init [--force|--update] - scaffold a sluice.config.sh by detecting the stack (--update re-detects, keeping your edits)." ;;
     learn)   echo "sluice learn [--all] [--print|--apply|--audit] - review blocked hosts, allowlist your picks." ;;
     build)   echo "sluice build            - build the image if missing or the config changed." ;;
     rebuild) echo "sluice rebuild          - build + recreate the container (apply config/allowlist edits)." ;;

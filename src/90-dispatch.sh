@@ -3,7 +3,7 @@ case "${1:-run-default}" in
   diff)    cmd_workspace_diff; exit $? ;;
   apply)   cmd_workspace_apply; exit $? ;;
   rebuild) build; start; exit 0 ;;
-  stop)    "$RUNNER" rm -f -v "$container" >/dev/null 2>&1 || true; echo "[sluice] $container stopped"; exit 0 ;;
+  stop)    "$RUNNER" rm -f -v "$container" >/dev/null 2>&1 || true; echo "[sluice] $container removed (image kept - 'sluice' recreates it)"; exit 0 ;;
   rm)
     "$RUNNER" rm -f -v "$container" >/dev/null 2>&1 || true; "$ENGINE" rmi -f "$tag" >/dev/null 2>&1 || true
     _nov="$(remove_box_volumes "$container")"   # SLUICE_OVERLAY_DIRS volumes ride the box's lifecycle
