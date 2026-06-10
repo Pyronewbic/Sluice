@@ -79,3 +79,71 @@ d = json.load(sys.stdin)
 assert d['mask'] == {'patterns': [], 'masked': [], 'unmasked_secrets': []}, d['mask']
 "
 }
+
+# --- dangling-symlink check ---------------------------------------------------------------------
+
+@test "doctor: warns on a symlink that resolves outside the mounted scope" {
+  printf 'SLUICE_RUN_CMD="bash"\n' > "$WORK/sluice.config.sh"
+  OUTSIDE="$(mktemp -d)"
+  echo shared > "$OUTSIDE/shared.md"
+  mkdir -p "$WORK/.claude"
+  ln -s "$OUTSIDE/shared.md" "$WORK/.claude/CLAUDE.md"
+  run bash -c "cd '$WORK' && '$SLUICE' doctor"
+  assert_success
+  assert_output --partial "broken inside the box"
+  assert_output --partial ".claude/CLAUDE.md"
+  rm -rf "$OUTSIDE"
+}
+
+@test "doctor: warns on a dangling out-of-scope symlink (target gone)" {
+  printf 'SLUICE_RUN_CMD="bash"\n' > "$WORK/sluice.config.sh"
+  ln -s /nonexistent/elsewhere "$WORK/dangler"
+  run bash -c "cd '$WORK' && '$SLUICE' doctor"
+  assert_success
+  assert_output --partial "broken inside the box"
+  assert_output --partial "dangler"
+}
+
+@test "doctor: an in-repo symlink is fine (no warning)" {
+  printf 'SLUICE_RUN_CMD="bash"\n' > "$WORK/sluice.config.sh"
+  echo real > "$WORK/real.txt"
+  ln -s real.txt "$WORK/alias.txt"
+  mkdir -p "$WORK/sub"
+  ln -s ../real.txt "$WORK/sub/up.txt"
+  run bash -c "cd '$WORK' && '$SLUICE' doctor"
+  assert_success
+  refute_output --partial "broken inside the box"
+}
+
+@test "doctor: a worktree symlink into the git common dir is in scope (no warning)" {
+  command -v git >/dev/null 2>&1 || skip "git not present"
+  ( cd "$WORK" && git init -q main && cd main \
+      && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init \
+      && git worktree add -q "$WORK/wt" >/dev/null 2>&1 )
+  printf 'SLUICE_RUN_CMD="bash"\n' > "$WORK/wt/sluice.config.sh"
+  ln -s "$WORK/main/.git/HEAD" "$WORK/wt/head-link"
+  run bash -c "cd '$WORK/wt' && '$SLUICE' doctor"
+  assert_success
+  refute_output --partial "head-link"
+}
+
+@test "doctor: symlink scan prunes vendor dirs (node_modules .bin links ignored)" {
+  printf 'SLUICE_RUN_CMD="bash"\n' > "$WORK/sluice.config.sh"
+  mkdir -p "$WORK/node_modules/.bin"
+  ln -s /usr/bin/true "$WORK/node_modules/.bin/fake"
+  run bash -c "cd '$WORK' && '$SLUICE' doctor"
+  assert_success
+  refute_output --partial "broken inside the box"
+}
+
+@test "doctor --json: broken_symlinks lists the project-relative link path" {
+  printf 'SLUICE_RUN_CMD="bash"\n' > "$WORK/sluice.config.sh"
+  ln -s /nonexistent/elsewhere "$WORK/dangler"
+  run bash -c "cd '$WORK' && '$SLUICE' doctor --json 2>/dev/null"
+  assert_success
+  echo "$output" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+assert d['broken_symlinks'] == ['dangler'], d['broken_symlinks']
+"
+}
