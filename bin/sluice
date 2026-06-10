@@ -904,6 +904,17 @@ cmd_doctor() {
 
   [ -n "${SLUICE_OVERLAY_DIRS:-}" ] && _doc overlays "$SLUICE_OVERLAY_DIRS ${C_DIM}(box-local volume per dir, host contents untouched; 'sluice rm' deletes)${C_RST}"
 
+  [ -n "${SLUICE_BASE_IMAGE:-}" ] && _doc base "$SLUICE_BASE_IMAGE ${C_DIM}(signed-base build; SLUICE_REQUIRE_SIGNED=${SLUICE_REQUIRE_SIGNED:-0})${C_RST}"
+  # Active hardening posture (only the opt-ins that are on), so it's visible at a glance.
+  local _hard=""
+  [ -n "${SLUICE_SECCOMP:-}" ]          && _hard="$_hard seccomp=$SLUICE_SECCOMP"
+  [ "${SLUICE_READONLY_ROOT:-}" = 1 ]   && _hard="$_hard readonly-root"
+  [ "${SLUICE_WORKSPACE:-}" = overlay ] && _hard="$_hard workspace=overlay"
+  [ -n "${SLUICE_RUNTIME:-}" ]          && _hard="$_hard runtime=$SLUICE_RUNTIME"
+  [ -n "${SLUICE_MEMORY:-}" ]           && _hard="$_hard memory=$SLUICE_MEMORY"
+  [ -n "${SLUICE_BUMP_DOMAINS:-}" ]     && _hard="$_hard tls-bump"
+  [ -n "$_hard" ] && _doc harden "${_hard# }"
+
   [ -n "${SLUICE_PORTS:-}" ] && _doc ports "$SLUICE_PORTS ${C_DIM}(published on 127.0.0.1)${C_RST}"
   _doc allowlist "${SLUICE_ALLOW_DOMAINS:-(none beyond base)}"
   _doc "" "base: $(base_domains)"
@@ -996,14 +1007,40 @@ cmd_doctor_json() {
   local overlays_json
   overlays_json="$(printf '%s' "${SLUICE_OVERLAY_DIRS:-}" | tr ' \t' '\n\n' | _json_arr)"
 
+  # Hardening posture: which opt-in layers are active (pure config reads, no engine calls).
+  local _ro=false _ws=false _bump=false
+  [ "${SLUICE_READONLY_ROOT:-}" = 1 ]   && _ro=true
+  [ "${SLUICE_WORKSPACE:-}" = overlay ] && _ws=true
+  [ -n "${SLUICE_BUMP_DOMAINS:-}" ]     && _bump=true
+  local hardening_json
+  hardening_json="$(printf '{"seccomp":"%s","readonly_root":%s,"workspace_overlay":%s,"runtime":"%s","memory":"%s","pids_limit":"%s","tls_bump":%s}' \
+    "$(_json_esc "${SLUICE_SECCOMP:-default}")" "$_ro" "$_ws" "$(_json_esc "${SLUICE_RUNTIME:-}")" \
+    "$(_json_esc "${SLUICE_MEMORY:-}")" "$(_json_esc "${SLUICE_PIDS_LIMIT:-4096}")" "$_bump")"
+
+  # Exfil-surface risk: allowlisted hosts that are writable laundering channels or DoH resolvers.
+  local _risky="" _doh="" _h _allowdoh=false
+  for _h in ${SLUICE_ALLOW_DOMAINS:-}; do
+    laundering_host "$_h" && _risky="$_risky$_h
+"
+    doh_listed "$_h" && _doh="$_doh$_h
+"
+  done
+  [ "${SLUICE_ALLOW_DOH:-}" = 1 ] && _allowdoh=true
+  local risk_json
+  risk_json="$(printf '{"laundering_hosts":%s,"doh_hosts":%s,"allow_doh":%s}' \
+    "$(printf '%s' "$_risky" | _json_arr)" "$(printf '%s' "$_doh" | _json_arr)" "$_allowdoh")"
+
+  local mounts_json
+  mounts_json="$(printf '%s\n' "${SLUICE_MOUNTS:-}" | _json_arr)"
+
   # shellcheck disable=SC2086
-  printf '{"engine":"%s","daemon":%s,"config":"%s","project_dir":"%s","name":"%s","desc":"%s","image":{"tag":"%s","built":%s,"stale":%s},"lock":"%s","allowlist":%s,"base":%s,"ports":%s,"allow_ips":%s,"base_image":"%s","policy_url":"%s","state_dirs":%s,"overlay_dirs":%s,"auth":%s,"mask":{"patterns":%s,"masked":%s,"unmasked_secrets":%s},"broken_symlinks":%s,"egress":{"running":%s,"blocked":%s}}\n' \
+  printf '{"engine":"%s","daemon":%s,"config":"%s","project_dir":"%s","name":"%s","desc":"%s","image":{"tag":"%s","built":%s,"stale":%s},"lock":"%s","allowlist":%s,"base":%s,"ports":%s,"allow_ips":%s,"base_image":"%s","policy_url":"%s","state_dirs":%s,"overlay_dirs":%s,"mounts":%s,"auth":%s,"hardening":%s,"mask":{"patterns":%s,"masked":%s,"unmasked_secrets":%s},"risk":%s,"broken_symlinks":%s,"egress":{"running":%s,"blocked":%s}}\n' \
     "$(_json_esc "$engine_ver")" "$daemon" "$(_json_esc "$PROJECT_CONFIG")" "$(_json_esc "$PROJECT_DIR")" "$(_json_esc "$tag")" "$(_json_esc "${SLUICE_DESC:-}")" \
     "$(_json_esc "$tag")" "$img_built" "$img_stale" "$lock" \
     "$(printf '%s\n' ${SLUICE_ALLOW_DOMAINS:-} | _json_arr)" "$(base_domains | tr ' ' '\n' | _json_arr)" \
     "$(printf '%s\n' ${SLUICE_PORTS:-} | _json_arr)" "$(printf '%s\n' ${SLUICE_ALLOW_IPS:-} | _json_arr)" "$(_json_esc "${SLUICE_BASE_IMAGE:-}")" \
-    "$(_json_esc "${SLUICE_POLICY_URL:-}")" "$nsd" "$overlays_json" "$auth_json" \
-    "$mask_pats" "$mask_hits" "$mask_unm" "$links_json" \
+    "$(_json_esc "${SLUICE_POLICY_URL:-}")" "$nsd" "$overlays_json" "$mounts_json" "$auth_json" "$hardening_json" \
+    "$mask_pats" "$mask_hits" "$mask_unm" "$risk_json" "$links_json" \
     "$running_b" "$(printf '%s\n' $blocked | _json_arr)"
 }
 
