@@ -73,6 +73,8 @@ directory. The box sees the path exists but cannot read the contents. `sluice do
 is masked now and warns about secret-looking files (`.env*`, `*.pem`, key JSON, SSH keys,
 `*.p12`/`*.pfx`) that no pattern covers.
 
+<p align="center"><img src="../assets/mask-demo.gif" width="680" alt="the host reads .env and sees the API key; inside the box the same cat prints nothing, and wc -c .env shows 0 bytes - the path exists, the contents are shadowed"></p>
+
 Limits: matches are evaluated at launch, so a secret created mid-run is not masked; a slash-less
 pattern matches root-level entries only (use `packages/*/.env` to reach deeper); symlink matches
 are skipped (a mount over a link would shadow its target). More:

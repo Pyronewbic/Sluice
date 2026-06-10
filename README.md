@@ -85,6 +85,8 @@ freshness, allowlist, persisted state, blocked hosts - plus warnings for what wo
 silently misbehave in-box (unmasked secret-looking files, symlinks that resolve outside
 the mount). Full firewall + learn walkthrough: [examples/](examples/README.md).
 
+<p align="center"><img src="assets/learn-demo.gif" width="680" alt="a real run is blocked by the firewall: curl fails and the egress receipt shows pypi.org in red as 'blocked, not allowlisted'; sluice learn then reviews the host with an allow/skip/domain/quit prompt, 'a' allows it and the running box is reloaded live with no rebuild; the rerun returns HTTP 200 and the receipt flips to green 'reached pypi.org, all egress was allowlisted'"></p>
+
 ```bash
 sluice                 # build (if needed) + run SLUICE_RUN_CMD in the sandbox
 sluice agent <name>    # run a coding agent (no name lists them) - see docs/agents.md
@@ -116,7 +118,7 @@ sluice doctor
              cdn.tracking.example
 ```
 
-<p align="center"><img src="assets/doctor-demo.gif" width="680" alt="sluice doctor prints a one-screen health panel: the container engine, the mounted project dir (the box's only host path), image freshness (config current), the supply-chain lock (in sync), the published port, the auth env var (set), and the hosts the last run was blocked from (api.openai.com) with a 'sluice learn' hint - green for ok, red for blocked"></p>
+<p align="center"><img src="assets/doctor-demo.gif" width="680" alt="sluice doctor prints a one-screen health panel: the container engine, the mounted project dir (the box's only host path), yellow warnings for an unmasked secret-looking .env (with the SLUICE_MASK hint) and a symlink that resolves outside the mount (broken inside the box), image freshness (config current), the supply-chain lock (in sync), the published port, the auth env var (set), and the hosts the last run was blocked from (api.openai.com) with a 'sluice learn' hint - green for ok, yellow for warn, red for blocked"></p>
 
 `sluice ls` shows every box on this machine, which one you're in (`*`), and its posture:
 
