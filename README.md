@@ -197,7 +197,10 @@ tool, its API hosts, and which auth env var to forward - so adding an agent is j
 `sluice agent` with no name to list them (each with its auth var and whether it's set on your host).
 If the agent hits a blocked host, `sluice learn` surfaces it. Every preset also masks `.env*` files
 by default (`SLUICE_MASK`), so the agent can't read in-repo env secrets - set `SLUICE_MASK=""` in
-your project's config to disable.
+your project's config to disable. When scaffolding the config, sluice also unions the detected
+stack's package-registry hosts into the allowlist (marked `# from stack detection: ...`), so the
+agent's first `pip install` / `bundle install` doesn't trip the firewall into a learn cycle - the
+preset files themselves stay tool-only.
 
 Each agent runs in the project's box (named for the directory), so a repo holds **one agent at a
 time** - `sluice agent codex` in a repo already set up for claude reuses the claude config (sluice
