@@ -21,8 +21,9 @@ die() { echo "${E_RED:-}[sluice]${E_RST:-} $*" >&2; exit 1; }
 # minimal JSON emit (host jq is not assumed; fields here are short/flat)
 # Escape a string for a JSON value: backslash + doublequote, and flatten stray control chars.
 _json_esc() { local s="$1"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; s="${s//$'\t'/ }"; s="${s//$'\n'/ }"; s="${s//$'\r'/}"; printf '%s' "$s"; }
-# Emit a JSON array of strings from newline-separated stdin (blank lines skipped).
-_json_arr() { local first=1 line; printf '['; while IFS= read -r line; do [ -n "$line" ] || continue; [ "$first" = 1 ] && first=0 || printf ','; printf '"%s"' "$(_json_esc "$line")"; done; printf ']'; }
+# Emit a JSON array of strings from newline-separated stdin (blank lines skipped; a final line
+# without a trailing newline still counts - base_domains emits one).
+_json_arr() { local first=1 line; printf '['; while IFS= read -r line || [ -n "$line" ]; do [ -n "$line" ] || continue; [ "$first" = 1 ] && first=0 || printf ','; printf '"%s"' "$(_json_esc "$line")"; done; printf ']'; }
 
 # color: gated on a stdout TTY + NO_COLOR, so piped/redirected output stays plain ASCII
 # (the --json paths print no color regardless; the TTY gate also blanks these when piped.)

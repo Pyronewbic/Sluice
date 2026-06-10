@@ -125,6 +125,16 @@ SLUICE_READONLY_ROOT=""
 # with `sluice diff`, write back with `sluice apply`. Set to "overlay" to enable.
 SLUICE_WORKSPACE=""
 
+# In-repo secret masking: space-separated glob patterns, relative to the project root, shadowed from
+# the box at launch - a matching file is covered by an empty read-only bind, a matching dir by an
+# empty tmpfs. The box still sees the path EXISTS; it cannot read the contents. Honest limits:
+# patterns are expanded when the container starts (a file created later is NOT masked), a slash-less
+# pattern matches root-level entries only (mask "packages/*/.env*" explicitly for nested ones), and
+# symlink matches are skipped. The agents/ presets default to ".env*"; set SLUICE_MASK="" there to
+# disable. `sluice doctor` warns when secret-looking files are present and unmasked.
+# e.g. ".env* *.pem service-account*.json"
+SLUICE_MASK=""
+
 # --- serving --------------------------------------------------------------------
 
 # TCP ports to publish to the host (bound to 127.0.0.1 -> reach via localhost only).

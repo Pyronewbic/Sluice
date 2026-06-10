@@ -16,7 +16,8 @@ deliberately malicious code next to other tenants. That job needs a microVM
 
 - **Host credentials/secrets** the sluice can reach: env vars forwarded via `SLUICE_ENV`,
   token files mounted via `SLUICE_MOUNTS`, anything `SLUICE_PRELAUNCH` stages, and the
-  project's own secrets (`.env`, keys in the working tree).
+  project's own secrets (`.env`, keys in the working tree) - the in-repo ones can be
+  shadowed with `SLUICE_MASK` (limits below).
 - **The rest of your machine:** other directories, other projects, your home dir.
 - **Your network position:** internal/LAN services the host could otherwise reach.
 
@@ -84,6 +85,16 @@ The guarantees below hold only while these do:
   re-allows a DoH resolver; `SLUICE_DNS_OPEN=1` restores forward-all resolution (both weaken this).
 - **Reading/altering the rest of your machine** -> only the project dir (and its git
   common dir, for worktrees) is mounted. Nothing else is visible.
+- **Reading in-repo secrets (opt-in mask)** -> the project dir is mounted read-write,
+  *including* its own `.env`/key files - "can't read your secrets" historically meant files
+  *outside* the repo. `SLUICE_MASK` closes the in-repo gap: matching files get an empty
+  read-only bind, matching dirs an empty tmpfs, so the box cannot read them (the agent
+  presets mask `.env*` by default; it also stays in force during `learn --audit`). Honest
+  limits: patterns are expanded **when the container starts** - a secret written later in
+  the run is NOT masked (and survives until the next launch); the masked path's *existence*
+  (its name) is still visible; and an unmatched path - a different name, or nested deeper
+  than the pattern reaches - is not protected. `sluice doctor` warns when secret-looking
+  files (`.env*`, `*.pem`, `*key*.json`, ...) are present in the mount and unmasked.
 - **Host privilege escalation** -> sessions run non-root (uid 1000) with **no effective
   capabilities**; no Docker socket, no Docker-in-Docker, no in-box `sudo` (setuid). The container
   drops ALL capabilities and adds back only what the root entrypoint needs at boot (chown the mount,
@@ -195,7 +206,8 @@ audit possible, and `SLUICE_EGRESS_MAX_BYTES` can gate CI on volume.
 
 ---
 
-_Last reviewed 2026-06-05 against sluice 0.8.0 (released) + the post-release hardening on main: seccomp
-(default-superset / browser / audit) and the egress work (allowlist-scoped DNS, port-scoped
-`SLUICE_ALLOW_IPS`, laundering-host gate, durable egress receipt + `SLUICE_EGRESS_MAX_BYTES`). Revisit
-when the egress path, mount model, or runtime options change._
+_Last reviewed 2026-06-10 against sluice 0.8.0 (released) + the post-release hardening on main: seccomp
+(default-superset / browser / audit), the egress work (allowlist-scoped DNS, port-scoped
+`SLUICE_ALLOW_IPS`, laundering-host gate, durable egress receipt + `SLUICE_EGRESS_MAX_BYTES`), and
+in-repo secret masking (`SLUICE_MASK`). Revisit when the egress path, mount model, or runtime options
+change._

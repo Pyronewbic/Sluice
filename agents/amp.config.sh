@@ -10,6 +10,8 @@ SLUICE_EXTRA_NPM="@ampcode/cli"
 # auth handshake; production.ampworkers.com = the Amp client's WebSocket (all per ampcode.com/security).
 SLUICE_ALLOW_DOMAINS="ampcode.com static.ampcode.com auth.ampcode.com production.ampworkers.com"
 SLUICE_DESC="Amp (Sourcegraph)"
+# In-repo secrets: .env* files are shadowed (unreadable in the box); SLUICE_MASK="" to disable.
+SLUICE_MASK=".env*"
 SLUICE_ENV="AMP_API_KEY"
 # Persist amp's settings/auth across runs (host-side, per project).
 SLUICE_STATE_DIRS=".config/amp"

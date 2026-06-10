@@ -193,7 +193,9 @@ Presets ship for **claude**, **codex**, **gemini**, **aider**, **cursor**, **ope
 **qwen**, and **crush** (see [`agents/`](agents/)); each is a normal `sluice.config.sh` declaring the
 tool, its API hosts, and which auth env var to forward - so adding an agent is just adding a file. Run
 `sluice agent` with no name to list them (each with its auth var and whether it's set on your host).
-If the agent hits a blocked host, `sluice learn` surfaces it.
+If the agent hits a blocked host, `sluice learn` surfaces it. Every preset also masks `.env*` files
+by default (`SLUICE_MASK`), so the agent can't read in-repo env secrets - set `SLUICE_MASK=""` in
+your project's config to disable.
 
 Each agent runs in the project's box (named for the directory), so a repo holds **one agent at a
 time** - `sluice agent codex` in a repo already set up for claude reuses the claude config (sluice
@@ -228,6 +230,7 @@ Everything is driven by `sluice.config.sh`. Copy [`sluice.config.example.sh`](sl
 | `SLUICE_ALLOW_IPS` | runtime egress IPs/CIDRs for non-HTTP services |
 | `SLUICE_PORTS` | TCP ports to publish (firewall opens a matching inbound rule) |
 | `SLUICE_ENV` | host env var names to forward into the session |
+| `SLUICE_MASK` | in-repo secret globs shadowed from the box (agent presets default `.env*`) |
 
 The rest - build-time setup, a central egress policy (`SLUICE_POLICY_URL`), scoped TLS
 interception (`SLUICE_BUMP_DOMAINS`/`SLUICE_BUMP_URLS`), persisted state, credential staging
@@ -253,7 +256,10 @@ The guardrail that makes running untrusted code defensible:
   host must fail; a base host must work).
 - **Non-root** (uid 1000) with only `NET_ADMIN`/`NET_RAW`; no Docker-in-Docker.
 - **Filesystem isolation:** only the project dir is mounted (plus its git common dir
-  when it's a worktree). The sluice can't see the rest of your machine.
+  when it's a worktree). The sluice can't see the rest of your machine. Secrets *inside* the
+  repo can be shadowed too: `SLUICE_MASK` globs (e.g. `.env* *.pem`) are masked out of the
+  mount at launch - the box sees the path exists but can't read it - and `sluice doctor`
+  warns when secret-looking files are present and unmasked.
 - The allowlist is **host-granular** (not per-URL); keep it tight, and avoid allowing
   shared cloud hosts that could double as an exfil path - sluice flags such a host at run, and
   `SLUICE_EGRESS_MAX_BYTES` caps a run's egress volume. For a host you control,

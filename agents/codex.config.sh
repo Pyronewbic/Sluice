@@ -10,6 +10,8 @@ SLUICE_EXTRA_NPM="@openai/codex"
 # default telemetry to ab.chatgpt.com stays blocked too (set [otel] metrics_exporter="none" to silence).
 SLUICE_ALLOW_DOMAINS="api.openai.com"
 SLUICE_DESC="Codex CLI (OpenAI)"
+# In-repo secrets: .env* files are shadowed (unreadable in the box); SLUICE_MASK="" to disable.
+SLUICE_MASK=".env*"
 SLUICE_ENV="OPENAI_API_KEY"
 # Persist Codex's sessions/history/auth across runs (host-side, per project).
 SLUICE_STATE_DIRS=".codex"
