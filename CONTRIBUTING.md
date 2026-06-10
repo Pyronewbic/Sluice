@@ -16,16 +16,16 @@ output) or a **feature request**. Security holes do not go here - see above.
 
 ## Dev setup
 
-The CLI ships as one bash script, `bin/sluice`, **assembled from the ordered `src/*.sh` slices** by
-`make build` (so the curl-one-file install still works). Edit the slices, not `bin/sluice` directly,
-then `make build`; a CI gate (`make build-check`) fails if the committed `bin/sluice` drifts from
-`src/`. Run it straight from a checkout, or `./install.sh` to symlink it onto your `PATH`. You need
-**docker** or **podman** (auto-detected; override with `SLUICE_ENGINE`).
+`bin/sluice` is generated from the `src/*.sh` slices - edit a slice, `make build`, commit both (the
+slice map and mechanics: [src/README.md](src/README.md)). Run it straight from a checkout, or
+`./install.sh` to symlink it onto your `PATH`. You need **docker** or **podman** (auto-detected;
+override with `SLUICE_ENGINE`).
 
 ## Run the tests
 
 The suites are [bats-core](https://github.com/bats-core/bats-core), vendored as submodules - run
-`make setup` once after a fresh clone. CI's gate is `make test`; run it before opening a PR:
+`make setup` once after a fresh clone. CI runs the same gate suites split across jobs, plus
+`make build-check` and shellcheck; `make test` is the local equivalent - run it before opening a PR:
 
 ```bash
 make test            # gate: CLI/init/install units + egress + security invariants (needs docker/podman)
@@ -34,7 +34,10 @@ make structure       # base-image invariants (no sudo, uid 1000, firewall packag
 ```
 
 Each suite is `test/<name>.bats` (gate) or `test/nightly-<name>.bats` (heavy); shared helpers live in
-`test/test_helper/common.bash`. Run the one your change touches, and extend it when you change behavior.
+`test/test_helper/common.bash`. Run just the one your change touches with
+`test/bats/bin/bats test/<name>.bats`, and extend it when you change behavior. Five gate suites need
+no container engine at all: `verify-cli`, `verify-install`, `init-detection`, `verify-doctor-checks`,
+`verify-agent-scaffold`.
 
 ## Style
 
@@ -49,6 +52,11 @@ POSIX `sh` (space/newline strings, no bash arrays). `make lint` runs **shellchec
 
 - Keep the verb surface small and behavior predictable; a new knob needs a real use case. See
   [EXTENDING.md](EXTENDING.md) for which mechanism a new capability should use (prefer the lowest rung).
+- A new knob PR ships the full set: a commented stub in `sluice.config.example.sh`, an entry in
+  [docs/configuration.md](docs/configuration.md), a row in the README knob table if it is headline,
+  and a `verify-<knob>.bats` gate suite (security knobs follow the `verify-security-<knob>.bats`
+  pattern).
+- A new agent preset is a rung-1 file - follow the preset contract in [agents/README.md](agents/README.md).
 - Match the [Conventional Commits](https://www.conventionalcommits.org) style already in the log
   (`feat:`, `fix:`, `docs:`, `chore:`, with a scope when it helps).
 - Keep docs lean - link to a single source of truth instead of duplicating it.
