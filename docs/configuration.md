@@ -139,6 +139,10 @@ Set these in your shell, not the config:
 - `SLUICE_RUNTIME` - `kata` runs the box under nerdctl/containerd with Kata Containers (an
   own-kernel micro-VM; Linux only, needs the Kata shim). The image still builds with
   `SLUICE_ENGINE` and is loaded across.
+- `SLUICE_BUILD_RETRIES` - `=N` retries a failed image build N times (default 0), for a flaky
+  registry or network in CI. A deterministic build error still fails after the retries.
+- `SLUICE_RM_PURGE_STATE` - `=1` makes `sluice rm` also delete the box's persisted state dir
+  (agent sessions/auth); by default `rm` keeps it. Best-effort on Linux (box-owned files may resist).
 - `SLUICE_YES` - `=1` auto-confirms non-interactive prompts (`prune`, the zero-config first
   run, `apply`).
 - `SLUICE_NO_BANNER` - non-empty suppresses the startup banner.

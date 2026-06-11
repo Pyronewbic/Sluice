@@ -7,8 +7,21 @@ case "${1:-run-default}" in
   rm)
     "$RUNNER" rm -f -v "$container" >/dev/null 2>&1 || true; "$ENGINE" rmi -f "$tag" >/dev/null 2>&1 || true
     _nov="$(remove_box_volumes "$container")"   # SLUICE_OVERLAY_DIRS volumes ride the box's lifecycle
-    _ovmsg=""; [ "${_nov:-0}" -gt 0 ] && _ovmsg=" + $_nov overlay volume(s)"
-    echo "[sluice] removed $container (container + image$_ovmsg)"; exit 0 ;;
+    _ovmsg=""; [ "${_nov:-0}" -gt 0 ] && _ovmsg=" + $_nov overlay volume(s) (box-only contents, e.g. a built node_modules, are gone)"
+    echo "[sluice] removed $container (container + image$_ovmsg)"
+    # Persisted state dirs (agent sessions/auth) live in a host store and SURVIVE rm by default.
+    # SLUICE_RM_PURGE_STATE=1 also deletes them (best-effort: box-chowned files may resist on Linux).
+    _store="${XDG_STATE_HOME:-$HOME/.local/state}/sluice/$slug"
+    if [ -n "${SLUICE_STATE_DIRS:-}" ] && [ -d "$_store" ]; then
+      if [ "${SLUICE_RM_PURGE_STATE:-}" = 1 ]; then
+        rm -rf "$_store" 2>/dev/null || true
+        [ -d "$_store" ] && echo "[sluice] ${E_YEL}note${E_RST}: could not fully remove $(_tilde "$_store") (box-owned files) - remove it manually" >&2 \
+                         || echo "[sluice] purged persisted state at $(_tilde "$_store")"
+      else
+        echo "${E_DIM}[sluice]${E_RST} kept persisted session state at $(_tilde "$_store") - SLUICE_RM_PURGE_STATE=1 to remove" >&2
+      fi
+    fi
+    exit 0 ;;
   logs)    "$RUNNER" logs -f "$container" ;;
   smoke)
     maybe_build
@@ -39,7 +52,7 @@ case "${1:-run-default}" in
       *)         die "usage: sluice lock [--check [--json] | --diff [--json] | --enforce [--json] | --sbom [--format cyclonedx|spdx] | --scan [--json] [--fail-on <sev>]]" ;;
     esac
     ;;
-  update)  build --no-cache; write_lock; exit 0 ;;
+  update)  build --no-cache; write_lock; echo "${E_DIM}[sluice]${E_RST} updated - the box is down; run 'sluice' to start it (or 'sluice rebuild' to rebuild + start)." >&2; exit 0 ;;
   shell)   banner; ensure_up; exec_in bash ;;
   run)
     shift

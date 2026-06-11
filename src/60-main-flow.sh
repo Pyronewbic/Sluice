@@ -54,6 +54,10 @@ EOF
     remove_box_volumes "$i" >/dev/null   # per-box SLUICE_OVERLAY_DIRS volumes go with the box
   done
   echo "[sluice] ${C_GRN}pruned $(printf '%s\n' "$imgs" | grep -c .) box(es).${C_RST}"
+  # Persisted state dirs (agent sessions/auth) live outside the boxes and are NOT removed by prune.
+  _store="${XDG_STATE_HOME:-$HOME/.local/state}/sluice"
+  [ -d "$_store" ] && [ -n "$(ls -A "$_store" 2>/dev/null)" ] && \
+    echo "${C_DIM}[sluice] note: persisted session state remains under $_store (remove manually if no longer needed).${C_RST}"
 }
 if [ "${1:-}" = prune ]; then
   case "${2:-}" in ""|--orphans) cmd_prune "${2:-}"; exit $? ;; *) die "usage: sluice prune [--orphans]" ;; esac
