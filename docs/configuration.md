@@ -66,7 +66,8 @@ What the filter guarantees - and does not - is in
   leading dot matches subdomains (`.example.com`). The one **no rebuild** knob - `sluice
   learn` edits it live.
 - `SLUICE_ALLOW_IPS` - fixed IPs/CIDRs for non-HTTP services, direct egress bypassing the
-  proxy. Scope each entry: `ip:port[/proto]` (a bare ip/cidr opens every port).
+  proxy. Scope each entry: `ip:port[/proto]`. A catch-all (`0.0.0.0/0`, any `/0`) is refused;
+  a colon-less entry (no port) is allowed but warns, since it opens every port to that host.
 - `SLUICE_POLICY_URL` - URL (http/https/file) returning a plain-text allowlist (one host per
   line, `#` comments), fetched on the host at container start and merged additively.
   Host-trusted: keep it a URL you control.
