@@ -94,3 +94,33 @@ load test_helper/common
   refute_output --partial "config from"
   rm -rf "$WORK"
 }
+
+# The banner's live-posture line (engine/hosts/hardening/mask + [risk]) via the __posture hook (no
+# engine; the real banner is TTY-gated). The launch banner doubles as a one-glance "what's the cage".
+@test "banner posture: engine, host count, hardening, mask" {
+  W="$(mktemp -d)"
+  printf 'SLUICE_SECCOMP=hardened\nSLUICE_MASK=".env*"\nSLUICE_ALLOW_DOMAINS="example.com"\nSLUICE_RUN_CMD="bash"\n' > "$W/sluice.config.sh"
+  run bash -c "cd '$W' && SLUICE_ENGINE=podman '$SLUICE' __posture"
+  assert_output --partial "podman"
+  assert_output --partial "hosts"
+  assert_output --partial "seccomp"
+  assert_output --partial "masked"
+  refute_output --partial "[risk]"
+  rm -rf "$W"
+}
+
+@test "banner posture: an allowlisted laundering host is flagged [risk]" {
+  W="$(mktemp -d)"
+  printf 'SLUICE_ALLOW_DOMAINS="api.anthropic.com"\nSLUICE_RUN_CMD="bash"\n' > "$W/sluice.config.sh"
+  run bash -c "cd '$W' && '$SLUICE' __posture"
+  assert_output --partial "[risk]"
+  rm -rf "$W"
+}
+
+@test "banner posture: a clean allowlist is not flagged" {
+  W="$(mktemp -d)"
+  printf 'SLUICE_ALLOW_DOMAINS="example.com"\nSLUICE_RUN_CMD="bash"\n' > "$W/sluice.config.sh"
+  run bash -c "cd '$W' && '$SLUICE' __posture"
+  refute_output --partial "[risk]"
+  rm -rf "$W"
+}
