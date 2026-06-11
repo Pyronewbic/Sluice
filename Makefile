@@ -7,16 +7,30 @@
 #   make setup        - fetch the vendored bats submodules (after a fresh clone).
 #   make build        - assemble bin/sluice from src/*.sh (edit the slices, not bin/sluice).
 BATS := test/bats/bin/bats
-GATE_BATS := $(filter-out $(wildcard test/nightly-*.bats),$(wildcard test/*.bats))
+# Gate suites split by COST, not filename: UNIT needs no container engine (fast, the no-Docker CI
+# lane); ENGINE builds real boxes (ACCEPT = the egress/run matrix, SECURITY = the danger knobs).
+# CI drives each lane from its target, so the Makefile is the single source of truth (no hand lists).
+UNIT_BATS     := test/init-detection.bats test/verify-install.bats test/verify-cli.bats \
+                 test/verify-doctor-checks.bats test/verify-agent-scaffold.bats \
+                 test/verify-laundering-gate.bats
+ACCEPT_BATS   := test/acceptance.bats test/acceptance-bump.bats test/verify-run-default.bats
+SECURITY_BATS := $(filter-out test/verify-laundering-gate.bats,$(wildcard test/verify-security-*.bats))
+ENGINE_BATS   := $(ACCEPT_BATS) $(SECURITY_BATS)
+GATE_BATS     := $(UNIT_BATS) $(ENGINE_BATS)
 SRC := $(sort $(wildcard src/*.sh))
 
-.PHONY: test test-nightly structure lint setup build build-check
+.PHONY: test test-unit test-engine test-acceptance test-security test-nightly structure lint setup build build-check _bats-check
 setup:
 	git submodule update --init --recursive
-
-test:
+_bats-check:
 	@test -x $(BATS) || { echo "bats missing - run 'make setup'"; exit 1; }
-	$(BATS) --print-output-on-failure $(GATE_BATS)
+
+# test = the whole gate; test-unit/-engine/-acceptance/-security = the cost lanes CI runs per job.
+test:            _bats-check ; $(BATS) --print-output-on-failure $(GATE_BATS)
+test-unit:       _bats-check ; $(BATS) --print-output-on-failure $(UNIT_BATS)
+test-engine:     _bats-check ; $(BATS) --print-output-on-failure $(ENGINE_BATS)
+test-acceptance: _bats-check ; $(BATS) --print-output-on-failure $(ACCEPT_BATS)
+test-security:   _bats-check ; $(BATS) --print-output-on-failure $(SECURITY_BATS)
 
 test-nightly:
 	@test -x $(BATS) || { echo "bats missing - run 'make setup'"; exit 1; }
