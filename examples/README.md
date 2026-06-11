@@ -3,14 +3,18 @@
 Drop-in `sluice.config.sh` presets. Copy one into a project, run `sluice` - and it's
 non-root, sees only that directory, and can only reach the hosts the preset allows.
 
-Four demos live here, each self-contained (no repo of your own needed) - the "shows" column says which slice of sluice it demonstrates.
+Each demo is self-contained (no repo of your own needed) - the "covers" column says which
+everyday task it stands in for. Bread-and-butter first; skim down for the security mechanics.
 
-| preset | shows | copy & run |
+| preset | covers | copy & run |
 |---|---|---|
-| [firewall](firewall.config.sh) | the **egress firewall as a security control** - a fetch to an allowlisted host succeeds, an exfil attempt to a non-allowlisted host (and a raw IP) is **blocked**. Runs to completion, no server. | `mkdir d && cp examples/firewall.config.sh d/sluice.config.sh && cd d && sluice` |
-| [jupyter](jupyter.config.sh) | **serving a web app** (Python/pip, JupyterLab on `:8888`) that needs **no** runtime egress at all - the firewall stays fully locked while it serves. | `mkdir d && cp examples/jupyter.config.sh d/sluice.config.sh && cd d && sluice` |
-| [nix](nix.config.sh) | **Nix composed with sluice**: a reproducible, pinned toolchain fetched + baked at **build** time, then run with the firewall fully locked (no egress). Heavy (~1.5GB image). | `mkdir d && cp examples/nix.config.sh d/sluice.config.sh && cd d && sluice` |
-| [database](database.config.sh) | the **`SLUICE_ALLOW_IPS` escape hatch** for a non-HTTP service: a reviewed fixed IP gets direct egress on any port (Postgres/Redis/MySQL), while every other IP stays default-DROP. Made visible with a raw TCP probe; no server. | `mkdir d && cp examples/database.config.sh d/sluice.config.sh && cd d && sluice` |
+| [webapp](webapp.config.sh) | **the everyday loop** - serve the app you have, watch its one API call get blocked, then `sluice learn --apply` to allow exactly that host (live, no rebuild). A Node service on `:3000`. | `mkdir wa && cp examples/webapp.config.sh wa/sluice.config.sh && cd wa && sluice` |
+| [overlay](overlay.config.sh) | **let a tool edit a copy, then review** - host repo stays read-only; the box writes to a throwaway overlay you inspect with `sluice diff` and commit with `sluice apply`. The human gate for a YOLO agent. | `mkdir ov && cp examples/overlay.config.sh ov/sluice.config.sh && cd ov && echo original > notes.txt && sluice` |
+| sandbox a coding agent | **not a config** - `sluice agent claude` (or codex/gemini/...) drops a sandboxed agent into the repo. Presets, auth forwarding, and the YOLO rationale: [docs/agents.md](../docs/agents.md). | `sluice agent claude` |
+| [firewall](firewall.config.sh) | **prove the boundary** - a fetch to an allowlisted host succeeds, an exfil attempt to a non-allowlisted host (and a raw IP) is **blocked**. Runs to completion, no server. | `mkdir d && cp examples/firewall.config.sh d/sluice.config.sh && cd d && sluice` |
+| [database](database.config.sh) | the **`SLUICE_ALLOW_IPS` escape hatch** for a non-HTTP service: a reviewed fixed IP gets direct egress on any port (Postgres/Redis/MySQL), while every other IP stays default-DROP. Raw TCP probe; no server. | `mkdir d && cp examples/database.config.sh d/sluice.config.sh && cd d && sluice` |
+| [jupyter](jupyter.config.sh) | **serve with zero runtime egress** (Python/pip, JupyterLab on `:8888`) - the firewall stays fully locked while it serves. | `mkdir d && cp examples/jupyter.config.sh d/sluice.config.sh && cd d && sluice` |
+| [nix](nix.config.sh) | **a pinned toolchain** fetched + baked at **build** time, then run with the firewall fully locked (no egress). Niche, heavy (~1.5GB image). | `mkdir d && cp examples/nix.config.sh d/sluice.config.sh && cd d && sluice` |
 
 ## Your own stack
 
@@ -62,9 +66,5 @@ credential-stripped container (`SLUICE_ENV`, prelaunch, and persisted auth strip
 offers the same per-host review over everything it reached - a loudly-warned,
 trusted-code-only escape hatch (see [THREAT_MODEL.md](../THREAT_MODEL.md)).
 
+The [webapp](webapp.config.sh) preset above runs exactly this loop end to end.
 While the box is running, `sluice doctor` shows the same last-run blocked list.
-
-## Coding agents
-
-`sluice agent claude` drops a sandboxed coding agent into the repo - presets, auth
-forwarding, and the YOLO rationale are in [docs/agents.md](../docs/agents.md).
