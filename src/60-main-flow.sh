@@ -248,6 +248,24 @@ warn_laundering() {
 }
 case "${1:-run-default}" in run-default|run|shell) warn_laundering ;; esac
 
+# SLUICE_ALLOW_IPS is a direct-egress escape hatch that BYPASSES squid (init-firewall.sh ACCEPTs it
+# raw), and unlike the other path-y knobs it had no floor: a catch-all (0.0.0.0/0) opens all direct
+# egress and a colon-less entry opens EVERY port to that host. Reject the catch-alls; loudly warn on
+# an all-ports entry. Each entry is ip[/cidr][:port[/proto]].
+validate_allow_ips() {
+  local e
+  for e in ${SLUICE_ALLOW_IPS:-}; do
+    case "$e" in
+      0.0.0.0|0.0.0.0:*|::|*/0) die "SLUICE_ALLOW_IPS='$e' opens direct egress to everything - refusing. Scope it to a host and port, e.g. 10.0.0.5:5432" ;;
+    esac
+    case "$e" in
+      *:*) ;;   # ip:port - scoped, fine
+      *)   echo "${E_YEL}[sluice] WARNING:${E_RST} SLUICE_ALLOW_IPS '$e' has no port - it opens EVERY port to that host, direct (bypasses the hostname filter). Scope it: ${e}:PORT" >&2 ;;
+    esac
+  done
+}
+case "${1:-run-default}" in run-default|run|shell|build|rebuild|update) validate_allow_ips ;; esac
+
 # build: assemble a temp context (core + this project's config) and build
 # Verify a published base image's cosign signature (keyless/OIDC). Soft by default: warn if
 # cosign is absent or the image is unsigned; SLUICE_REQUIRE_SIGNED=1 makes either case fatal.
