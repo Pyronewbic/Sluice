@@ -12,9 +12,22 @@ teardown_file() { destroy_box harden harden; }
   assert_output --partial "no-new-privileges"
 }
 
-@test "harden: a pids-limit is set" {
+@test "harden: the default pids-limit is 4096" {
   run "$ENG" inspect sluice-sectest-harden --format '{{.HostConfig.PidsLimit}}'
-  [ "${output:-0}" -gt 0 ]
+  assert_output "4096"   # the documented default - a regression to 0/unset must fail, not pass on >0
+}
+
+# Custom resource caps are actually applied to the box (not just echoed by doctor). Own box so the
+# harden box keeps the default above.
+@test "harden: SLUICE_PIDS_LIMIT and SLUICE_MEMORY are applied to the box" {
+  local d; d="$(mktemp -d)"; mkdir -p "$d/cap"
+  printf 'SLUICE_NAME="sectest-harden-cap"\nSLUICE_PIDS_LIMIT="64"\nSLUICE_MEMORY="256m"\nSLUICE_RUN_CMD="bash"\n' > "$d/cap/sluice.config.sh"
+  ( cd "$d/cap" && "$SLUICE" run true ) >/dev/null 2>&1 || true
+  run "$ENG" inspect sluice-sectest-harden-cap --format '{{.HostConfig.PidsLimit}} {{.HostConfig.Memory}}'
+  assert_output "64 268435456"   # 256m in bytes
+  nuke_tree sluice-sectest-harden-cap "$d"
+  "$ENG" rm -f -v sluice-sectest-harden-cap >/dev/null 2>&1 || true
+  "$ENG" rmi -f sluice-sectest-harden-cap >/dev/null 2>&1 || true
 }
 
 @test "harden: the session has zero effective caps" {
