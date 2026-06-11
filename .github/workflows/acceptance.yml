@@ -49,37 +49,15 @@ jobs:
       - name: Assert baked invariants (no sudo, uid 1000, firewall packages)
         run: container-structure-test test --image sluice-base:gate --config tests/structure.yaml
 
-  detection:
-    name: init detection (unit)
+  unit:
+    name: unit suites (no Docker)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with: { submodules: recursive }
-      - name: Unit tests (sluice init stack detection, no Docker)
-        run: test/bats/bin/bats --print-output-on-failure test/init-detection.bats
-
-  install:
-    name: installer smoke (no Docker)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-        with: { submodules: recursive }
-      - name: install.sh symlinks + runs the CLI
-        run: test/bats/bin/bats --print-output-on-failure test/verify-install.bats
-
-  cli:
-    name: CLI surface (unit, no Docker)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-        with: { submodules: recursive }
-      - name: version --json, per-command --help, parent_of, completions
-        run: test/bats/bin/bats --print-output-on-failure test/verify-cli.bats
-      - name: doctor project scans (mask, symlinks, overlays) + agent scaffold
-        run: test/bats/bin/bats --print-output-on-failure test/verify-doctor-checks.bats test/verify-agent-scaffold.bats
+      - name: init detection, CLI surface, doctor scans, agent scaffold, installer, laundering gate
+        run: make test-unit   # the engine-free lane; membership lives in the Makefile (UNIT_BATS)
 
   docker:
     name: Linux, Docker
@@ -88,8 +66,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { submodules: recursive }
-      - name: Acceptance tests (Docker)
-        run: test/bats/bin/bats --print-output-on-failure test/acceptance.bats test/acceptance-bump.bats test/verify-run-default.bats
+      - name: Acceptance tests (egress/run matrix)
+        run: make test-acceptance
 
   security:
     name: security escape-hatches (Docker)
@@ -98,8 +76,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { submodules: recursive }
-      - name: Verify the danger knobs (allow-ips, prelaunch, state-dirs, worktree, mounts, config-hash, harden, seccomp, readonly, workspace, doh)
-        run: test/bats/bin/bats --print-output-on-failure test/verify-security-*.bats
+      - name: Verify the danger knobs (mask, seccomp, readonly, workspace/apply, doh, allow-ips, ...)
+        run: make test-security
 
   podman-rootless:
     name: Linux, Podman (rootless, best-effort)
@@ -122,4 +100,4 @@ jobs:
         # No sudo: runs in the user namespace. The egress proxy needs route_localnet /
         # disable_ipv6 sysctls + in-netns iptables - this job reports whether rootless allows
         # them. The egress allow/deny/IPv6/non-root matrix is the signal.
-        run: SLUICE_ENGINE=podman test/bats/bin/bats --print-output-on-failure test/acceptance.bats test/acceptance-bump.bats
+        run: SLUICE_ENGINE=podman make test-acceptance
