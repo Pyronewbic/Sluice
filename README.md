@@ -209,9 +209,10 @@ and exact log/console text.
 
 ## Examples
 
-The **[gallery](examples/README.md)** is self-contained demos: the firewall/exfil block
-made visible (with the full `learn` walkthrough), JupyterLab served from a box, and a Nix
-toolchain baked at build and contained at runtime.
+The **[gallery](examples/README.md)** is self-contained demos, everyday tasks first: serve
+an app and `learn` its one upstream live, let a tool edit a copy you review with
+`diff`/`apply`, the firewall/exfil block made visible, a database over `SLUICE_ALLOW_IPS`,
+and a Nix toolchain baked at build and contained at runtime.
 
 ## Layout
 
