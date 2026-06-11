@@ -10,6 +10,8 @@ _sluice() {
     'learn:review blocked hosts and allowlist your picks'
     'shell:a bash shell in the sandbox'
     'run:run an ad-hoc command in the sandbox'
+    'diff:(overlay workspace) show what the box changed vs your repo'
+    'apply:(overlay workspace) write the box changes back to your repo'
     'build:build the image if missing or changed'
     'rebuild:build + recreate the container'
     'update:rebuild from scratch + refresh sluice.lock'
@@ -68,7 +70,7 @@ _sluice() {
     ls)      _arguments '--running[running boxes only]' '--orphans[orphan boxes only]' '--stack[filter by stack]:stack:' '--egress[live blocked-egress counts]' '--json[machine-readable]' '--help[usage]' ;;
     prune)   _arguments '--orphans[remove only orphans]' '--help[usage]' ;;
     doctor|egress|version) _arguments '--json[machine-readable]' '--help[usage]' ;;
-    init)    _arguments '--force[overwrite]' '--help[usage]' ;;
+    init)    _arguments '--force[overwrite]' '--update[re-detect, keep your edits]' '--help[usage]' ;;
     agent)
       local d names
       d="${$(readlink -f ${commands[sluice]} 2>/dev/null):h}/../agents"

@@ -18,7 +18,7 @@ _sluice() {
     cur="${COMP_WORDS[COMP_CWORD]}"; prev="${COMP_WORDS[COMP_CWORD-1]}"; cword=$COMP_CWORD
   }
 
-  local cmds="agent init learn shell run build rebuild update stop rm prune doctor ls egress logs lock smoke version help"
+  local cmds="agent init learn shell run diff apply build rebuild update stop rm prune doctor ls egress logs lock smoke version help"
 
   # A box name right after the leading -b/--box.
   case "$prev" in -b|--box) COMPREPLY=( $(compgen -W "$(_sluice_boxes)" -- "$cur") ); return 0 ;; esac
@@ -41,7 +41,7 @@ _sluice() {
     ls)      COMPREPLY=( $(compgen -W "--running --orphans --stack --egress --json --help" -- "$cur") ) ;;
     prune)   COMPREPLY=( $(compgen -W "--orphans --help" -- "$cur") ) ;;
     doctor|egress|version) COMPREPLY=( $(compgen -W "--json --help" -- "$cur") ) ;;
-    init)    COMPREPLY=( $(compgen -W "--force --help" -- "$cur") ) ;;
+    init)    COMPREPLY=( $(compgen -W "--force --update --help" -- "$cur") ) ;;
     agent)
       # Agent names from the install's agents/ dir (resolve via the sluice on PATH).
       local d names

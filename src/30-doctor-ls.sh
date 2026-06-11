@@ -106,7 +106,7 @@ cmd_doctor() {
   elif command -v docker >/dev/null 2>&1; then eng=docker
   elif command -v podman >/dev/null 2>&1; then eng=podman; fi
   if [ -n "$eng" ] && command -v "$eng" >/dev/null 2>&1; then
-    ENGINE="$eng"; resolve_runner
+    ENGINE="$eng"; resolve_runner lenient
     if "$eng" info >/dev/null 2>&1; then
       _doc engine "$("$eng" --version 2>/dev/null | head -1)"
     else
@@ -243,7 +243,7 @@ cmd_doctor_json() {
   elif command -v docker >/dev/null 2>&1; then eng=docker
   elif command -v podman >/dev/null 2>&1; then eng=podman; fi
   if [ -n "$eng" ] && command -v "$eng" >/dev/null 2>&1; then
-    ENGINE="$eng"; resolve_runner; engine_ver="$("$eng" --version 2>/dev/null | head -1)"
+    ENGINE="$eng"; resolve_runner lenient; engine_ver="$("$eng" --version 2>/dev/null | head -1)"
     "$eng" info >/dev/null 2>&1 && daemon=true || eng=""
   else eng=""; fi
 

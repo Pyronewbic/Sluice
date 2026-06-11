@@ -10,7 +10,10 @@ on:
     inputs:
       agents:
         description: "space-separated agents to verify"
-        default: "claude codex gemini aider cursor opencode amp"
+        default: "claude codex gemini aider cursor opencode amp qwen crush"   # all 9 presets
+
+permissions:
+  contents: read   # least privilege; auth round-trips read repo secrets via env, not the token
 
 jobs:
   verify:
@@ -18,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with: { submodules: recursive }
       - name: Verify agent presets
         env:
