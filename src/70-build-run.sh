@@ -54,11 +54,17 @@ build() {
     args+=(--build-arg "BASE_IMAGE=$SLUICE_BASE_IMAGE")     # project layer FROM the signed base
   fi
   echo "[sluice] building $tag ..."
-  if "$ENGINE" build "${args[@]}" -t "$tag" "$tmp"; then
-    rm -rf "$tmp"
-  else
-    rm -rf "$tmp"; die "image build failed"
-  fi
+  # SLUICE_BUILD_RETRIES (default 0): retry the build a few times for a flaky registry/network. Off
+  # by default so a deterministic build error still fails fast; set e.g. =2 in CI.
+  local _retries="${SLUICE_BUILD_RETRIES:-0}"; case "$_retries" in ''|*[!0-9]*) _retries=0 ;; esac
+  local _try=0 _ok=""
+  while :; do
+    if "$ENGINE" build "${args[@]}" -t "$tag" "$tmp"; then _ok=1; break; fi
+    [ "$_try" -lt "$_retries" ] || break
+    _try=$((_try+1)); echo "[sluice] ${E_YEL}build failed${E_RST} - retry $_try/$_retries ..." >&2; sleep 2
+  done
+  rm -rf "$tmp"
+  [ -n "$_ok" ] || die "image build failed (transient registry/network error? re-run, or set SLUICE_BUILD_RETRIES=N to auto-retry)"
   "$RUNNER" rm -f -v "$container" >/dev/null 2>&1 || true   # rebuilt image -> fresh container
   runtime_sync_image force
 }
