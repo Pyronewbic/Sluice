@@ -14,9 +14,8 @@ setup_file() {
 teardown_file() {
   ( cd "$WORK/p" 2>/dev/null && "$SLUICE" stop ) >/dev/null 2>&1 || true
   "$ENG" rm -f -v sluice-rundefault >/dev/null 2>&1 || true
-  chown_back_tree sluice-rundefault "$WORK"
+  nuke_tree sluice-rundefault "$WORK"   # rootless-podman-safe: chown_back_tree+rm EACCESes on the box's subuid files
   "$ENG" rmi -f sluice-rundefault >/dev/null 2>&1 || true
-  rm -rf "$WORK"
 }
 
 @test "run-default: bare sluice propagates SLUICE_RUN_CMD's exit status (exit 7 -> 7)" {
