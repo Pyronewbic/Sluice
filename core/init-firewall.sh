@@ -76,25 +76,35 @@ if command -v ip6tables >/dev/null 2>&1; then
   ip6tables -P OUTPUT  DROP 2>/dev/null || true
 fi
 
+# Prove the default-DROP actually took effect (not a silent no-op the `|| true`s above could mask).
+# These are policy assertions - instant, no live probe - and run in both modes (audit only opens the
+# squid allowlist; the OUTPUT/v6 structure stays default-closed). A non-allowlisted / non-80-443 /
+# IPv6 path must NOT be able to escape.
+case "$(iptables -S OUTPUT 2>/dev/null | head -1)" in
+  '-P OUTPUT DROP') ;;
+  *) echo "[firewall] FAIL: OUTPUT policy is not DROP - egress not default-closed" >&2; exit 1 ;;
+esac
+# If ip6tables is usable, its OUTPUT policy MUST be DROP; otherwise the --sysctl disable_ipv6 set at
+# run is the closure (no v6 stack to filter). Catches the double-no-op that would leave v6 wide open.
+if command -v ip6tables >/dev/null 2>&1 && ip6tables -S OUTPUT >/dev/null 2>&1; then
+  case "$(ip6tables -S OUTPUT 2>/dev/null | head -1)" in
+    '-P OUTPUT DROP') ;;
+    *) echo "[firewall] FAIL: IPv6 OUTPUT is not default-DROP - v6 egress may be open" >&2; exit 1 ;;
+  esac
+fi
+
 # Audit mode (learn --audit) opens all HTTP/HTTPS via squid, so the enforce-mode deny asserts below
 # would fail closed - skip them. Non-HTTP ports + IPv6 stay default-DROP above; the audit container
 # is ephemeral + credential-stripped.
 if [ "${SLUICE_AUDIT:-}" = 1 ]; then
   echo "[firewall] AUDIT MODE: egress OPEN to all HTTP/HTTPS hosts - deny self-tests skipped" >&2
 else
-  # Deny self-test: a non-allowlisted host must be blocked. Pick a canary not in this allowlist.
-  deny_canary=""
-  for c in example.com example.net example.org; do
-    grep -qiF "$c" /etc/squid/allowlist.txt 2>/dev/null && continue
-    deny_canary="$c"; break
-  done
-  if [ -n "$deny_canary" ]; then
-    if curl -sS -o /dev/null --max-time 6 "https://$deny_canary" 2>/dev/null; then
-      echo "[firewall] FAIL: $deny_canary reachable - hostname filtering not enforced" >&2
-      exit 1
-    fi
-  else
-    echo "[firewall] WARN: every deny-canary is allowlisted - skipping the deny self-test" >&2
+  # Deny self-test: a guaranteed-never-allowlisted host must be blocked. A reserved .invalid name
+  # (RFC 2606) can't accidentally appear in a user's allowlist, so this check always runs - the old
+  # example.* canaries would silently skip if a config happened to allow all three.
+  if curl -sS -o /dev/null --max-time 6 https://blocked.sluice.invalid 2>/dev/null; then
+    echo "[firewall] FAIL: a non-allowlisted host was reachable - hostname filtering not enforced" >&2
+    exit 1
   fi
   # Deny: a direct-IP HTTPS connection carries no SNI -> the proxy must block it.
   if curl -sS -o /dev/null --max-time 6 https://1.1.1.1 2>/dev/null; then
