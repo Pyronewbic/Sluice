@@ -61,7 +61,7 @@ commandTests:
   - name: "no setuid-root binaries remain"
     command: sh
     args: ["-c", "find / -xdev -type f -perm -4000 2>/dev/null | wc -l | tr -d ' '"]
-    expectedOutput: ["^0$"]
+    expectedOutput: ["^0\\s*$"]   # \s* absorbs wc's trailing newline (matches the uid-1000 test)
 
 metadataTest:
   entrypoint: ["/usr/local/bin/entrypoint.sh"]
