@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Shared bats helper for the sluice suites.  In a .bats file:  load test_helper/common
-# Provides ROOT / SLUICE / ENG, bats-assert/support/file, and the box helpers ported from the old
-# test/lib.sh (host_own, teardown_box, egress assertions). bats gives each @test process isolation +
-# a real failure on a failed assert - no more silent ok/bad counter or false-passes.
+# Provides ROOT / SLUICE / ENG, bats-assert/support/file, and the box helpers: make_box/destroy_box
+# (the canonical engine-suite setup_file/teardown_file), host_own, nuke_tree, egress assertions. bats
+# gives each @test process isolation + a real failure on a failed assert - no silent ok/bad counter.
 
 ROOT="$(cd "${BATS_TEST_DIRNAME}/.." && pwd)"
 SLUICE="$ROOT/bin/sluice"
@@ -17,12 +17,27 @@ load "${BATS_TEST_DIRNAME}/test_helper/bats-file/load"
 # run) so a host-side rewrite under it succeeds on Linux (runner uid != 1000). Container must be up.
 host_own() { "$ENG" exec --user root "$1" chown -R "$(id -u):$(id -g)" "$2" >/dev/null 2>&1 || true; }
 
-# teardown_box <container> <workdir>: chown back, stop, drop the image. Use in teardown_file.
-teardown_box() {
-  host_own "$1" "$2"
-  ( cd "$2" 2>/dev/null && "$SLUICE" stop ) >/dev/null 2>&1 || true
-  "$ENG" rm -f -v "$1" >/dev/null 2>&1 || true
-  "$ENG" rmi -f "$1" >/dev/null 2>&1 || true
+# make_box <slug> <subdir> [extra config lines...]: the canonical engine-suite setup_file. mktemp a
+# WORK dir, write WORK/<subdir>/sluice.config.sh with SLUICE_NAME="sectest-<slug>" plus any extra
+# lines, then build + warm the box by running it once. Exports WORK. The box is sluice-sectest-<slug>.
+# A suite that calls make_box IS an engine suite (belongs in ENGINE_BATS / a Docker CI job).
+make_box() {
+  local slug="$1" sub="$2"; shift 2
+  export WORK; WORK="$(mktemp -d)"; mkdir -p "$WORK/$sub"
+  { printf 'SLUICE_NAME="sectest-%s"\n' "$slug"; [ "$#" -gt 0 ] && printf '%s\n' "$@"; } > "$WORK/$sub/sluice.config.sh"
+  ( cd "$WORK/$sub" && "$SLUICE" run true ) >/dev/null 2>&1 || true
+}
+
+# destroy_box <slug> <subdir>: the canonical teardown_file. Stop the box, drop its container, nuke the
+# (uid-1000-chowned) WORK tree, then drop the image. Routes through nuke_tree so it is correct under
+# BOTH docker and rootless podman (a bare host rm -rf EACCESes on the box's subuid'd files). Order
+# matters: nuke_tree runs a throwaway container FROM the image, so rmi comes last.
+destroy_box() {
+  local c="sluice-sectest-$1"
+  ( cd "$WORK/$2" 2>/dev/null && "$SLUICE" stop ) >/dev/null 2>&1 || true
+  "$ENG" rm -f -v "$c" >/dev/null 2>&1 || true
+  nuke_tree "$c" "$WORK" || true
+  "$ENG" rmi -f "$c" >/dev/null 2>&1 || true
 }
 
 # chown_back_tree <image> <dir>: chown a whole tree back to the host uid via a throwaway root

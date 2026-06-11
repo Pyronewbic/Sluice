@@ -4,19 +4,8 @@
 # verify-security.sh. setup_file builds + brings up an empty box.
 load test_helper/common
 
-setup_file() {
-  export WORK; WORK="$(mktemp -d)"; mkdir -p "$WORK/harden"
-  printf 'SLUICE_NAME="sectest-harden"\nSLUICE_RUN_CMD="bash"\n' > "$WORK/harden/sluice.config.sh"
-  ( cd "$WORK/harden" && "$SLUICE" run true ) >/dev/null 2>&1 || true
-}
-
-teardown_file() {
-  chown_back_tree sluice-sectest-harden "$WORK"
-  ( cd "$WORK/harden" 2>/dev/null && "$SLUICE" stop ) >/dev/null 2>&1 || true
-  "$ENG" rm -f -v sluice-sectest-harden >/dev/null 2>&1 || true
-  "$ENG" rmi -f sluice-sectest-harden >/dev/null 2>&1 || true
-  rm -rf "$WORK"
-}
+setup_file()    { make_box harden harden 'SLUICE_RUN_CMD="bash"'; }
+teardown_file() { destroy_box harden harden; }
 
 @test "harden: no-new-privileges is set" {
   run "$ENG" inspect sluice-sectest-harden --format '{{.HostConfig.SecurityOpt}}'
