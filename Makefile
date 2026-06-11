@@ -12,7 +12,7 @@ BATS := test/bats/bin/bats
 # CI drives each lane from its target, so the Makefile is the single source of truth (no hand lists).
 UNIT_BATS     := test/init-detection.bats test/verify-install.bats test/verify-cli.bats \
                  test/verify-doctor-checks.bats test/verify-agent-scaffold.bats \
-                 test/verify-laundering-gate.bats
+                 test/verify-laundering-gate.bats test/verify-signed-base.bats
 ACCEPT_BATS   := test/acceptance.bats test/acceptance-bump.bats test/verify-run-default.bats
 SECURITY_BATS := $(filter-out test/verify-laundering-gate.bats,$(wildcard test/verify-security-*.bats))
 ENGINE_BATS   := $(ACCEPT_BATS) $(SECURITY_BATS)
