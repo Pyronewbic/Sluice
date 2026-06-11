@@ -71,8 +71,11 @@ The guarantees below hold only while these do:
 - **Secret exfiltration to arbitrary endpoints** -> default-DROP egress, enforced by an
   in-sluice **hostname-filtering proxy** (squid): all HTTP/HTTPS is redirected through it and
   allowed by **Host / TLS-SNI** (spliced, never decrypted), so the decision is by *domain*
-  and survives IP rotation. Only the base hosts + `SLUICE_ALLOW_DOMAINS` are reachable; the
-  boot self-test fails closed if a denied host or a direct-IP connection is reachable.
+  and survives IP rotation. Only the base hosts + `SLUICE_ALLOW_DOMAINS` are reachable. The boot
+  self-test fails closed if a denied host (probed with a reserved `.invalid` name that can never be
+  allowlisted, so the check always runs) or a direct-IP connection is reachable, and asserts that the
+  IPv4 and IPv6 `OUTPUT` policies are actually `DROP` - so a silently-failed default-DROP can't leave
+  egress open while the box reports `ready`.
 - **IP-literal / DNS / IPv6 bypasses** -> a direct-IP HTTPS connection has no SNI ->
   terminated; IPv6 is disabled entirely (we proxy v4 only, so a dual-stack app can't slip out over
   v6). **DNS resolution is scoped to the egress allowlist**: dnsmasq forwards only allowlisted names,
@@ -101,11 +104,13 @@ The guarantees below hold only while these do:
   than the pattern reaches - is not protected. `sluice doctor` warns when secret-looking
   files (`.env*`, `*.pem`, `*key*.json`, ...) are present in the mount and unmasked.
 - **Host privilege escalation** -> sessions run non-root (uid 1000) with **no effective
-  capabilities**; no Docker socket, no Docker-in-Docker, no in-box `sudo` (setuid). The container
+  capabilities**; no Docker socket, no Docker-in-Docker, no in-box `sudo`. The base image is built
+  with **every setuid/setgid bit stripped** (the shadow package's `passwd`/`chsh`/... are de-setuid
+  at build), so uid 1000 has no setuid-root primitive *even independent of* `no-new-privileges` -
+  which is also set, blocking any setuid path to root as a second layer. The container
   drops ALL capabilities and adds back only what the root entrypoint needs at boot (chown the mount,
-  drop squid to its uid, run the firewall, bind DNS, reload squid); `no-new-privileges` blocks any
-  setuid path to root. So even a compromised in-box process has no route to the capabilities or to
-  root. `--pids-limit` (`SLUICE_PIDS_LIMIT`) and optional `--memory` (`SLUICE_MEMORY`) keep a runaway
+  drop squid to its uid, run the firewall, bind DNS, reload squid). So even a compromised in-box
+  process has no route to the capabilities or to root. `--pids-limit` (`SLUICE_PIDS_LIMIT`) and optional `--memory` (`SLUICE_MEMORY`) keep a runaway
   agent or build from exhausting the host. An opt-in hardened seccomp profile
   (`SLUICE_SECCOMP=hardened`) additionally errors the in-container namespace-creation / tracing /
   keyctl / mount syscall class; its denylist is a strict **superset of the engine default**, so it
@@ -205,8 +210,9 @@ audit possible, and `SLUICE_EGRESS_MAX_BYTES` can gate CI on volume.
 
 ---
 
-_Last reviewed 2026-06-10 against sluice 0.8.0 (released) + the post-release hardening on main: seccomp
-(default-superset / browser / audit), the egress work (allowlist-scoped DNS, port-scoped
-`SLUICE_ALLOW_IPS`, laundering-host gate, durable egress receipt + `SLUICE_EGRESS_MAX_BYTES`), and
-in-repo secret masking (`SLUICE_MASK`). Revisit when the egress path, mount model, or runtime options
-change._
+_Last reviewed 2026-06-11 against sluice 0.8.0 (released) + the post-release hardening on main: seccomp
+(default-superset / browser / audit), the egress work (allowlist-scoped DNS, port-scoped + validated
+`SLUICE_ALLOW_IPS`, laundering-host gate, durable egress receipt + `SLUICE_EGRESS_MAX_BYTES`), in-repo
+secret masking (`SLUICE_MASK`), the DoH-filtered live `learn` reload, the stripped-setuid base, and the
+boot self-test's default-DROP policy assertions. Revisit when the egress path, mount model, or runtime
+options change._

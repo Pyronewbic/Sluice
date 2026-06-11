@@ -58,8 +58,8 @@ SLUICE_BASE_IMAGE=""
 SLUICE_ALLOW_DOMAINS=""
 
 # Fixed IPs/CIDRs for NON-HTTP services - direct egress, bypassing the hostname proxy.
-# Scope each to one port with ip:port[/proto]; a bare ip/cidr opens EVERY port.
-# e.g. "10.0.0.5:5432" (Postgres) "10.0.0.6:6379/tcp" (Redis) "203.0.113.7/32"
+# Scope each to one port with ip:port[/proto]; a colon-less entry opens EVERY port (warns), and a
+# catch-all (0.0.0.0/0, any /0) is refused. e.g. "10.0.0.5:5432" (Postgres) "10.0.0.6:6379/tcp"
 SLUICE_ALLOW_IPS=""
 
 # Central egress policy: a URL (http/https/file) returning a plain-text allowlist (one host
