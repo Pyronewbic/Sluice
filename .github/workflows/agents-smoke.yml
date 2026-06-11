@@ -11,13 +11,16 @@ on:
     - cron: "0 7 * * 1"   # Mondays 07:00 UTC
   workflow_dispatch:
 
+permissions:
+  contents: read   # least privilege: cred-free smoke only reads the repo
+
 jobs:
   smoke:
     name: agent presets (cred-free)
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with: { submodules: recursive }
       - name: Verify agent presets
         # AGENTS unset -> all presets; no key set -> live probes are no-ops (cred-free gate only).

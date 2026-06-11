@@ -9,13 +9,16 @@ on:
     branches: [main]   # branch pushes run via pull_request below; this avoids double runs
   pull_request:
 
+permissions:
+  contents: read   # least privilege: these jobs only read the repo
+
 jobs:
   lint:
     name: lint (shellcheck + shfmt)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: bin/sluice is in sync with src/ (assembled launcher)
         run: make build-check
       - name: shellcheck (gate)
@@ -31,7 +34,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Build the base stage
         # Retry: the BuildKit syntax frontend + base layers pull from registries that occasionally
         # time out on shared runners (a transient Docker Hub i/o timeout, not a Dockerfile problem).
@@ -54,7 +57,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with: { submodules: recursive }
       - name: init detection, CLI surface, doctor scans, agent scaffold, installer, laundering gate
         run: make test-unit   # the engine-free lane; membership lives in the Makefile (UNIT_BATS)
@@ -64,7 +67,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with: { submodules: recursive }
       - name: Acceptance tests (egress/run matrix)
         run: make test-acceptance
@@ -74,7 +77,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with: { submodules: recursive }
       - name: Verify the danger knobs (mask, seccomp, readonly, workspace/apply, doh, allow-ips, ...)
         run: make test-security
@@ -85,7 +88,7 @@ jobs:
     timeout-minutes: 25
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with: { submodules: recursive }
       - name: Install + configure rootless podman
         run: |

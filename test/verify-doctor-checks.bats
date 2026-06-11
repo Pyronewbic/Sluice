@@ -231,3 +231,11 @@ assert d['risk'] == {'laundering_hosts': [], 'doh_hosts': [], 'allow_doh': False
 assert d['mounts'] == [], d['mounts']
 "
 }
+
+# doctor must not die on a typo'd SLUICE_RUNTIME - it's the command you run to DIAGNOSE that.
+@test "doctor: a bad SLUICE_RUNTIME warns and still reports (does not die)" {
+  printf 'SLUICE_RUN_CMD="bash"\n' > "$WORK/sluice.config.sh"
+  run bash -c "cd '$WORK' && SLUICE_RUNTIME=kat '$SLUICE' doctor"
+  assert_success
+  assert_output --partial "not supported"
+}

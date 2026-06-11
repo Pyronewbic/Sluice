@@ -78,12 +78,18 @@ resolve_engine() {
 
 # $RUNNER (the run/exec engine) + Kata run opts from SLUICE_RUNTIME, given $ENGINE (the build engine).
 # Shared by resolve_engine (which preflights first) and the lenient `doctor` probe. Default -> RUNNER==ENGINE.
+# $1=lenient: warn + fall back to RUNNER==ENGINE on an unknown value instead of dying, so `doctor` -
+# the command you run BECAUSE the runtime is misconfigured - still reports.
 resolve_runner() {
   RUNNER="$ENGINE"; RUNTIME_RUN_OPTS=()
   case "${SLUICE_RUNTIME:-}" in
     kata) RUNNER=nerdctl; RUNTIME_RUN_OPTS=(--runtime io.containerd.kata.v2) ;;
     ""|docker|podman|"$ENGINE") ;;
-    *) die "SLUICE_RUNTIME='${SLUICE_RUNTIME:-}' is not supported (use 'kata', or leave it unset for docker/podman)" ;;
+    *) if [ "${1:-}" = lenient ]; then
+         echo "${E_YEL:-}[sluice] note:${E_RST:-} SLUICE_RUNTIME='${SLUICE_RUNTIME}' is not supported - falling back to $ENGINE (use 'kata' or leave it unset)." >&2
+       else
+         die "SLUICE_RUNTIME='${SLUICE_RUNTIME:-}' is not supported (use 'kata', or leave it unset for docker/podman)"
+       fi ;;
   esac
 }
 
