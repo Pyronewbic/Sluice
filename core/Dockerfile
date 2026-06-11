@@ -51,6 +51,12 @@ COPY smoke-test.sh    /usr/local/bin/smoke-test.sh
 COPY dns-allow.sh     /usr/local/bin/sluice-dns-allow
 RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh /usr/local/bin/smoke-test.sh /usr/local/bin/sluice-dns-allow
 
+# Defense in depth: strip setuid/setgid from EVERY base binary. shadow ships chfn/chsh/passwd/gpasswd/
+# chage/expiry setuid-root, but the box runs as root at boot and execs sessions as uid 1000, which
+# never needs them. So uid 1000 has no setuid-root primitive even independent of no-new-privileges.
+# (shadow stays - useradd needs it at build - only its setuid bits go.) The structure test asserts none remain.
+RUN find / -xdev -type f \( -perm -4000 -o -perm -2000 \) -exec chmod -s {} + 2>/dev/null || true
+
 # Starts as root (entrypoint configures iptables, then idles); sessions exec in as sluice.
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 

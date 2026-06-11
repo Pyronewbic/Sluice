@@ -124,3 +124,25 @@ load test_helper/common
   refute_output --partial "[risk]"
   rm -rf "$W"
 }
+
+# SLUICE_ALLOW_IPS validation (the direct-egress escape hatch that bypasses squid). The guard runs
+# after config sourcing, before any build - a stub engine on PATH lets it reach the guard.
+@test "allow-ips: a catch-all (0.0.0.0/0) is refused" {
+  WORK="$(mktemp -d)"; mkdir -p "$WORK/bin" "$WORK/proj"
+  printf '#!/bin/sh\nexit 1\n' > "$WORK/bin/docker"; chmod +x "$WORK/bin/docker"
+  printf 'SLUICE_ALLOW_IPS="0.0.0.0/0"\nSLUICE_RUN_CMD="true"\n' > "$WORK/proj/sluice.config.sh"
+  run bash -c "cd '$WORK/proj' && PATH='$WORK/bin:$PATH' SLUICE_ENGINE=docker '$SLUICE' build 2>&1"
+  assert_failure
+  assert_output --partial "opens direct egress to everything"
+  rm -rf "$WORK"
+}
+
+@test "allow-ips: a colon-less (all-ports) entry warns but proceeds" {
+  WORK="$(mktemp -d)"; mkdir -p "$WORK/bin" "$WORK/proj"
+  printf '#!/bin/sh\nexit 1\n' > "$WORK/bin/docker"; chmod +x "$WORK/bin/docker"
+  printf 'SLUICE_ALLOW_IPS="10.0.0.5"\nSLUICE_RUN_CMD="true"\n' > "$WORK/proj/sluice.config.sh"
+  run bash -c "cd '$WORK/proj' && PATH='$WORK/bin:$PATH' SLUICE_ENGINE=docker '$SLUICE' build 2>&1"
+  assert_output --partial "has no port"          # warned
+  assert_output --partial "image build failed"   # but proceeded to the (stub) build
+  rm -rf "$WORK"
+}

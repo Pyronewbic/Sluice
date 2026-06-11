@@ -177,10 +177,12 @@ start() {
   # baked content with runtime writes (/etc/squid, /home/sluice) become anon volumes (pre-populated
   # from the image, writable). resolv.conf can't be rewritten under --read-only, so we set it via
   # --dns 127.0.0.1 (-> dnsmasq) and hand the real upstream(s) to the entrypoint via SLUICE_DNS_UPSTREAM
-  # (probed from a throwaway run of the image, which still has docker's default resolv.conf).
+  # (probed from a throwaway run). Probe on $RUNNER, not $ENGINE: under SLUICE_RUNTIME=kata the box
+  # runs on nerdctl/containerd, whose resolver differs from docker's 127.0.0.11 - probing $ENGINE there
+  # would hand dnsmasq an upstream that doesn't exist and silently break all name resolution.
   if [ "${SLUICE_READONLY_ROOT:-}" = 1 ]; then
     local _ro_up
-    _ro_up="$("$ENGINE" run --rm --entrypoint sh "$tag" -c 'awk "/^nameserver/{print \$2}" /etc/resolv.conf | grep -v : | tr "\n" " "' 2>/dev/null | sed 's/ *$//')"
+    _ro_up="$("$RUNNER" run --rm --entrypoint sh "$tag" -c 'awk "/^nameserver/{print \$2}" /etc/resolv.conf | grep -v : | tr "\n" " "' 2>/dev/null | sed 's/ *$//')"
     [ -n "$_ro_up" ] || _ro_up="127.0.0.11"
     run_args+=(--read-only
       --tmpfs /tmp --tmpfs /run --tmpfs /var/log/squid --tmpfs /var/cache/squid
