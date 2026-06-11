@@ -16,13 +16,9 @@ CFG
 }
 
 teardown_file() {
-  chown_back_tree sluice-sectest-ovl "$WORK"
-  ( cd "$WORK/ovl" 2>/dev/null && "$SLUICE" rm ) >/dev/null 2>&1 || true
-  "$ENG" rm -f -v sluice-sectest-ovl >/dev/null 2>&1 || true
-  "$ENG" rmi -f sluice-sectest-ovl >/dev/null 2>&1 || true
+  destroy_box ovl ovl
   "$ENG" volume ls -q --filter label=sluice.box=sluice-sectest-ovl 2>/dev/null \
-    | xargs -r "$ENG" volume rm -f >/dev/null 2>&1 || true
-  rm -rf "$WORK"
+    | xargs -r "$ENG" volume rm -f >/dev/null 2>&1 || true   # destroy_box stops (not rm)s, so sweep the overlay volume
 }
 
 @test "overlay: the host's dir contents are not visible in the box" {

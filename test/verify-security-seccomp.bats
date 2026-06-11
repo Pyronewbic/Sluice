@@ -12,13 +12,7 @@ setup_file() {
   ( cd "$WORK/sc" && SLUICE_SECCOMP=hardened "$SLUICE" run true ) >/dev/null 2>&1 || true
 }
 
-teardown_file() {
-  chown_back_tree sluice-sectest-seccomp "$WORK"
-  ( cd "$WORK/sc" 2>/dev/null && "$SLUICE" stop ) >/dev/null 2>&1 || true
-  "$ENG" rm -f -v sluice-sectest-seccomp >/dev/null 2>&1 || true
-  "$ENG" rmi -f sluice-sectest-seccomp >/dev/null 2>&1 || true
-  rm -rf "$WORK"
-}
+teardown_file() { destroy_box seccomp sc; }
 
 @test "seccomp: the unshare binary is present (so the block test is real)" {
   run "$ENG" exec sluice-sectest-seccomp sh -c 'command -v unshare'

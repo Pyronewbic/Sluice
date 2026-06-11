@@ -8,22 +8,12 @@
 load test_helper/common
 
 setup_file() {
-  export WORK; WORK="$(mktemp -d)"; mkdir -p "$WORK/dns"
-  printf 'SLUICE_NAME="sectest-dns"\nSLUICE_RUN_CMD="bash"\n' > "$WORK/dns/sluice.config.sh"
-  ( cd "$WORK/dns" && "$SLUICE" build ) >/dev/null 2>&1 || true
-  ( cd "$WORK/dns" && "$SLUICE" run true ) >/dev/null 2>&1 || true   # bring the box up
+  make_box dns dns 'SLUICE_RUN_CMD="bash"'
   # a blocked, non-allowlisted HTTPS attempt (scoped as a run, so `learn` sees it) - drives the
   # discoverability tests below.
   ( cd "$WORK/dns" && "$SLUICE" run curl -s --max-time 8 -o /dev/null https://pypi.org ) >/dev/null 2>&1 || true
 }
-
-teardown_file() {
-  chown_back_tree sluice-sectest-dns "$WORK"
-  ( cd "$WORK/dns" 2>/dev/null && "$SLUICE" stop ) >/dev/null 2>&1 || true
-  "$ENG" rm -f -v sluice-sectest-dns >/dev/null 2>&1 || true
-  "$ENG" rmi -f sluice-sectest-dns >/dev/null 2>&1 || true
-  rm -rf "$WORK"
-}
+teardown_file() { destroy_box dns dns; }
 
 @test "dns: box image built" {
   run "$ENG" image inspect sluice-sectest-dns

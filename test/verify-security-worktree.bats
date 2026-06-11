@@ -12,13 +12,7 @@ setup_file() {
   ( cd "$WT" && "$SLUICE" run true ) >/dev/null 2>&1 || true
 }
 
-teardown_file() {
-  chown_back_tree sluice-sectest-wt "$WORK"
-  ( cd "$WT" 2>/dev/null && "$SLUICE" stop ) >/dev/null 2>&1 || true
-  "$ENG" rm -f -v sluice-sectest-wt >/dev/null 2>&1 || true
-  "$ENG" rmi -f sluice-sectest-wt >/dev/null 2>&1 || true
-  rm -rf "$WORK"
-}
+teardown_file() { destroy_box wt wt; }   # WT == WORK/wt; nuke_tree clears the repo + worktree
 
 @test "worktree: git resolves inside the box (common dir mounted)" {
   run bash -c "cd '$WT' && '$SLUICE' run git -C '$WT' status"

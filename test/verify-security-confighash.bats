@@ -16,10 +16,7 @@ setup_file() {
   ( cd "$WORK/h" && "$SLUICE" build ) >/dev/null 2>&1 || true; _hashlabel > "$WORK/h3"
 }
 
-teardown_file() {
-  "$ENG" rmi -f sluice-sectest-hash >/dev/null 2>&1 || true
-  rm -rf "$WORK"
-}
+teardown_file() { destroy_box hash h; }   # confighash only builds (no running box); destroy_box still tidies image + WORK
 
 @test "config-hash: initial build recorded a non-empty confighash label" {
   [ -n "$(cat "$WORK/h1")" ]

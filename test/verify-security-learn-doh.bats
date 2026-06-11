@@ -5,22 +5,8 @@
 # host must still be allowed (the guard doesn't over-block). One box, ad-hoc runs (no rebuilds).
 load test_helper/common
 
-setup_file() {
-  export WORK; WORK="$(mktemp -d)"; mkdir -p "$WORK/box"
-  cat > "$WORK/box/sluice.config.sh" <<CFG
-SLUICE_NAME="sectest-learn-doh"
-SLUICE_RUN_CMD="bash"
-CFG
-  ( cd "$WORK/box" && "$SLUICE" run true ) >/dev/null 2>&1 || true
-}
-
-teardown_file() {
-  chown_back_tree sluice-sectest-learn-doh "$WORK"
-  ( cd "$WORK/box" 2>/dev/null && "$SLUICE" stop ) >/dev/null 2>&1 || true
-  "$ENG" rm -f -v sluice-sectest-learn-doh >/dev/null 2>&1 || true
-  "$ENG" rmi -f sluice-sectest-learn-doh >/dev/null 2>&1 || true
-  rm -rf "$WORK"
-}
+setup_file()    { make_box learn-doh box 'SLUICE_RUN_CMD="bash"'; }
+teardown_file() { destroy_box learn-doh box; }
 
 # Block a host, then `learn --apply`; the box's config is read back for the allowlist line.
 _allowline() { grep -E '^SLUICE_ALLOW_DOMAINS=' "$WORK/box/sluice.config.sh" 2>/dev/null || true; }
