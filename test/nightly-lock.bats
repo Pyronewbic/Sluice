@@ -130,6 +130,10 @@ teardown_file() {
   grep -q 'pkg:cargo/ripgrep@' "$WORK/spdx1.txt"
   cmp -s "$WORK/spdx1.txt" "$WORK/spdx2.txt"
 }
+@test "lock --sbom --format spdx: records the base image identity (B8)" {
+  command -v jq >/dev/null || skip "jq absent"
+  jq -e 'any(.annotations[]; .comment|startswith("sluice:base "))' < "$WORK/spdx1.txt" >/dev/null
+}
 @test "lock --sbom --format cyclonedx == bare --sbom (default unchanged)" { cmp -s "$WORK/cyclonedx.txt" "$WORK/s1.txt"; }
 
 @test "lock --enforce: passes in sync" { [ "$(cat "$WORK/enforce_insync.rc")" = 0 ]; }
