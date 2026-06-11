@@ -145,6 +145,9 @@ Set these in your shell, not the config:
   (agent sessions/auth); by default `rm` keeps it. Best-effort on Linux (box-owned files may resist).
 - `SLUICE_YES` - `=1` auto-confirms non-interactive prompts (`prune`, the zero-config first
   run, `apply`).
-- `SLUICE_NO_BANNER` - non-empty suppresses the startup banner.
+- `SLUICE_NO_BANNER` - non-empty suppresses the startup banner. The banner (stderr, TTY only)
+  shows a live posture line at launch - engine, allowlist size, active hardening, whether secrets
+  are masked - and turns yellow with `exfil risk` when an allowlisted host is a laundering/DoH
+  channel. It degrades to one compact line on a narrow terminal.
 - `SLUICE_NO_UPDATE_CHECK` - non-empty skips the `sluice version` update notice.
 - `NO_COLOR` - non-empty disables colored output.

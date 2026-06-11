@@ -13,6 +13,8 @@ case "${1:-}" in
   __parent)      parent_of "${2:-}"; exit 0 ;;          # registrable parent (tests/completion)
   __collapsible) _collapsible "${2:-}" && echo yes || echo no; exit 0 ;;
   __sbom)        [ -n "${2:-}" ] || die "usage: sluice __sbom <image-ref>"; resolve_engine; _sbom_for "$2"; exit $? ;;
+  __posture)     [ -f "$PWD/sluice.config.sh" ] && . "$PWD/sluice.config.sh"   # banner posture for $PWD's config (tests; no engine; find_config isn't defined this early)
+                 _banner_posture ' - '; printf '%s%s\n' "$_POSTURE_TEXT" "${_POSTURE_RISK:+ [risk]}"; exit 0 ;;
 esac
 
 # init + info commands need no engine; resolve one only for the rest.
