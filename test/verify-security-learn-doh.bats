@@ -41,6 +41,7 @@ _allowline() { grep -E '^SLUICE_ALLOW_DOMAINS=' "$WORK/box/sluice.config.sh" 2>/
 
 @test "learn: a normal blocked host is still allowed by --apply (no over-block)" {
   ( cd "$WORK/box" && "$SLUICE" run sh -c 'curl -sS -m6 -o /dev/null https://pypi.org; true' ) >/dev/null 2>&1 || true
+  host_own sluice-sectest-learn-doh "$WORK/box"   # box chowned the dir to uid 1000; let the host rewrite the config (learn --apply)
   run bash -c "cd '$WORK/box' && '$SLUICE' learn --apply 2>&1"
   assert_output --partial "allowing:"
   assert_output --partial "pypi.org"

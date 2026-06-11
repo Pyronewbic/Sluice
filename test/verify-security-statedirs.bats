@@ -38,16 +38,17 @@ teardown_file() {
 }
 
 # rm keeps the host store by default and notes it; SLUICE_RM_PURGE_STATE=1 deletes it (R10).
-# Runs last: it removes the box, which teardown_file then re-cleans idempotently.
+# Runs last: each removes the box; the store + project dir are chowned back to the host first (the
+# box chowned them to uid 1000 on Linux) so the host-side rm / teardown can delete them.
 @test "state-dirs: rm keeps the store by default, notes the purge knob" {
-  host_own sluice-sectest-state "$STORE" 2>/dev/null || true
   run bash -c "cd '$WORK/state' && '$SLUICE' rm 2>&1"
   assert_output --partial "kept persisted session state"
   [ -d "$STORE" ]
 }
 @test "state-dirs: SLUICE_RM_PURGE_STATE=1 purges the store" {
   ( cd "$WORK/state" && "$SLUICE" run true ) >/dev/null 2>&1 || true   # recreate the box (prev test removed it)
-  host_own sluice-sectest-state "$STORE" 2>/dev/null || true
+  chown_back_tree sluice-sectest-state "$STORE"   # host must own the 1000-owned store to rm it...
+  chown_back_tree sluice-sectest-state "$WORK"    # ...and the project dir, so teardown can rm it (image vanishes here)
   run bash -c "cd '$WORK/state' && SLUICE_RM_PURGE_STATE=1 '$SLUICE' rm 2>&1"
   [ ! -d "$STORE" ]
 }
