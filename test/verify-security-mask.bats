@@ -17,11 +17,9 @@ CFG
 }
 
 teardown_file() {
-  chown_back_tree sluice-sectest-mask "$WORK"
-  ( cd "$WORK/mask" 2>/dev/null && "$SLUICE" stop ) >/dev/null 2>&1 || true
-  "$ENG" rm -f -v sluice-sectest-mask sluice-sectest-mask-off >/dev/null 2>&1 || true
-  "$ENG" rmi -f sluice-sectest-mask sluice-sectest-mask-off >/dev/null 2>&1 || true
-  rm -rf "$WORK"
+  destroy_box mask mask
+  "$ENG" rm -f -v sluice-sectest-mask-off >/dev/null 2>&1 || true   # a 2nd box some @tests create
+  "$ENG" rmi -f sluice-sectest-mask-off >/dev/null 2>&1 || true
 }
 
 @test "mask: a masked file reads empty in the box" {

@@ -14,13 +14,7 @@ CFG
   ( cd "$WORK/pre" && "$SLUICE" run true ) >/dev/null 2>&1 || true
 }
 
-teardown_file() {
-  chown_back_tree sluice-sectest-pre "$WORK"
-  ( cd "$WORK/pre" 2>/dev/null && "$SLUICE" stop ) >/dev/null 2>&1 || true
-  "$ENG" rm -f -v sluice-sectest-pre >/dev/null 2>&1 || true
-  "$ENG" rmi -f sluice-sectest-pre >/dev/null 2>&1 || true
-  rm -rf "$WORK"
-}
+teardown_file() { destroy_box pre pre; }
 
 @test "prelaunch: a host-side function hook ran (marker created)" {
   [ -f "$WORK/pre/prelaunch-ran" ]

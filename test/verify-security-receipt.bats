@@ -14,13 +14,7 @@ setup_file() {
   ( cd "$WORK/r" && XDG_STATE_HOME="$WORK/state" "$SLUICE" ) >/dev/null 2>&1 || true   # run-default: build + egress + receipt
 }
 
-teardown_file() {
-  chown_back_tree sluice-sectest-receipt "$WORK"
-  ( cd "$WORK/r" 2>/dev/null && "$SLUICE" stop ) >/dev/null 2>&1 || true
-  "$ENG" rm -f -v sluice-sectest-receipt >/dev/null 2>&1 || true
-  "$ENG" rmi -f sluice-sectest-receipt >/dev/null 2>&1 || true
-  rm -rf "$WORK"
-}
+teardown_file() { destroy_box receipt r; }   # XDG_STATE_HOME is under WORK, so nuke_tree clears it too
 
 @test "receipt: box image built" {
   run "$ENG" image inspect sluice-sectest-receipt

@@ -16,13 +16,7 @@ setup_file() {
   echo host-side > "$WORK/ws/host-new.txt"
 }
 
-teardown_file() {
-  chown_back_tree sluice-sectest-apply "$WORK"
-  ( cd "$WORK/ws" 2>/dev/null && "$SLUICE" stop ) >/dev/null 2>&1 || true
-  "$ENG" rm -f -v sluice-sectest-apply >/dev/null 2>&1 || true
-  "$ENG" rmi -f sluice-sectest-apply >/dev/null 2>&1 || true
-  rm -rf "$WORK"
-}
+teardown_file() { destroy_box apply ws; }
 
 @test "apply: refuses non-interactively without SLUICE_YES (B3)" {
   run bash -c "cd '$WORK/ws' && '$SLUICE' apply"

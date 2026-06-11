@@ -11,13 +11,7 @@ setup_file() {
   ( cd "$WORK/ws" && "$SLUICE" run sh -c 'echo MODIFIED > file.txt; echo NEWFILE > added.txt' ) >/dev/null 2>&1 || true
 }
 
-teardown_file() {
-  chown_back_tree sluice-sectest-ws "$WORK"
-  ( cd "$WORK/ws" 2>/dev/null && "$SLUICE" stop ) >/dev/null 2>&1 || true
-  "$ENG" rm -f -v sluice-sectest-ws >/dev/null 2>&1 || true
-  "$ENG" rmi -f sluice-sectest-ws >/dev/null 2>&1 || true
-  rm -rf "$WORK"
-}
+teardown_file() { destroy_box ws ws; }
 
 @test "workspace: the host repo is protected (box edit didn't reach it)" {
   run cat "$WORK/ws/file.txt"

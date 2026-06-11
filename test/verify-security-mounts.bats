@@ -13,13 +13,7 @@ CFG
   ( cd "$WORK/mnt" && "$SLUICE" run true ) >/dev/null 2>&1 || true
 }
 
-teardown_file() {
-  chown_back_tree sluice-sectest-mnt "$WORK"
-  ( cd "$WORK/mnt" 2>/dev/null && "$SLUICE" stop ) >/dev/null 2>&1 || true
-  "$ENG" rm -f -v sluice-sectest-mnt >/dev/null 2>&1 || true
-  "$ENG" rmi -f sluice-sectest-mnt >/dev/null 2>&1 || true
-  rm -rf "$WORK"
-}
+teardown_file() { destroy_box mnt mnt; }
 
 @test "mounts: a :ro bind is readable in the box" {
   run bash -c "cd '$WORK/mnt' && '$SLUICE' run cat /home/sluice/ro-mounted.txt 2>/dev/null"

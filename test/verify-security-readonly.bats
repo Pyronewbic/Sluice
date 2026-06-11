@@ -3,19 +3,9 @@
 # volume); the firewall + DNS still come up. Ported from verify-security.sh.
 load test_helper/common
 
-setup_file() {
-  export WORK; WORK="$(mktemp -d)"; mkdir -p "$WORK/ro"
-  printf 'SLUICE_NAME="sectest-ro"\nSLUICE_RUN_CMD="bash"\n' > "$WORK/ro/sluice.config.sh"
-  ( cd "$WORK/ro" && SLUICE_READONLY_ROOT=1 "$SLUICE" run true ) >/dev/null 2>&1 || true
-}
-
-teardown_file() {
-  chown_back_tree sluice-sectest-ro "$WORK"
-  ( cd "$WORK/ro" 2>/dev/null && "$SLUICE" stop ) >/dev/null 2>&1 || true
-  "$ENG" rm -f -v sluice-sectest-ro >/dev/null 2>&1 || true
-  "$ENG" rmi -f sluice-sectest-ro >/dev/null 2>&1 || true
-  rm -rf "$WORK"
-}
+# SLUICE_READONLY_ROOT lives in the config (not the warm env) so make_box applies it at boot.
+setup_file()    { make_box ro ro 'SLUICE_READONLY_ROOT=1' 'SLUICE_RUN_CMD="bash"'; }
+teardown_file() { destroy_box ro ro; }
 
 @test "readonly: the rootfs is read-only" {
   run "$ENG" inspect sluice-sectest-ro --format '{{.HostConfig.ReadonlyRootfs}}'
