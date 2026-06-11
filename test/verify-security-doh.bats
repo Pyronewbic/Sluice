@@ -4,20 +4,8 @@
 # false-passed (a missing assertion didn't fail). Each guarantee is its own @test now.
 load test_helper/common
 
-setup_file() {
-  export WORK; WORK="$(mktemp -d)"
-  mkdir -p "$WORK/doh"
-  printf 'SLUICE_NAME="sectest-doh"\nSLUICE_ALLOW_DOMAINS="cloudflare-dns.com"\nSLUICE_RUN_CMD="bash"\n' > "$WORK/doh/sluice.config.sh"
-  ( cd "$WORK/doh" && "$ROOT/bin/sluice" run true ) >/dev/null 2>&1
-}
-
-teardown_file() {
-  chown_back_tree sluice-sectest-doh "$WORK"
-  ( cd "$WORK/doh" 2>/dev/null && "$ROOT/bin/sluice" stop ) >/dev/null 2>&1 || true
-  "$ENG" rm -f -v sluice-sectest-doh >/dev/null 2>&1 || true
-  "$ENG" rmi -f sluice-sectest-doh >/dev/null 2>&1 || true
-  rm -rf "$WORK"
-}
+setup_file()    { make_box doh doh 'SLUICE_ALLOW_DOMAINS="cloudflare-dns.com"' 'SLUICE_RUN_CMD="bash"'; }
+teardown_file() { destroy_box doh doh; }
 
 @test "doh: denylist baked in the box" {
   run "$ENG" exec sluice-sectest-doh sh -c 'test -s /etc/squid/doh-endpoints.txt'

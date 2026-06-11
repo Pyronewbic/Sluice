@@ -4,20 +4,8 @@
 # Ported from verify-security.sh. setup_file builds the box + brings it up.
 load test_helper/common
 
-setup_file() {
-  export WORK; WORK="$(mktemp -d)"; mkdir -p "$WORK/ips"
-  printf 'SLUICE_NAME="sectest-ips"\nSLUICE_ALLOW_IPS="1.1.1.1 9.9.9.9:853"\nSLUICE_RUN_CMD="bash"\n' > "$WORK/ips/sluice.config.sh"
-  ( cd "$WORK/ips" && "$SLUICE" build ) >/dev/null 2>&1 || true
-  ( cd "$WORK/ips" && "$SLUICE" run true ) >/dev/null 2>&1 || true   # bring the box up
-}
-
-teardown_file() {
-  chown_back_tree sluice-sectest-ips "$WORK"
-  ( cd "$WORK/ips" 2>/dev/null && "$SLUICE" stop ) >/dev/null 2>&1 || true
-  "$ENG" rm -f -v sluice-sectest-ips >/dev/null 2>&1 || true
-  "$ENG" rmi -f sluice-sectest-ips >/dev/null 2>&1 || true
-  rm -rf "$WORK"
-}
+setup_file()    { make_box ips ips 'SLUICE_ALLOW_IPS="1.1.1.1 9.9.9.9:853"' 'SLUICE_RUN_CMD="bash"'; }
+teardown_file() { destroy_box ips ips; }
 
 @test "allow-ips: box image built" {
   run "$ENG" image inspect sluice-sectest-ips
