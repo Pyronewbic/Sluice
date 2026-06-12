@@ -330,7 +330,7 @@ workspace_is_overlay() { [ "${SLUICE_WORKSPACE:-}" = overlay ]; }
 # `sluice apply` removes - so a file the host added mid-session never inflates the deleted count.
 workspace_counts() {
   running || { echo "0 0 0"; return 0; }
-  "$RUNNER" exec "$container" sh -c '
+  _root_exec "$container" sh -c '
     O=/mnt/sluice-orig; W="$1"; [ -d "$O" ] || { echo "0 0 0"; exit 0; }
     d="$(diff -rq "$O" "$W" 2>/dev/null)"
     added="$(printf "%s\n" "$d" | grep -c "^Only in $W")"
@@ -349,7 +349,7 @@ workspace_counts() {
 cmd_workspace_diff() {
   workspace_is_overlay || die "sluice diff needs SLUICE_WORKSPACE=overlay (the protected-copy workspace)"
   ensure_up
-  "$RUNNER" exec "$container" sh -c 'diff -ruN --exclude=.git /mnt/sluice-orig "$1" 2>/dev/null' _ "$PROJECT_DIR" || true
+  _root_exec "$container" sh -c 'diff -ruN --exclude=.git /mnt/sluice-orig "$1" 2>/dev/null' _ "$PROJECT_DIR" || true
 }
 
 # `sluice apply`: write the working copy back onto the host repo (adds/mods via tar, then deletions).
@@ -372,7 +372,7 @@ EOF
   fi
   # Adds + modifications: tar the working copy over the host repo. Surface failures (no 2>/dev/null,
   # check the pipe status) instead of printing a false 'applied'.
-  if ! "$RUNNER" exec "$container" sh -c 'cd "$1" && tar -cf - .' _ "$PROJECT_DIR" | tar -C "$PROJECT_DIR" -xf -; then
+  if ! _root_exec "$container" sh -c 'cd "$1" && tar -cf - .' _ "$PROJECT_DIR" | tar -C "$PROJECT_DIR" -xf -; then
     die "apply failed writing to $PROJECT_DIR (check permissions and free space; the host repo may be partially updated)"
   fi
   # Deletions: remove host files the box deleted, against the BOOT-TIME snapshot (not the live ro
@@ -383,8 +383,8 @@ EOF
   elif [ "${SLUICE_APPLY_NO_DELETE:-}" = 1 ]; then
     echo "[sluice] ${E_YEL}SLUICE_APPLY_NO_DELETE=1${E_RST} - keeping the $d host file(s) the box deleted." >&2
     applied_del=0
-  elif "$RUNNER" exec "$container" sh -c 'test -f /run/sluice-orig-manifest' 2>/dev/null; then
-    "$RUNNER" exec "$container" sh -c 'cd "$1" && find . -mindepth 1 | sort > /tmp/w; comm -23 /run/sluice-orig-manifest /tmp/w' _ "$PROJECT_DIR" 2>/dev/null \
+  elif _root_exec "$container" sh -c 'test -f /run/sluice-orig-manifest' 2>/dev/null; then
+    _root_exec "$container" sh -c 'cd "$1" && find . -mindepth 1 | sort > /tmp/w; comm -23 /run/sluice-orig-manifest /tmp/w' _ "$PROJECT_DIR" 2>/dev/null \
       | while IFS= read -r p; do [ -n "$p" ] && rm -rf "${PROJECT_DIR:?}/${p#./}" 2>/dev/null; done
   else
     echo "[sluice] ${E_YEL}note:${E_RST} this box predates the apply-safety snapshot - skipping the $d deletion(s); 'sluice rebuild' then re-apply to propagate them." >&2

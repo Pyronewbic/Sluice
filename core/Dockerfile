@@ -28,9 +28,12 @@ RUN groupadd -g 1000 sluice \
     && useradd -u 1000 -g sluice -d /home/sluice -m -s /bin/bash sluice \
     && ln -s /home/sluice /home/node
 
-# User-writable npm prefix so node can `npm i -g` at runtime.
+# User-writable npm prefix so node can `npm i -g` at runtime. APPEND it to PATH (not prepend): this dir
+# is chowned to uid 1000, and a root-context maintenance exec (receipt/learn/apply) must resolve system
+# tools (tail/wc/diff/...) from /usr/bin FIRST, so a uid-1000-planted ~/.npm-global/bin/tail can't run
+# as root. Root execs also pass an explicit clean PATH (src/10-egress-helpers.sh _root_exec); belt + braces.
 ENV NPM_CONFIG_PREFIX=/home/sluice/.npm-global
-ENV PATH=/home/sluice/.npm-global/bin:${PATH}
+ENV PATH=${PATH}:/home/sluice/.npm-global/bin
 
 # --- squid: its own uid (the only one with direct egress) + its dirs --------------------
 # The splice cert is generated at RUNTIME (entrypoint.sh) so the base carries no key; we splice

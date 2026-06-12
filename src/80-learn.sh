@@ -117,7 +117,7 @@ merge_allow() {
 reload_allowlist() {
   [ "$#" -gt 0 ] || return 0
   running || return 1
-  printf '%s\n' "$@" | "$RUNNER" exec -i "$container" sh -c \
+  printf '%s\n' "$@" | _root_exec -i "$container" sh -c \
     'cat >> /etc/squid/allowlist.txt && sort -u /etc/squid/allowlist.txt -o /etc/squid/allowlist.txt && pkill -HUP -x squid && { [ -x /usr/local/bin/sluice-dns-allow ] && /usr/local/bin/sluice-dns-allow && pkill -HUP -x dnsmasq; true; }' \
     >/dev/null 2>&1
 }

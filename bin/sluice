@@ -239,6 +239,13 @@ running() { "$RUNNER" ps --filter "name=$container" --filter status=running --fo
 # inaccessible to the box without a label, so sluice runs it label=disable (see the run paths).
 selinux_enforcing() { [ -r /sys/fs/selinux/enforce ] && [ "$(cat /sys/fs/selinux/enforce 2>/dev/null)" = 1 ]; }
 
+# Root-context maintenance execs (receipt/learn/apply) run as the container's root - NOT --user sluice.
+# The image PATH must never let a uid-1000-writable dir (/home/sluice/.npm-global/bin) shadow a system
+# tool here, or a planted ~/.npm-global/bin/tail runs as root. Force a clean system PATH on every such
+# exec. Session execs (_exec_args) stay --user sluice and keep the full PATH for the workload's tools.
+_ROOT_PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+_root_exec() { "$RUNNER" exec -e "PATH=$_ROOT_PATH" "$@"; }
+
 # squid access log. From _RCPT_OFFSET bytes when set (the run-scoped receipt); otherwise the last
 # _SQUID_LOG_CAP bytes - a ceiling so an attacker can't inflate host CPU/IO by spamming the log and
 # forcing an unbounded `cat | awk` on the box-level audit paths (egress/doctor/learn --all). 16 MiB
@@ -246,9 +253,9 @@ selinux_enforcing() { [ -r /sys/fs/selinux/enforce ] && [ "$(cat /sys/fs/selinux
 _SQUID_LOG_CAP=16777216
 _squid_log() {
   if [ -n "${_RCPT_OFFSET:-}" ]; then
-    "$RUNNER" exec "${1:-$container}" sh -c "tail -c +$(( _RCPT_OFFSET + 1 )) /var/log/squid/access.log" 2>/dev/null
+    _root_exec "${1:-$container}" sh -c "tail -c +$(( _RCPT_OFFSET + 1 )) /var/log/squid/access.log" 2>/dev/null
   else
-    "$RUNNER" exec "${1:-$container}" sh -c "tail -c $_SQUID_LOG_CAP /var/log/squid/access.log" 2>/dev/null
+    _root_exec "${1:-$container}" sh -c "tail -c $_SQUID_LOG_CAP /var/log/squid/access.log" 2>/dev/null
   fi
 }
 
@@ -343,8 +350,8 @@ egress_tx_total() {
 
 # The proxy-log byte offset captured at the start of the last `sluice` run (written to /run by the run
 # arms). Lets `sluice learn` scope to that run instead of the whole boot; empty if no run / box rebooted.
-last_run_offset() { "$RUNNER" exec "$container" cat /run/sluice-run-offset 2>/dev/null | tr -dc 0-9; }
-mark_run_start()  { "$RUNNER" exec "$container" sh -c 'wc -c < /var/log/squid/access.log | tr -dc 0-9 > /run/sluice-run-offset' 2>/dev/null || true; }
+last_run_offset() { _root_exec "$container" cat /run/sluice-run-offset 2>/dev/null | tr -dc 0-9; }
+mark_run_start()  { _root_exec "$container" sh -c 'wc -c < /var/log/squid/access.log | tr -dc 0-9 > /run/sluice-run-offset' 2>/dev/null || true; }
 
 # sha256 of stdin (hex only). shasum ships on macOS + the Linux runners (config_hash already uses it).
 _sha256() { shasum -a 256 2>/dev/null | awk '{print $1}'; }
@@ -353,7 +360,7 @@ _sha256() { shasum -a 256 2>/dev/null | awk '{print $1}'; }
 # scoped to THIS run (not the box's whole boot), mark the run start so a later `learn` can scope to it,
 # and trap the receipt on EXIT (fires on normal exit, die, or Ctrl-C). Shared by run-default/shell/run.
 arm_receipt() {
-  _RCPT_OFFSET="$("$RUNNER" exec "$container" sh -c 'wc -c < /var/log/squid/access.log' 2>/dev/null | tr -dc 0-9)"
+  _RCPT_OFFSET="$(_root_exec "$container" sh -c 'wc -c < /var/log/squid/access.log' 2>/dev/null | tr -dc 0-9)"
   mark_run_start
   trap show_egress_receipt EXIT
 }
@@ -407,7 +414,7 @@ blocked_new() {
 # base_domains() is still added by allowed_domains(), so base hosts never count as blocked.
 box_blocked_count() {
   local al
-  al="$("$RUNNER" exec "$1" cat /etc/squid/allowlist.txt 2>/dev/null | tr '\n' ' ' || true)"
+  al="$(_root_exec "$1" cat /etc/squid/allowlist.txt 2>/dev/null | tr '\n' ' ' || true)"
   ( container="$1"; SLUICE_ALLOW_DOMAINS="$al"; blocked_new 2>/dev/null | grep -c . ) || true
 }
 
@@ -2533,7 +2540,7 @@ workspace_is_overlay() { [ "${SLUICE_WORKSPACE:-}" = overlay ]; }
 # `sluice apply` removes - so a file the host added mid-session never inflates the deleted count.
 workspace_counts() {
   running || { echo "0 0 0"; return 0; }
-  "$RUNNER" exec "$container" sh -c '
+  _root_exec "$container" sh -c '
     O=/mnt/sluice-orig; W="$1"; [ -d "$O" ] || { echo "0 0 0"; exit 0; }
     d="$(diff -rq "$O" "$W" 2>/dev/null)"
     added="$(printf "%s\n" "$d" | grep -c "^Only in $W")"
@@ -2552,7 +2559,7 @@ workspace_counts() {
 cmd_workspace_diff() {
   workspace_is_overlay || die "sluice diff needs SLUICE_WORKSPACE=overlay (the protected-copy workspace)"
   ensure_up
-  "$RUNNER" exec "$container" sh -c 'diff -ruN --exclude=.git /mnt/sluice-orig "$1" 2>/dev/null' _ "$PROJECT_DIR" || true
+  _root_exec "$container" sh -c 'diff -ruN --exclude=.git /mnt/sluice-orig "$1" 2>/dev/null' _ "$PROJECT_DIR" || true
 }
 
 # `sluice apply`: write the working copy back onto the host repo (adds/mods via tar, then deletions).
@@ -2575,7 +2582,7 @@ EOF
   fi
   # Adds + modifications: tar the working copy over the host repo. Surface failures (no 2>/dev/null,
   # check the pipe status) instead of printing a false 'applied'.
-  if ! "$RUNNER" exec "$container" sh -c 'cd "$1" && tar -cf - .' _ "$PROJECT_DIR" | tar -C "$PROJECT_DIR" -xf -; then
+  if ! _root_exec "$container" sh -c 'cd "$1" && tar -cf - .' _ "$PROJECT_DIR" | tar -C "$PROJECT_DIR" -xf -; then
     die "apply failed writing to $PROJECT_DIR (check permissions and free space; the host repo may be partially updated)"
   fi
   # Deletions: remove host files the box deleted, against the BOOT-TIME snapshot (not the live ro
@@ -2586,8 +2593,8 @@ EOF
   elif [ "${SLUICE_APPLY_NO_DELETE:-}" = 1 ]; then
     echo "[sluice] ${E_YEL}SLUICE_APPLY_NO_DELETE=1${E_RST} - keeping the $d host file(s) the box deleted." >&2
     applied_del=0
-  elif "$RUNNER" exec "$container" sh -c 'test -f /run/sluice-orig-manifest' 2>/dev/null; then
-    "$RUNNER" exec "$container" sh -c 'cd "$1" && find . -mindepth 1 | sort > /tmp/w; comm -23 /run/sluice-orig-manifest /tmp/w' _ "$PROJECT_DIR" 2>/dev/null \
+  elif _root_exec "$container" sh -c 'test -f /run/sluice-orig-manifest' 2>/dev/null; then
+    _root_exec "$container" sh -c 'cd "$1" && find . -mindepth 1 | sort > /tmp/w; comm -23 /run/sluice-orig-manifest /tmp/w' _ "$PROJECT_DIR" 2>/dev/null \
       | while IFS= read -r p; do [ -n "$p" ] && rm -rf "${PROJECT_DIR:?}/${p#./}" 2>/dev/null; done
   else
     echo "[sluice] ${E_YEL}note:${E_RST} this box predates the apply-safety snapshot - skipping the $d deletion(s); 'sluice rebuild' then re-apply to propagate them." >&2
@@ -2718,7 +2725,7 @@ merge_allow() {
 reload_allowlist() {
   [ "$#" -gt 0 ] || return 0
   running || return 1
-  printf '%s\n' "$@" | "$RUNNER" exec -i "$container" sh -c \
+  printf '%s\n' "$@" | _root_exec -i "$container" sh -c \
     'cat >> /etc/squid/allowlist.txt && sort -u /etc/squid/allowlist.txt -o /etc/squid/allowlist.txt && pkill -HUP -x squid && { [ -x /usr/local/bin/sluice-dns-allow ] && /usr/local/bin/sluice-dns-allow && pkill -HUP -x dnsmasq; true; }' \
     >/dev/null 2>&1
 }
