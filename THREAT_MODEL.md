@@ -73,8 +73,9 @@ The guarantees below hold only while these do:
   allowed by **Host / TLS-SNI** (spliced, never decrypted), so the decision is by *domain*
   and survives IP rotation. Only the base hosts + `SLUICE_ALLOW_DOMAINS` are reachable. The boot
   self-test fails closed if a denied host (probed with a reserved `.invalid` name that can never be
-  allowlisted, so the check always runs) or a direct-IP connection is reachable, and asserts that the
-  IPv4 and IPv6 `OUTPUT` policies are actually `DROP` - so a silently-failed default-DROP can't leave
+  allowlisted, so the check always runs) or a direct-IP connection is reachable, asserts the IPv4
+  `OUTPUT` policy is actually `DROP`, and asserts IPv6 egress is closed (the v6 stack absent, or
+  `disable_ipv6` set, or `ip6tables` `OUTPUT` `DROP`) - so a silently-failed default-DROP can't leave
   egress open while the box reports `ready`.
 - **IP-literal / DNS / IPv6 bypasses** -> a direct-IP HTTPS connection has no SNI ->
   terminated; IPv6 is disabled entirely (we proxy v4 only, so a dual-stack app can't slip out over

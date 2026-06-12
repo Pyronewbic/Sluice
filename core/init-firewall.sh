@@ -88,13 +88,15 @@ case "$(iptables -S OUTPUT 2>/dev/null | head -1)" in
   '-P OUTPUT DROP') ;;
   *) echo "[firewall] FAIL: OUTPUT policy is not DROP - egress not default-closed" >&2; exit 1 ;;
 esac
-# If ip6tables is usable, its OUTPUT policy MUST be DROP; otherwise the --sysctl disable_ipv6 set at
-# run is the closure (no v6 stack to filter). Catches the double-no-op that would leave v6 wide open.
-if command -v ip6tables >/dev/null 2>&1 && ip6tables -S OUTPUT >/dev/null 2>&1; then
-  case "$(ip6tables -S OUTPUT 2>/dev/null | head -1)" in
-    '-P OUTPUT DROP') ;;
-    *) echo "[firewall] FAIL: IPv6 OUTPUT is not default-DROP - v6 egress may be open" >&2; exit 1 ;;
-  esac
+# Prove IPv6 egress is actually closed, INDEPENDENT of whether ip6tables is usable - a bare skip would
+# rest v6 closure on an unverified --sysctl. Closed if the v6 stack is absent, OR disable_ipv6 took, OR
+# ip6tables OUTPUT policy is DROP. Mirrors the disjunction in test/verify-security-egress-bypass.bats.
+if [ ! -d /proc/sys/net/ipv6 ]; then :
+elif [ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6 2>/dev/null)" = 1 ]; then :
+elif [ "$(ip6tables -S OUTPUT 2>/dev/null | head -1)" = '-P OUTPUT DROP' ]; then :
+else
+  echo "[firewall] FAIL: IPv6 egress not closed - disable_ipv6 off AND ip6tables OUTPUT not DROP" >&2
+  exit 1
 fi
 
 # Audit mode (learn --audit) opens all HTTP/HTTPS via squid, so the enforce-mode deny asserts below
