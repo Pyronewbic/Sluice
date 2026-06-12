@@ -297,13 +297,11 @@ EOF
     -v "$PROJECT_DIR":"$PROJECT_DIR" -e "SLUICE_WORKDIR=$PROJECT_DIR")
   [ -n "${SLUICE_MEMORY:-}" ] && run_args+=(--memory "$SLUICE_MEMORY")
   selinux_enforcing && run_args+=(--security-opt label=disable)   # see the main run path
-  if git -C "$PROJECT_DIR" rev-parse --git-common-dir >/dev/null 2>&1; then
-    local common; common="$(git -C "$PROJECT_DIR" rev-parse --git-common-dir)"
-    case "$common" in /*) ;; *) common="$PROJECT_DIR/$common";; esac
-    common="$(cd "$common" 2>/dev/null && pwd || true)"
-    if [ -n "$common" ]; then
-      case "$common/" in "$PROJECT_DIR"/*) ;; *) run_args+=(-v "$common":"$common" -e "SLUICE_GITDIR=$common");; esac
-    fi
+  # Validated worktree common-dir mount (see _validated_git_common_dir): refuse a box-rewritten .git
+  # that would redirect us into an arbitrary repo. Skipped under overlay, matching the main run path.
+  if [ "${SLUICE_WORKSPACE:-}" != overlay ]; then
+    local common; common="$(_validated_git_common_dir)"
+    [ -n "$common" ] && run_args+=(-v "$common":"$common" -e "SLUICE_GITDIR=$common")
   fi
 
   # Egress is OPEN for this run - keep SLUICE_MASK shadowing in force so in-repo secrets stay unreadable.

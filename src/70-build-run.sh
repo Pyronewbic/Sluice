@@ -135,6 +135,38 @@ EOF
   MASKED_PATHS="${MASKED_PATHS# }"
 }
 
+# Echo the git common dir to rw-mount for a LINKED worktree - but only when the worktree linkage
+# verifies bidirectionally. In non-overlay mode the box (uid 1000) owns $PROJECT_DIR/.git and can rewrite
+# it to `gitdir: <other repo>`, which would otherwise steer sluice into rw-mounting + chown'ing an
+# arbitrary host repo (cross-repo rewrite; git-hook RCE on Linux). We mount $common only when it is
+# OUTSIDE the project AND the worktree's own git dir sits under $common/worktrees/ AND its backlink
+# ($common/worktrees/<id>/gitdir) points back at THIS project's .git - a file the box cannot forge (it
+# lives outside the box's writable mount). Otherwise warn and mount nothing (use SLUICE_MOUNTS to opt in).
+_validated_git_common_dir() {
+  git -C "$PROJECT_DIR" rev-parse --git-common-dir >/dev/null 2>&1 || return 0
+  local pd common gd back proj_git
+  pd="$(cd "$PROJECT_DIR" 2>/dev/null && pwd -P || true)"; [ -n "$pd" ] || return 0
+  common="$(git -C "$PROJECT_DIR" rev-parse --git-common-dir 2>/dev/null)"
+  case "$common" in /*) ;; *) common="$PROJECT_DIR/$common" ;; esac
+  common="$(cd "$common" 2>/dev/null && pwd -P || true)"
+  [ -n "$common" ] || return 0
+  case "$common/" in "$pd"/*) return 0 ;; esac          # common dir already inside the project mount
+  gd="$(git -C "$PROJECT_DIR" rev-parse --absolute-git-dir 2>/dev/null)"
+  gd="$(cd "$gd" 2>/dev/null && pwd -P || true)"
+  proj_git="$pd/.git"
+  if [ -n "$gd" ] && [ -f "$gd/gitdir" ]; then
+    case "$gd/" in "$common"/worktrees/*)
+      back="$(tr -d '\r\n' < "$gd/gitdir" 2>/dev/null)"
+      case "$back" in /*)
+        back="$(cd "$(dirname "$back")" 2>/dev/null && pwd -P || true)/$(basename "$back")"
+        [ "$back" = "$proj_git" ] && { printf '%s\n' "$common"; return 0; } ;;
+      esac ;;
+    esac
+  fi
+  echo "[sluice] ${E_YEL:-}not mounting the git common dir${E_RST:-} ($common) - its worktree linkage doesn't verify against this repo; mount it explicitly via SLUICE_MOUNTS if intended." >&2
+  return 0
+}
+
 # start: run the idle container (firewall comes up in the entrypoint)
 start() {
   "$RUNNER" rm -f -v "$container" >/dev/null 2>&1 || true
@@ -231,14 +263,11 @@ start() {
   fi
 
   # git worktree: also mount the common dir (when outside the project) so refs resolve + write. Skipped
-  # in overlay mode - an rw common-dir mount would let the agent escape the read-only protection.
-  if [ "${SLUICE_WORKSPACE:-}" != overlay ] && git -C "$PROJECT_DIR" rev-parse --git-common-dir >/dev/null 2>&1; then
-    local common; common="$(git -C "$PROJECT_DIR" rev-parse --git-common-dir)"
-    case "$common" in /*) ;; *) common="$PROJECT_DIR/$common";; esac
-    common="$(cd "$common" 2>/dev/null && pwd || true)"
-    if [ -n "$common" ]; then
-      case "$common/" in "$PROJECT_DIR"/*) ;; *) run_args+=(-v "$common":"$common" -e "SLUICE_GITDIR=$common");; esac
-    fi
+  # in overlay mode - an rw common-dir mount would let the agent escape the read-only protection. The
+  # linkage is validated so a box-rewritten .git can't redirect the mount to an arbitrary repo (see helper).
+  if [ "${SLUICE_WORKSPACE:-}" != overlay ]; then
+    local common; common="$(_validated_git_common_dir)"
+    [ -n "$common" ] && run_args+=(-v "$common":"$common" -e "SLUICE_GITDIR=$common")
   fi
 
   # Extra mounts (newline-separated host:container[:ro]).
