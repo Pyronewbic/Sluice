@@ -16,6 +16,12 @@ everyday task it stands in for. Bread-and-butter first; skim down for the securi
 | [jupyter](jupyter.config.sh) | **serve with zero runtime egress** (Python/pip, JupyterLab on `:8888`) - the firewall stays fully locked while it serves. | `mkdir d && cp examples/jupyter.config.sh d/sluice.config.sh && cd d && sluice` |
 | [nix](nix.config.sh) | **a pinned toolchain** fetched + baked at **build** time, then run with the firewall fully locked (no egress). Niche, heavy (~1.5GB image). | `mkdir d && cp examples/nix.config.sh d/sluice.config.sh && cd d && sluice` |
 
+The [overlay](overlay.config.sh) preset is the human gate in motion - the box edits a
+throwaway copy, you review with `sluice diff`, and only `sluice apply` (with a `[y/N]`
+confirm) touches your real files:
+
+<p align="center"><img src="../assets/overlay-demo.gif" width="720" alt="with SLUICE_WORKSPACE=overlay the box edits a throwaway copy: on the host notes.txt still reads 'original' and created.txt does not exist; sluice diff shows the box's changes (notes.txt modified, created.txt added); sluice apply prompts [y/N] and on 'y' writes them back - applied 1 added, 1 modified, 0 deleted"></p>
+
 ## Your own stack
 
 No preset needed: `sluice init` detects 11 stacks (list in the [main README](../README.md#use);

@@ -31,7 +31,7 @@ Sleep 600ms
 Type "sluice"
 Sleep 700ms
 Enter
-Sleep 7000ms
+Sleep 5000ms
 
 # 2. review the block per-host; 'a' allows it - applied live, no rebuild.
 Type "sluice learn"
@@ -47,5 +47,13 @@ Sleep 3200ms
 Type "sluice"
 Sleep 700ms
 Enter
-Sleep 7000ms
-Sleep 1500ms
+Sleep 4500ms
+
+# 4. the durable audit record: the reached ledger now shows the host green with bytes.
+Type "# the durable audit record:"
+Sleep 600ms
+Enter
+Type "sluice egress"
+Sleep 700ms
+Enter
+Sleep 2500ms

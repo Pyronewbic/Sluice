@@ -12,6 +12,8 @@ Run any project - or a coding agent in full YOLO mode - in a locked-down contain
 firewall** (only the hosts you allow, by name, are reachable) - and ends every run with a
 **receipt** of exactly what it reached and what the firewall blocked.
 
+<p align="center"><img src="assets/agent-demo.gif" width="680" alt="sluice agent lists nine sandboxed coding-agent presets with auth status read live from the host env (the claude row green, key set); inside the box 'cat .env' prints nothing because SLUICE_MASK shadows the secret; and the egress receipt shows api.anthropic.com reached in green and pypi.org blocked in red - one command, the agent caged"></p>
+
 Drop a `sluice.config.sh` in a directory and run `sluice`, or just run `sluice` and let it
 detect the stack, scaffold the config, and build + run it sandboxed.
 
@@ -85,7 +87,15 @@ freshness, allowlist, persisted state, blocked hosts - plus warnings for what wo
 silently misbehave in-box (unmasked secret-looking files, symlinks that resolve outside
 the mount). Full firewall + learn walkthrough: [examples/](examples/README.md).
 
-<p align="center"><img src="assets/learn-demo.gif" width="680" alt="a real run is blocked by the firewall: curl fails and the egress receipt shows pypi.org in red as 'blocked, not allowlisted'; sluice learn then reviews the host with an allow/skip/domain/quit prompt, 'a' allows it and the running box is reloaded live with no rebuild; the rerun returns HTTP 200 and the receipt flips to green 'reached pypi.org, all egress was allowlisted'"></p>
+The firewall is not just a claim - an allowlisted host gets through, an exfil POST and a
+raw-IP bypass are blocked, and the run's audit log is **tamper-evident** (`egress --verify`
+flips from green to red if a record is altered):
+
+<p align="center"><img src="assets/firewall-demo.gif" width="680" alt="a run reaches an allowlisted host (api.github.com, green OK) but an exfil POST to a non-allowlisted host and a raw-IP connection are both blocked; sluice egress ledgers what got through; sluice egress --verify reports the hash chain intact, then after a tampered record it flips to red 'egress log TAMPERED, prev-link broken' with a non-zero exit"></p>
+
+When a host you actually need is blocked, `sluice learn` allows it from the receipt, live:
+
+<p align="center"><img src="assets/learn-demo.gif" width="680" alt="a real run is blocked by the firewall: curl fails and the egress receipt shows pypi.org in red as 'blocked, not allowlisted'; sluice learn then reviews the host with an allow/skip/domain/quit prompt, 'a' allows it and the running box is reloaded live with no rebuild; the rerun returns HTTP 200 and the receipt flips to green 'reached pypi.org, all egress was allowlisted'; a closing sluice egress shows the durable audit record"></p>
 
 ```bash
 sluice                 # build (if needed) + run SLUICE_RUN_CMD in the sandbox
@@ -119,7 +129,7 @@ sluice doctor
              cdn.tracking.example
 ```
 
-<p align="center"><img src="assets/doctor-demo.gif" width="680" alt="sluice doctor prints a one-screen health panel: the container engine, the mounted project dir (the box's only host path), yellow warnings for an unmasked secret-looking .env (with the SLUICE_MASK hint) and a symlink that resolves outside the mount (broken inside the box), image freshness (config current), the supply-chain lock (in sync), the published port, the auth env var (set), and the hosts the last run was blocked from (api.openai.com) with a 'sluice learn' hint - green for ok, yellow for warn, red for blocked"></p>
+<p align="center"><img src="assets/operator-demo.gif" width="720" alt="sluice ls --running lists every running sandbox on the machine with its posture (stack, allowlist size, ports, lock, path); sluice ls --egress --running adds the per-box count of hosts each was blocked from; and sluice doctor drills into one box's one-screen health panel - engine, mount, the in-box hazard warnings, allowlist, auth, and the last run's blocked egress with a learn hint"></p>
 
 `sluice ls` shows every box on this machine, which one you're in (`*`), and its posture:
 

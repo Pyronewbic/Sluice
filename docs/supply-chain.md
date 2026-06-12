@@ -20,7 +20,7 @@ sluice update            # rebuild --no-cache, then refresh the lock
 
 All three report forms take `--json`.
 
-<p align="center"><img src="../assets/lock-demo.gif" width="700" alt="sluice lock --check reports the inventory in sync; after a dependency is added and the box rebuilt, lock --check catches the drift (classified: + apk tree, exit 1); re-lock records the supply-chain delta, then a CycloneDX SBOM carries the new package with its purl and SHA-1 integrity hash; finally lock --scan --fail-on high runs that SBOM through a host grype and gates the build on the lodash CVEs (non-zero exit)"></p>
+<p align="center"><img src="../assets/lock-demo.gif" width="700" alt="sluice lock --check reports the inventory in sync; after a dependency is added and the box rebuilt, lock --check catches the drift (classified: + apk tree, exit 1); a CycloneDX SBOM then carries the new package with its purl and SHA-1 integrity hash; finally lock --scan --fail-on high runs that SBOM through a host grype and gates the build on the lodash CVEs (non-zero exit)"></p>
 
 ### Audit, not reproducibility
 
