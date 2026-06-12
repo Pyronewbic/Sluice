@@ -1999,16 +1999,50 @@ derive_names
 # Line directives (a bare host = allow, back-compat): allow H | deny H | deny-ip CIDR |
 #   forbid SLUICE_X | forbid-laundering | max-allow-ips N. Host-side final gate BEFORE build/run:
 # effective allowlist = (local + allow) - deny; a forbidden loosening knob / laundering host / denied
-# or over-cap ALLOW_IPS makes us DIE. Inert when no policy is configured. (Signing is v2.1.)
+# or over-cap ALLOW_IPS makes us DIE. Inert when no policy is configured. A URL-fetched policy can be
+# authenticated (SLUICE_POLICY_SIG/_IDENTITY cosign, or SLUICE_POLICY_SHA256 pin; _REQUIRE fails closed).
 policy_configured() { [ -n "${SLUICE_POLICY_URL:-}" ] || [ -f "$HOME/.config/sluice/policy.conf" ] || [ -f /etc/sluice/policy.conf ]; }
 
+# Authenticate the URL-fetched policy body (the untrusted source; the root-owned /etc file is
+# filesystem-trusted). Fails CLOSED. SLUICE_POLICY_SHA256 pins the body hash (no cosign needed);
+# SLUICE_POLICY_SIG (a cosign sign-blob bundle, path or URL) + SLUICE_POLICY_IDENTITY (expected signer
+# regexp, + SLUICE_POLICY_ISSUER) verifies the signature; SLUICE_POLICY_REQUIRE=1 makes an unverifiable
+# policy fatal even if neither is set.
+_verify_policy_sig() {
+  local body="$1" tmp sig sf got issuer="${SLUICE_POLICY_ISSUER:-https://token.actions.githubusercontent.com}"
+  if [ -n "${SLUICE_POLICY_SHA256:-}" ]; then
+    got="$(printf '%s' "$body" | _sha256)"
+    [ "$got" = "$SLUICE_POLICY_SHA256" ] || die "policy body sha256 ($got) != pinned SLUICE_POLICY_SHA256 - refusing."
+  fi
+  if [ -n "${SLUICE_POLICY_SIG:-}" ]; then
+    command -v cosign >/dev/null 2>&1 || die "SLUICE_POLICY_SIG is set but cosign is not installed - can't verify the policy signature."
+    [ -n "${SLUICE_POLICY_IDENTITY:-}" ] || die "SLUICE_POLICY_SIG is set but SLUICE_POLICY_IDENTITY (expected signer) is not - refusing to verify against any identity."
+    tmp="$(mktemp)"; printf '%s' "$body" > "$tmp"; sig="$SLUICE_POLICY_SIG"
+    case "$sig" in http://*|https://*|file://*)
+      sf="$(mktemp)"; curl -fsSL --max-time 10 "$SLUICE_POLICY_SIG" > "$sf" 2>/dev/null || { rm -f "$tmp" "$sf"; die "could not fetch SLUICE_POLICY_SIG=$SLUICE_POLICY_SIG"; }; sig="$sf" ;;
+    esac
+    if cosign verify-blob "$tmp" --bundle "$sig" \
+         --certificate-identity-regexp "$SLUICE_POLICY_IDENTITY" --certificate-oidc-issuer "$issuer" >/dev/null 2>&1; then
+      rm -f "$tmp"; [ -n "${sf:-}" ] && rm -f "$sf"
+    else
+      rm -f "$tmp"; [ -n "${sf:-}" ] && rm -f "$sf"
+      die "policy signature verification failed (expected signer $SLUICE_POLICY_IDENTITY) - refusing."
+    fi
+  fi
+  if [ "${SLUICE_POLICY_REQUIRE:-}" = 1 ] && [ -z "${SLUICE_POLICY_SIG:-}" ] && [ -z "${SLUICE_POLICY_SHA256:-}" ]; then
+    die "SLUICE_POLICY_REQUIRE=1 but no SLUICE_POLICY_SIG / SLUICE_POLICY_SHA256 is configured - the policy is unverifiable."
+  fi
+  return 0
+}
+
 # Merged policy text from all sources (low->high precedence). A configured-but-unfetchable URL is fatal
-# (a managed policy must never silently fall back to local-only).
+# (a managed policy must never silently fall back to local-only); a URL body is authenticated before use.
 _policy_raw() {
   local url="${SLUICE_POLICY_URL:-}" uf="$HOME/.config/sluice/policy.conf" sf="/etc/sluice/policy.conf" chunk
   if [ -n "$url" ]; then
     chunk="$(curl -fsSL --max-time 10 "$url" 2>/dev/null)" \
       || die "SLUICE_POLICY_URL=$url could not be fetched - refusing to run without the configured policy (make it reachable, or unset it)."
+    _verify_policy_sig "$chunk"
     printf '%s\n' "$chunk"
   fi
   [ -f "$uf" ] && { cat "$uf"; echo; }
@@ -2043,24 +2077,34 @@ _policy_denied_host() {
 
 apply_policy() {
   policy_configured || return 0
-  local body allow="" deny="" denyip="" forbid="" maxips="" launder=0 line verb arg
+  local body allow="" deny="" denyip="" forbid="" maxips="" launder=0 strict=0 rsbase=0 unknowns="" line verb arg
   body="$(_policy_raw)"
   while IFS= read -r line; do
     line="${line%%#*}"; line="$(printf '%s' "$line" | awk '{$1=$1};1')"; [ -n "$line" ] || continue
     verb="${line%% *}"; arg="${line#"$verb"}"; arg="$(printf '%s' "$arg" | awk '{$1=$1};1')"
     case "$verb" in
-      allow)             allow="$allow $arg" ;;
-      deny)              deny="$deny $arg" ;;
-      deny-ip)           denyip="$denyip $arg" ;;
-      forbid)            forbid="$forbid $arg" ;;
-      forbid-laundering) launder=1 ;;
-      max-allow-ips)     maxips="$arg" ;;
+      allow)               allow="$allow $arg" ;;
+      deny)                deny="$deny $arg" ;;
+      deny-ip)             denyip="$denyip $arg" ;;
+      forbid)              forbid="$forbid $arg" ;;
+      forbid-laundering)   launder=1 ;;
+      max-allow-ips)       maxips="$arg" ;;
+      strict-unknown)      strict=1 ;;
+      require-signed-base) rsbase=1 ;;
       *) if [ -z "$arg" ] && printf '%s' "$verb" | grep -qE '^\.?[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$'; then allow="$allow $verb"
-         else echo "${E_YEL}[sluice] policy: ignoring unknown directive '$verb'${E_RST}" >&2; fi ;;
+         else unknowns="$unknowns $verb"; fi ;;
     esac
   done <<EOF
 $body
 EOF
+  # Unknown directives: warn + ignore (forward-compat), or die under `strict-unknown` (a typo should
+  # fail a high-security policy, not silently drop a rule). require-signed-base lets the policy mandate
+  # a signed base for every box under it, instead of each dev setting SLUICE_REQUIRE_SIGNED.
+  if [ -n "$unknowns" ]; then
+    if [ "$strict" = 1 ]; then die "policy: unknown directive(s):$unknowns - refusing (strict-unknown)."; fi
+    echo "${E_YEL}[sluice] policy: ignoring unknown directive(s):$unknowns${E_RST}" >&2
+  fi
+  if [ "$rsbase" = 1 ]; then export SLUICE_REQUIRE_SIGNED=1; fi
   # 1) forbidden loosening knobs: the org said no - die if the local config set one. (if/fi, not
   # `&& die`, so a not-set knob doesn't return non-zero and trip set -e.)
   local k
