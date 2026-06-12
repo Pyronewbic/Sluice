@@ -98,7 +98,8 @@ rough effort (S/M/L) and the gap each closes.
 
 **Later (adoption-gated / bigger):**
 - **Hosted control plane / fleet - L.** The OSS seams already shipped (`ls` with posture/orphan/filters + `--egress`,
-  cross-dir `-b/--box` targeting, `prune --orphans`, `doctor`/`egress --json`, `SLUICE_POLICY_URL`). The SaaS aggregator/dashboard + fleet `ls` + richer policy bundles +
+  cross-dir `-b/--box` targeting, `prune --orphans`, `doctor`/`egress --json`, a deny-capable central
+  [policy](docs/policy.md)). The SaaS aggregator/dashboard + fleet `ls` + signed policy bundles +
   credential brokering wait on adoption pull - the monetization (open-core), not first.
 - **Supply-chain depth - M.** APKINDEX-snapshot pinning + full pinned-version replay (CycloneDX + cosign
   SBOM attestation + cargo inventory + SPDX output + `lock --enforce` strict gate shipped).
@@ -134,8 +135,9 @@ live keyed round-trips (manual, 2026-06-03). Sessions persist via `SLUICE_STATE_
 
 ### 4. Observability + learn-mode - LANDED
 squid logs the SNI/Host of every blocked connection; `sluice learn` proposes the allowlist and applies
-it live (no rebuild), every run prints an at-exit egress receipt, and `learn --audit` covers trusted
-fetchers that abort on the first block. Walkthrough: [examples/README.md](examples/README.md).
+it live (no rebuild), every run prints an at-exit egress receipt and appends to a hash-chained audit
+log (`egress --export`/`--verify`), and `learn --audit` covers trusted fetchers that abort on the first
+block. Walkthrough: [examples/README.md](examples/README.md).
 
 ### 5. Distribution & trust - LANDED
 Apache-2.0 (open-core; the control plane is the moat), `SECURITY.md`, `install.sh`, and a Homebrew tap

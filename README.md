@@ -100,8 +100,9 @@ sluice diff | apply    # review / write back changes from a protected workspace 
 
 Plus `build` / `rebuild` / `update` / `stop` / `rm` / `prune` for lifecycle and `shell` /
 `ls` / `egress` / `logs` / `smoke` to inspect - **`sluice help`** lists them all. `ls`,
-`doctor`, and `egress` take `--json` for scripting; `sluice -b <name> <cmd>` targets any
-box from anywhere.
+`doctor`, and `egress` take `--json` for scripting; `egress --export`/`--verify` dump and
+integrity-check the run's append-only audit log; `sluice -b <name> <cmd>` targets any box
+from anywhere.
 
 ### What it looks like
 
@@ -181,6 +182,9 @@ weaknesses** in [`THREAT_MODEL.md`](THREAT_MODEL.md):
   cosign-signed, multi-arch (amd64 + arm64) base image with an SBOM attestation replaces
   the local core build (`SLUICE_BASE_IMAGE`, enforced by `SLUICE_REQUIRE_SIGNED=1`), and
   `sluice lock` records what's inside - see [docs/supply-chain.md](docs/supply-chain.md).
+- **Centralized policy**: an org can enforce a deny-capable egress policy (deny hosts, forbid
+  loosening knobs, cap `SLUICE_ALLOW_IPS`) that a developer's local config can't override - see
+  [docs/policy.md](docs/policy.md).
 - **The honest caveat**: the allowlist is host-granular, so data can still be laundered
   through an *allowed* host - sluice flags such hosts and `SLUICE_EGRESS_MAX_BYTES` caps
   run volume, but read [THREAT_MODEL.md](THREAT_MODEL.md) before trusting it with
