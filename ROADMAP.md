@@ -67,7 +67,7 @@ contact with a skeptical, Linux-heavy dev/security crowd landing on the repo.
 - [x] **Linux dev-box smoke (landed 2026-06-02).** The real first-try path on a throwaway cloud Linux VM
       ran clean, credential-free and non-sudo; the stock build needs no manual patch. (Closes #2; detail in B above.)
 - [x] **Demo assets (landed 2026-06-02).** Two capability GIFs in the README (real pasted commands):
-      **doctor** and **lock**. The cage hero GIF was dropped as low-value (2026-06-02, prose leads
+      **doctor** and **learn**. The cage hero GIF was dropped as low-value (2026-06-02, prose leads
       instead); a dedicated agent demo GIF stays optional.
 - [x] **Top-of-README quickstart (landed 2026-06-01).** Value prop -> copy-paste quickstart.
 - [x] **Issue templates + CONTRIBUTING (landed 2026-06-02).** Bug + feature forms (bug form collects
@@ -78,7 +78,7 @@ contact with a skeptical, Linux-heavy dev/security crowd landing on the repo.
 
 ## Candidate features (next cuts)
 
-The forward backlog. Everything here is **additive** (semver-minor), so it fits 0.8.x / 1.x without
+The forward backlog. Everything here is **additive** (semver-minor), so it fits 0.9.x / 1.x without
 disturbing the 1.0 stability lock above - 1.0 is the freeze, these ride the minors around it. Each item
 rides the lowest extension rung that fits (preset / knob / flag, not a new verb); see
 [EXTENDING.md](EXTENDING.md) for the ladder and the in-scope test. Tiered by sequencing; all consolidated
@@ -141,7 +141,7 @@ block. Walkthrough: [examples/README.md](examples/README.md).
 
 ### 5. Distribution & trust - LANDED
 Apache-2.0 (open-core; the control plane is the moat), `SECURITY.md`, `install.sh`, and a Homebrew tap
-pinning the cosign-signed release tarball; released through v0.8.0. Signed GHCR base image (opt-in) with
+pinning the cosign-signed release tarball; released through v0.9.0. Signed GHCR base image (opt-in) with
 an attested SBOM, plus the `lock` audit/drift/SBOM/scan surface. Honest scope: audit/drift, **not**
 reproducibility (Wolfi apk is rolling) - the remaining depth is in the backlog above. Mechanics:
 [docs/supply-chain.md](docs/supply-chain.md).
@@ -150,5 +150,5 @@ reproducibility (Wolfi apk is rolling) - the remaining depth is in the backlog a
 `sluice init` detects 11 stacks and scaffolds a working config (POSIX-clean, no engine needed);
 `init --update` re-detects without clobbering manual edits, and F2 dep prefetch fetches lockfile deps at
 build. Build-verified end-to-end per stack via `nightly-runtimes.bats`; elixir detection ships but its
-deps don't yet compile on Wolfi (an erlang-headers gap). The `examples/` gallery is four capability
-demos - **firewall**, **jupyter**, **nix**, **database**.
+deps don't yet compile on Wolfi (an erlang-headers gap). The `examples/` gallery is six capability
+demos - **webapp**, **overlay**, **firewall**, **database**, **jupyter**, **nix**.
