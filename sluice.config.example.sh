@@ -62,9 +62,10 @@ SLUICE_ALLOW_DOMAINS=""
 # catch-all (0.0.0.0/0, any /0) is refused. e.g. "10.0.0.5:5432" (Postgres) "10.0.0.6:6379/tcp"
 SLUICE_ALLOW_IPS=""
 
-# Central egress policy: a URL (http/https/file) returning a plain-text allowlist (one host
-# per line, # comments OK), fetched on the host at run and merged. Additive only; host-trusted -
-# keep it a URL you control. e.g. a shared org allowlist.
+# Central egress policy: a URL (http/https/file) to an org policy, applied host-side as the final
+# gate. A bare host list adds hosts (back-compat); v2 directives also `deny` hosts and refuse to run
+# on a crossed ceiling (forbid <knob> / deny-ip / max-allow-ips / forbid-laundering). Also read from
+# ~/.config/sluice/policy.conf and a root-owned /etc/sluice/policy.conf. See docs/policy.md.
 SLUICE_POLICY_URL=""
 
 # Scoped TLS interception (SSL-bump): OPT-IN, OFF BY DEFAULT. Listed hosts are decrypted so

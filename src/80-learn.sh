@@ -130,11 +130,16 @@ reload_allowlist() {
 # running box would silently diverge from its own config. Laundering hosts are allowed (boot allows
 # them too) but warned, matching the session-start gate.
 learn_apply() {   # $1 = newline-separated entries (hosts and/or .domains)
-  local entries="$1" keep="" doh="" launder="" e h
+  local entries="$1" keep="" doh="" launder="" pden="" pdeny="" e h
+  # A central policy can DENY a host; learn must not re-add it via the live reload (which appends
+  # straight to the running box's allowlist, bypassing the run-time policy gate). Fail-open on an
+  # unfetchable policy here - the run-time gate (apply_policy) is the fail-closed enforcement.
+  policy_configured && pdeny="$(_policy_raw 2>/dev/null | awk '$1=="deny"{print $2}' || true)"
   while IFS= read -r e; do
     [ -n "$e" ] || continue
     h="${e#.}"   # a .domain wildcard matches by its bare host
     if [ "${SLUICE_ALLOW_DOH:-}" != 1 ] && doh_listed "$h"; then doh="$doh $e"; continue; fi
+    if [ -n "$pdeny" ] && _policy_denied_host "$h" "$pdeny"; then pden="$pden $e"; continue; fi
     laundering_host "$h" && launder="$launder $e"
     keep="$keep $e"
   done <<EOF
@@ -142,6 +147,9 @@ $entries
 EOF
   keep="${keep# }"
 
+  if [ -n "$pden" ]; then
+    echo "[sluice] ${E_YEL}not allowing (denied by central policy):${E_RST}$pden" >&2
+  fi
   if [ -n "$doh" ]; then
     echo "[sluice] ${E_YEL}not allowing DoH/DoT resolver(s):${E_RST}$doh" >&2
     echo "         these tunnel DNS over HTTPS past the SNI filter - blocked even when allowlisted." >&2
