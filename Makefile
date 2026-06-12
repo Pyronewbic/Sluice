@@ -41,8 +41,8 @@ test-nightly:
 structure:
 	docker build --target base -t sluice-base:gate core/
 	@command -v container-structure-test >/dev/null 2>&1 \
-	  && container-structure-test test --image sluice-base:gate --config tests/structure.yaml \
-	  || echo "container-structure-test absent (brew install container-structure-test) - skipping image invariants"
+	  || { echo 'INVARIANTS NOT CHECKED: container-structure-test missing (brew install container-structure-test)'; exit 1; }
+	container-structure-test test --image sluice-base:gate --config test/structure.yaml
 
 # shellcheck only (the correctness gate). shfmt was dropped: it expands the deliberate compact
 # one-liners and no flag preserves them, so it could never gate the launcher's hand-kept style.

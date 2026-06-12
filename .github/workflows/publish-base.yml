@@ -23,11 +23,11 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: docker/setup-qemu-action@v3        # arm64 emulation for the multi-arch build
-      - uses: docker/setup-buildx-action@v3
-      - uses: sigstore/cosign-installer@v3
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0 (arm64 emulation for the multi-arch build)
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.10.1
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -36,24 +36,22 @@ jobs:
       # --- gate: build amd64 and assert the base has its tooling, the non-root user, and NO
       #     baked key (the splice cert is generated at runtime) before publishing anything. ---
       - name: Smoke the base (amd64)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: core
           target: base
           load: true
           tags: sluice-base:smoke
-      - name: Install container-structure-test
-        run: |
-          curl -fsSL https://storage.googleapis.com/container-structure-test/latest/container-structure-test-linux-amd64 -o cst
-          chmod +x cst && sudo mv cst /usr/local/bin/container-structure-test
+      - name: Install container-structure-test (pinned, checksummed)
+        run: bash scripts/install-cst.sh
       - name: Assert base invariants
         # Same spec the PR gate runs (acceptance.yml) - no sudo, uid 1000, firewall packages, keyless.
-        run: container-structure-test test --image sluice-base:smoke --config tests/structure.yaml
+        run: container-structure-test test --image sluice-base:smoke --config test/structure.yaml
 
       # --- build + push the multi-arch base, then cosign-sign the pushed digest ---
       - name: Build + push (amd64 + arm64)
         id: push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: core
           target: base

@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
       - name: bin/sluice is in sync with src/ (assembled launcher)
         run: make build-check
       - name: shellcheck (gate)
@@ -29,30 +29,32 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
       - name: Build the base stage
         # Retry: the BuildKit syntax frontend + base layers pull from registries that occasionally
         # time out on shared runners (a transient Docker Hub i/o timeout, not a Dockerfile problem).
+        # `timeout` caps each attempt so a single hung pull yields to the next one instead of eating
+        # the job budget; set -euo pipefail so any non-build error in the step fails loudly.
         run: |
+          set -euo pipefail
           for i in 1 2 3; do
-            docker build --target base -t sluice-base:gate core/ && exit 0
-            echo "::warning::base build attempt $i failed (transient registry timeout?); retrying"
+            if timeout 240 docker build --target base -t sluice-base:gate core/; then exit 0; fi
+            echo "::warning::base build attempt $i failed or timed out; retrying"
             sleep $((i * 10))
           done
+          echo "::error::base build failed after 3 attempts"
           exit 1
-      - name: Install container-structure-test
-        run: |
-          curl -fsSL https://storage.googleapis.com/container-structure-test/latest/container-structure-test-linux-amd64 -o cst
-          chmod +x cst && sudo mv cst /usr/local/bin/container-structure-test
+      - name: Install container-structure-test (pinned, checksummed)
+        run: bash scripts/install-cst.sh
       - name: Assert baked invariants (no sudo, uid 1000, firewall packages)
-        run: container-structure-test test --image sluice-base:gate --config tests/structure.yaml
+        run: container-structure-test test --image sluice-base:gate --config test/structure.yaml
 
   unit:
     name: unit suites (no Docker)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with: { submodules: recursive }
       - name: init detection, CLI surface, doctor scans, agent scaffold, installer, laundering gate
         run: make test-unit   # the engine-free lane; membership lives in the Makefile (UNIT_BATS)
@@ -62,7 +64,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with: { submodules: recursive }
       - name: Acceptance tests (egress/run matrix)
         run: make test-acceptance
@@ -72,7 +74,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with: { submodules: recursive }
       - name: Verify the danger knobs (mask, seccomp, readonly, workspace/apply, doh, allow-ips, ...)
         run: make test-security
@@ -83,7 +85,7 @@ jobs:
     timeout-minutes: 25
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with: { submodules: recursive }
       - name: Install + configure rootless podman
         run: |
