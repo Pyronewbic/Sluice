@@ -1,10 +1,12 @@
 #!/bin/sh
 # Install the `sluice` CLI by symlinking bin/sluice onto PATH (from a checkout, or curl|sh).
-# Env: SLUICE_REPO (git URL), SLUICE_HOME (clone dir, default ~/.local/share/sluice).
+# Env: SLUICE_REPO (git URL), SLUICE_HOME (clone dir, default ~/.local/share/sluice),
+#      SLUICE_REF (commit/branch/tag to install; default main - the install reports the exact sha).
 set -eu
 
 REPO="${SLUICE_REPO:-https://github.com/Pyronewbic/Sluice.git}"
 DEST="${SLUICE_HOME:-$HOME/.local/share/sluice}"
+REF="${SLUICE_REF:-main}"
 BIN="$HOME/.local/bin"
 
 # Use the checkout we're run from if it has bin/sluice; piped via curl|sh, clone instead.
@@ -16,17 +18,20 @@ elif [ -f "./bin/sluice" ] && [ -f "./install.sh" ]; then
   src="$(pwd)"
 else
   command -v git >/dev/null 2>&1 || { echo "sluice: git is required to install" >&2; exit 1; }
-  if [ -d "$DEST/.git" ]; then
-    echo "Updating $DEST ..."; git -C "$DEST" pull --ff-only --quiet
-  else
-    echo "Cloning $REPO -> $DEST ..."; git clone --depth 1 --quiet "$REPO" "$DEST"
-  fi
+  [ -d "$DEST/.git" ] && echo "Updating $DEST ($REF) ..." || { echo "Cloning $REPO ($REF) -> $DEST ..."; git clone --depth 1 --quiet "$REPO" "$DEST"; }
+  # Resolve REF (a commit sha, branch, or tag) and check it out detached - so the install is pinned to
+  # an exact commit, not a floating branch ref. Default REF=main pins to main's current tip; re-run to
+  # advance. GitHub serves arbitrary shas (allowAnySHA1InWant), so a sha pin works too.
+  git -C "$DEST" fetch --depth 1 --quiet origin "$REF" \
+    || { echo "sluice: could not fetch SLUICE_REF=$REF from $REPO" >&2; exit 1; }
+  git -C "$DEST" checkout --quiet --force FETCH_HEAD
   src="$DEST"
 fi
 
 mkdir -p "$BIN"
 ln -sf "$src/bin/sluice" "$BIN/sluice"
-echo "Linked $BIN/sluice -> $src/bin/sluice"
+sha="$(git -C "$src" rev-parse --short HEAD 2>/dev/null || true)"
+echo "Linked $BIN/sluice -> $src/bin/sluice${sha:+  (sluice @ $sha, ref: $REF)}"
 
 # Shell completion (best-effort). bash: XDG dir is auto-loaded by bash-completion. zsh: needs the
 # dir on fpath, so we symlink + print the one-liner.
