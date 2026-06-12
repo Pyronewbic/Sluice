@@ -198,7 +198,9 @@ laundering_host() {
 # True if $host is on the baked DoH/DoT denylist (core/doh-endpoints.txt, the single source squid
 # also reads). dstdomain semantics: a leading-dot entry matches the domain + subdomains; else exact.
 doh_listed() {
-  local host="$1" entry
+  # Match case-insensitively: squid dstdomain / dnsmasq are case-insensitive and the SNI regex accepts
+  # uppercase, so a mixed-case `DNS.GOOGLE` must still hit the (lowercase) denylist - else it tunnels DoH.
+  local host entry; host="$(printf '%s' "$1" | tr 'A-Z' 'a-z')"
   [ -f "$CORE/doh-endpoints.txt" ] || return 1
   while IFS= read -r entry; do
     case "$entry" in ''|\#*) continue ;; esac

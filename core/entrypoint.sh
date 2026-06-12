@@ -19,12 +19,13 @@ set -e
 drop_doh() {   # stdin = candidate hosts; stdout = those that are NOT a DoH endpoint
   while IFS= read -r h; do
     [ -n "$h" ] || continue
-    keep=1
+    hl="$(printf '%s' "$h" | tr 'A-Z' 'a-z')"   # compare case-insensitively (squid/dnsmasq are); a
+    keep=1                                       # mixed-case DNS.GOOGLE must still match the denylist
     while IFS= read -r e; do
       case "$e" in ''|\#*) continue ;; esac
       case "$e" in
-        .*) case ".$h" in *"$e") keep=0; break ;; esac ;;
-        *)  [ "$h" = "$e" ] && { keep=0; break; } ;;
+        .*) case ".$hl" in *"$e") keep=0; break ;; esac ;;
+        *)  [ "$hl" = "$e" ] && { keep=0; break; } ;;
       esac
     done < /etc/squid/doh-endpoints.txt
     [ "$keep" = 1 ] && printf '%s\n' "$h"
