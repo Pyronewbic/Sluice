@@ -45,6 +45,11 @@ show_egress_receipt() {
     if ! running; then
       _persist_receipt "" unavailable
       echo "[sluice] ${E_YEL:-}egress receipt unavailable${E_RST:-} - box exited before capture" >&2
+    elif ! _audit_readable; then
+      # Box is up but the in-box audit read couldn't run (pids cgroup exhausted): record the gap rather
+      # than let an unreadable run look like clean zero egress.
+      _persist_receipt "" unavailable
+      echo "[sluice] ${E_YEL:-}egress receipt unavailable${E_RST:-} - could not read the in-box audit log (pids limit?)" >&2
     fi
     return 0
   fi

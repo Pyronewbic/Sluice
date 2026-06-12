@@ -58,3 +58,19 @@ _rec() { local TAB; TAB="$(printf '\t')"; _persist_receipt "$(printf 'reached%s%
   run bash -c "tail -1 '$LOG' | jq -e '.status==\"unavailable\" and (.totals.reached==0)'"
   assert_success
 }
+
+# Box UP but the in-box audit can't be read (uid 1000 exhausted the pids cgroup so `exec` can't fork):
+# empty rows must record 'unavailable', not look like a clean zero-egress run.
+@test "receipt: box up + unreadable audit records 'unavailable' (pids-cgroup blind)" {
+  running() { return 0; }; egress_rows() { :; }; _audit_readable() { return 1; }
+  run show_egress_receipt
+  assert_success
+  run bash -c "tail -1 '$LOG' | jq -e '.status==\"unavailable\"'"
+  assert_success
+}
+
+@test "egress: an unreadable in-box audit fails the byte gate closed (non-zero), not a silent zero" {
+  running() { return 0; }; egress_rows() { :; }; _audit_readable() { return 1; }
+  run cmd_egress
+  assert_failure
+}

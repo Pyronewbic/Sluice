@@ -60,6 +60,11 @@ selinux_enforcing() { [ -r /sys/fs/selinux/enforce ] && [ "$(cat /sys/fs/selinux
 _ROOT_PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 _root_exec() { "$RUNNER" exec -e "PATH=$_ROOT_PATH" "$@"; }
 
+# True when the box's in-container audit log is actually READABLE. A uid-1000 workload can exhaust the
+# pids cgroup so `<engine> exec` can't fork - _squid_log would then return empty (a FAILED read), which
+# would misread as zero egress. Callers gate on this to record `unavailable` / fail the byte gate closed.
+_audit_readable() { _root_exec "$container" true >/dev/null 2>&1; }
+
 # squid access log. From _RCPT_OFFSET bytes when set (the run-scoped receipt); otherwise the last
 # _SQUID_LOG_CAP bytes - a ceiling so an attacker can't inflate host CPU/IO by spamming the log and
 # forcing an unbounded `cat | awk` on the box-level audit paths (egress/doctor/learn --all). 16 MiB
