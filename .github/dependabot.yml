@@ -1,0 +1,13 @@
+# Auto-bump the SHA-pinned GitHub Actions (pin + bump is the supply-chain pattern; without this the
+# digests silently rot). One grouped PR weekly. Add `docker`/`gitsubmodule` ecosystems here if wanted.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci
