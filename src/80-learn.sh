@@ -1,7 +1,53 @@
+# Persist one run's receipt host-side (outside the box the workload can reach): a "latest" snapshot
+# (egress-receipt.json, back-compat) AND an append-only, hash-chained audit log (egress-log.jsonl).
+# Each log line carries prev = the previous line's `self`, and self = sha256 of the line up to `self`
+# (genesis prev = 64 zeros), so editing/reordering/dropping any line breaks the chain -> `sluice egress
+# --verify`. $1 = the egress rows (may be empty), $2 = status (ok | unavailable).
+_persist_receipt() {
+  local rows="$1" rstatus="$2" TAB _dir _log _inner _hj="" _first=1 _cls _host _cnt _byt \
+        _reached _blocked _tot _ts _run _prev _self _payload
+  TAB="$(printf '\t')"
+  _dir="${XDG_STATE_HOME:-$HOME/.local/state}/sluice/$slug"
+  mkdir -p "$_dir" 2>/dev/null || return 0
+  _log="$_dir/egress-log.jsonl"
+  _ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)"; _run="${_ts}-$$"
+  while IFS="$TAB" read -r _cls _host _cnt _byt; do
+    [ -n "$_host" ] || continue
+    [ "$_first" = 1 ] && _first=0 || _hj="$_hj,"
+    _hj="$_hj{\"host\":\"$(_json_esc "$_host")\",\"class\":\"$_cls\",\"requests\":$_cnt,\"bytes\":$_byt}"
+  done <<EOF
+$rows
+EOF
+  _reached="$(printf '%s\n' "$rows" | awk -F"$TAB" '$1=="reached"' | grep -c . || true)"
+  _blocked="$(printf '%s\n' "$rows" | awk -F"$TAB" '$1=="blocked"' | grep -c . || true)"
+  _tot="$(printf '%s\n' "$rows" | awk -F"$TAB" '{t+=$4} END{print t+0}')"
+  # record body (no chain fields), versioned. box/totals/hosts/confighash/allowlist stay back-compat.
+  _inner="$(printf '"schema":"sluice.egress/v1","run":"%s","ts":"%s","box":"%s","status":"%s","confighash":"%s","allowlist":%s,"totals":{"reached":%s,"blocked":%s,"bytes":%s},"hosts":[%s]' \
+    "$_run" "$_ts" "$(_json_esc "$container")" "$rstatus" "$(config_hash 2>/dev/null || true)" \
+    "$(allowed_domains | tr ' ' '\n' | _json_arr)" "${_reached:-0}" "${_blocked:-0}" "${_tot:-0}" "$_hj")"
+  printf '{%s}\n' "$_inner" > "$_dir/egress-receipt.json" 2>/dev/null || true
+  # prev = the previous record's self (genesis = 64 zeros). Guard the read: a first-run tail on the
+  # not-yet-existing log exits non-zero, which under the launcher's set -e/pipefail would abort here.
+  _prev=""
+  [ -f "$_log" ] && _prev="$(tail -n 1 "$_log" 2>/dev/null | sed -n 's/.*,"self":"\([0-9a-f]*\)"}$/\1/p')"
+  [ -n "$_prev" ] || _prev="0000000000000000000000000000000000000000000000000000000000000000"
+  _payload="{${_inner},\"prev\":\"${_prev}\"}"
+  _self="$(printf '%s' "$_payload" | _sha256)"
+  printf '%s,"self":"%s"}\n' "${_payload%\}}" "$_self" >> "$_log" 2>/dev/null || true
+}
+
 show_egress_receipt() {
   local rows TAB reached_rows blocked_rows ordered grn="" red="" dim="" bld="" rst=""
   rows="$(egress_rows 2>/dev/null || true)"
-  [ -n "$rows" ] || return 0
+  if [ -z "$rows" ]; then
+    # Box gone before capture (concurrent stop / crash / host OOM): record the gap explicitly so a
+    # missing receipt can't read as a clean zero-egress run. A live box with no egress stays silent.
+    if ! running; then
+      _persist_receipt "" unavailable
+      echo "[sluice] ${E_YEL:-}egress receipt unavailable${E_RST:-} - box exited before capture" >&2
+    fi
+    return 0
+  fi
   TAB="$(printf '\t')"
   reached_rows="$(printf '%s\n' "$rows" | awk -F"$TAB" '$1=="reached"' | sort -t"$TAB" -k4,4nr)"
   blocked_rows="$(printf '%s\n' "$rows" | awk -F"$TAB" '$1=="blocked"' | sort -t"$TAB" -k2,2)"
@@ -31,27 +77,7 @@ show_egress_receipt() {
       if(nb==0) printf "  %sall egress was allowlisted%s\n", grn, rst;
     }' >&2
 
-  # Persist a durable receipt to the state dir (host-side, outside the box the agent can reach) so the
-  # run's egress is auditable after the fact: hosts reached/blocked + bytes, a network SBOM for the
-  # session. JSON is the artifact; `sluice egress` is the live human view.
-  local _dir _hj="" _first=1 _cls _host _cnt _byt _reached _blocked _tot
-  _dir="${XDG_STATE_HOME:-$HOME/.local/state}/sluice/$slug"
-  if mkdir -p "$_dir" 2>/dev/null; then
-    while IFS="$TAB" read -r _cls _host _cnt _byt; do
-      [ -n "$_host" ] || continue
-      [ "$_first" = 1 ] && _first=0 || _hj="$_hj,"
-      _hj="$_hj{\"host\":\"$(_json_esc "$_host")\",\"class\":\"$_cls\",\"requests\":$_cnt,\"bytes\":$_byt}"
-    done <<EOF
-$rows
-EOF
-    _reached="$(printf '%s\n' "$rows" | awk -F"$TAB" '$1=="reached"' | grep -c . || true)"
-    _blocked="$(printf '%s\n' "$rows" | awk -F"$TAB" '$1=="blocked"' | grep -c . || true)"
-    _tot="$(printf '%s\n' "$rows" | awk -F"$TAB" '{t+=$4} END{print t+0}')"
-    printf '{"box":"%s","generated":"%s","confighash":"%s","allowlist":%s,"totals":{"reached":%s,"blocked":%s,"bytes":%s},"hosts":[%s]}\n' \
-      "$(_json_esc "$container")" "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" "$(config_hash 2>/dev/null || true)" \
-      "$(allowed_domains | tr ' ' '\n' | _json_arr)" "${_reached:-0}" "${_blocked:-0}" "$_tot" "$_hj" \
-      > "$_dir/egress-receipt.json" 2>/dev/null || true
-  fi
+  _persist_receipt "$rows" ok   # latest snapshot + append to the hash-chained audit log
 
   # SLUICE_EGRESS_MAX_BYTES: loud warning when this run sent more than the cap (bounds laundering
   # through an allowed host). `sluice egress` is the CI gate (exits non-zero); the receipt just nudges.

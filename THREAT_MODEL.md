@@ -198,6 +198,24 @@ decrypting your own traffic to that host - the box's logs/egress receipt gain fu
 sensitive. It narrows laundering for the listed host (path-level filtering) but does not eliminate it:
 data hidden in an *allowed* path is still opaque.
 
+## Egress receipts: what they attest (and don't)
+
+Every run ends with an **egress receipt** and appends one record to a host-side, append-only,
+hash-chained log (`egress-log.jsonl` in the state dir; `sluice egress --export` ships it, `--verify`
+checks the chain). Precisely what that buys:
+
+- **Captured host-side from squid's log.** The launcher reads the proxy's access log as root over
+  `exec`; the in-box workload (uid 1000) can write neither that log nor the host-side store, so it
+  cannot forge or erase a reached/blocked entry. The attestation is bounded by squid-log integrity,
+  not by the workload behaving.
+- **Tamper-evident, not tamper-proof.** The `prev`/`self` hash chain makes any edit, reorder, or
+  deletion of a *past* record detectable by `--verify`; it does not stop a host with write access from
+  rebuilding the whole chain. For non-repudiation, `--export` records into a store the producer can't
+  reach (your SIEM).
+- **Records egress seen, not payload.** Spliced (never decrypted) traffic is counted by host + bytes;
+  data laundered inside an allowed-host request is in the byte total but not inspected (laundering,
+  below).
+
 ## Residual risk, one line
 
 Egress is **hostname-filtered** (squid splice) with IPv6 off, direct-IP blocked, and **DNS scoped to

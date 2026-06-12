@@ -110,7 +110,7 @@ Build & lifecycle:
 Inspect:
   doctor           health check: engine, image, allowlist, blocked egress (--json)
   ls               list all boxes + posture (status, stack, allow/ports/lock, path); --running/--orphans/--stack <name>/--egress/--json
-  egress           show what this box reached vs. was blocked (--json)
+  egress           show what this box reached vs. was blocked (--json | --export | --verify)
   logs             follow firewall + readiness logs
   lock             record installed apk+npm+pip+gem+go+cargo versions to sluice.lock (supply-chain audit)
                    --check fails on drift (CI gate, --json); --enforce is the strict variant; --diff shows it;
@@ -148,7 +148,7 @@ help_for() {
     prune)   echo "sluice prune [--orphans] - remove every sluice container + image (or only orphans); confirms." ;;
     doctor)  echo "sluice doctor [--json]  - health check: engine, image, allowlist, blocked egress." ;;
     ls)      echo "sluice ls [--running|--orphans|--stack <name>|--egress|--json] - list boxes + posture (allow/ports/lock; --egress adds live blocked counts). Posture populates after rebuild." ;;
-    egress)  echo "sluice egress [--json]  - show what this box reached vs. was blocked." ;;
+    egress)  echo "sluice egress [--json | --export | --verify]  - reached vs. blocked; --export the append-only audit log (JSONL), --verify its hash chain." ;;
     logs)    echo "sluice logs             - follow firewall + readiness logs." ;;
     lock)    echo "sluice lock [--check [--json] | --diff [--json] | --enforce [--json] | --sbom [--format cyclonedx|spdx] | --scan [--json] [--fail-on <sev>]] - record/verify/vuln-scan the supply-chain inventory." ;;
     smoke)   echo "sluice smoke            - build (if needed) + run the image smoke test." ;;
@@ -239,13 +239,16 @@ running() { "$RUNNER" ps --filter "name=$container" --filter status=running --fo
 # inaccessible to the box without a label, so sluice runs it label=disable (see the run paths).
 selinux_enforcing() { [ -r /sys/fs/selinux/enforce ] && [ "$(cat /sys/fs/selinux/enforce 2>/dev/null)" = 1 ]; }
 
-# squid access log. Full by default (box-level audit: egress/doctor/learn); from _RCPT_OFFSET bytes
-# when set, so the run-default egress receipt is scoped to just that run, not the box's whole boot.
+# squid access log. From _RCPT_OFFSET bytes when set (the run-scoped receipt); otherwise the last
+# _SQUID_LOG_CAP bytes - a ceiling so an attacker can't inflate host CPU/IO by spamming the log and
+# forcing an unbounded `cat | awk` on the box-level audit paths (egress/doctor/learn --all). 16 MiB
+# holds far more than any real session; a truncated first line just gets skipped by the awk parsers.
+_SQUID_LOG_CAP=16777216
 _squid_log() {
   if [ -n "${_RCPT_OFFSET:-}" ]; then
     "$RUNNER" exec "${1:-$container}" sh -c "tail -c +$(( _RCPT_OFFSET + 1 )) /var/log/squid/access.log" 2>/dev/null
   else
-    "$RUNNER" exec "${1:-$container}" cat /var/log/squid/access.log 2>/dev/null
+    "$RUNNER" exec "${1:-$container}" sh -c "tail -c $_SQUID_LOG_CAP /var/log/squid/access.log" 2>/dev/null
   fi
 }
 
@@ -343,6 +346,18 @@ egress_tx_total() {
 last_run_offset() { "$RUNNER" exec "$container" cat /run/sluice-run-offset 2>/dev/null | tr -dc 0-9; }
 mark_run_start()  { "$RUNNER" exec "$container" sh -c 'wc -c < /var/log/squid/access.log | tr -dc 0-9 > /run/sluice-run-offset' 2>/dev/null || true; }
 
+# sha256 of stdin (hex only). shasum ships on macOS + the Linux runners (config_hash already uses it).
+_sha256() { shasum -a 256 2>/dev/null | awk '{print $1}'; }
+
+# Arm the at-exit egress receipt for a session: snapshot the proxy-log position so the receipt is
+# scoped to THIS run (not the box's whole boot), mark the run start so a later `learn` can scope to it,
+# and trap the receipt on EXIT (fires on normal exit, die, or Ctrl-C). Shared by run-default/shell/run.
+arm_receipt() {
+  _RCPT_OFFSET="$("$RUNNER" exec "$container" sh -c 'wc -c < /var/log/squid/access.log' 2>/dev/null | tr -dc 0-9)"
+  mark_run_start
+  trap show_egress_receipt EXIT
+}
+
 # This project's effective egress allowlist: config domains + the always-on base.
 allowed_domains() { printf '%s %s' "${SLUICE_ALLOW_DOMAINS:-}" "$(base_domains)"; }
 
@@ -424,7 +439,7 @@ cmd_egress() {
     done <<EOF
 $rows
 EOF
-    printf '{"box":"%s","allowed":%s,"blocked":%s,"tx_bytes":%s,"budget":%s,"over_budget":%s,"hosts":[%s]}\n' \
+    printf '{"schema":"sluice.egress/v1","box":"%s","allowed":%s,"blocked":%s,"tx_bytes":%s,"budget":%s,"over_budget":%s,"hosts":[%s]}\n' \
       "$(_json_esc "$container")" \
       "$(printf '%s\n' "$allowed" | _json_arr)" "$(printf '%s\n' "$blocked" | _json_arr)" \
       "$tx" "${cap:-null}" "$over_json" "$hosts_json"
@@ -449,6 +464,37 @@ EOF
     else echo "  ${C_DIM}egress budget: $(_human_bytes "$tx") sent / $(_human_bytes "$cap") cap${C_RST}"; fi
   fi
   return "$over"
+}
+
+# `sluice egress --export`: emit the append-only egress audit log (JSONL, one record per run with
+# egress) for SIEM/CI ingestion. Reads the host-side store, so it works even when the box is down.
+cmd_egress_export() {
+  local log="${XDG_STATE_HOME:-$HOME/.local/state}/sluice/$slug/egress-log.jsonl"
+  [ -f "$log" ] || { echo "[sluice] no egress log yet at $(_tilde "$log") - run the box first." >&2; return 0; }
+  cat "$log"
+}
+
+# `sluice egress --verify`: walk the hash chain of the egress audit log; OK only if every line's
+# self-hash recomputes and its prev links to the previous line's self (genesis = 64 zeros). Exits
+# non-zero on the first break (tamper / reorder / truncation) - a CI integrity gate on the receipts.
+cmd_egress_verify() {
+  local log="${XDG_STATE_HOME:-$HOME/.local/state}/sluice/$slug/egress-log.jsonl"
+  [ -f "$log" ] || { echo "[sluice] no egress log yet at $(_tilde "$log")." >&2; return 0; }
+  local n=0 prev="0000000000000000000000000000000000000000000000000000000000000000" line payload self pfield
+  while IFS= read -r line; do
+    n=$((n+1))
+    self="$(printf '%s' "$line"   | sed -n 's/.*,"self":"\([0-9a-f]*\)"}$/\1/p')"
+    payload="$(printf '%s' "$line" | sed 's/,"self":"[0-9a-f]*"}$/}/')"
+    pfield="$(printf '%s' "$line"  | sed -n 's/.*,"prev":"\([0-9a-f]*\)".*/\1/p')"
+    if [ -z "$self" ] || [ "$(printf '%s' "$payload" | _sha256)" != "$self" ]; then
+      echo "[sluice] ${E_RED}egress log TAMPERED${E_RST}: line $n self-hash mismatch ($(_tilde "$log"))" >&2; return 1
+    fi
+    if [ "$pfield" != "$prev" ]; then
+      echo "[sluice] ${E_RED}egress log TAMPERED${E_RST}: line $n prev-link broken - reordered or dropped ($(_tilde "$log"))" >&2; return 1
+    fi
+    prev="$self"
+  done < "$log"
+  echo "[sluice] ${C_GRN}egress log verified${C_RST}: $n record(s), hash chain intact ($(_tilde "$log"))"
 }
 
 # sluice.lock: a committable inventory of the built image. base ref + every apk
@@ -2408,10 +2454,56 @@ EOF
 # After a run-default session, print an egress receipt: hosts the box reached (hit counts, most-hit
 # first) and hosts the firewall blocked (review these). stderr-only so it never pollutes the app's
 # stdout; silent when there was no egress. Detailed per-host view: `sluice egress`.
+# Persist one run's receipt host-side (outside the box the workload can reach): a "latest" snapshot
+# (egress-receipt.json, back-compat) AND an append-only, hash-chained audit log (egress-log.jsonl).
+# Each log line carries prev = the previous line's `self`, and self = sha256 of the line up to `self`
+# (genesis prev = 64 zeros), so editing/reordering/dropping any line breaks the chain -> `sluice egress
+# --verify`. $1 = the egress rows (may be empty), $2 = status (ok | unavailable).
+_persist_receipt() {
+  local rows="$1" rstatus="$2" TAB _dir _log _inner _hj="" _first=1 _cls _host _cnt _byt \
+        _reached _blocked _tot _ts _run _prev _self _payload
+  TAB="$(printf '\t')"
+  _dir="${XDG_STATE_HOME:-$HOME/.local/state}/sluice/$slug"
+  mkdir -p "$_dir" 2>/dev/null || return 0
+  _log="$_dir/egress-log.jsonl"
+  _ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)"; _run="${_ts}-$$"
+  while IFS="$TAB" read -r _cls _host _cnt _byt; do
+    [ -n "$_host" ] || continue
+    [ "$_first" = 1 ] && _first=0 || _hj="$_hj,"
+    _hj="$_hj{\"host\":\"$(_json_esc "$_host")\",\"class\":\"$_cls\",\"requests\":$_cnt,\"bytes\":$_byt}"
+  done <<EOF
+$rows
+EOF
+  _reached="$(printf '%s\n' "$rows" | awk -F"$TAB" '$1=="reached"' | grep -c . || true)"
+  _blocked="$(printf '%s\n' "$rows" | awk -F"$TAB" '$1=="blocked"' | grep -c . || true)"
+  _tot="$(printf '%s\n' "$rows" | awk -F"$TAB" '{t+=$4} END{print t+0}')"
+  # record body (no chain fields), versioned. box/totals/hosts/confighash/allowlist stay back-compat.
+  _inner="$(printf '"schema":"sluice.egress/v1","run":"%s","ts":"%s","box":"%s","status":"%s","confighash":"%s","allowlist":%s,"totals":{"reached":%s,"blocked":%s,"bytes":%s},"hosts":[%s]' \
+    "$_run" "$_ts" "$(_json_esc "$container")" "$rstatus" "$(config_hash 2>/dev/null || true)" \
+    "$(allowed_domains | tr ' ' '\n' | _json_arr)" "${_reached:-0}" "${_blocked:-0}" "${_tot:-0}" "$_hj")"
+  printf '{%s}\n' "$_inner" > "$_dir/egress-receipt.json" 2>/dev/null || true
+  # prev = the previous record's self (genesis = 64 zeros). Guard the read: a first-run tail on the
+  # not-yet-existing log exits non-zero, which under the launcher's set -e/pipefail would abort here.
+  _prev=""
+  [ -f "$_log" ] && _prev="$(tail -n 1 "$_log" 2>/dev/null | sed -n 's/.*,"self":"\([0-9a-f]*\)"}$/\1/p')"
+  [ -n "$_prev" ] || _prev="0000000000000000000000000000000000000000000000000000000000000000"
+  _payload="{${_inner},\"prev\":\"${_prev}\"}"
+  _self="$(printf '%s' "$_payload" | _sha256)"
+  printf '%s,"self":"%s"}\n' "${_payload%\}}" "$_self" >> "$_log" 2>/dev/null || true
+}
+
 show_egress_receipt() {
   local rows TAB reached_rows blocked_rows ordered grn="" red="" dim="" bld="" rst=""
   rows="$(egress_rows 2>/dev/null || true)"
-  [ -n "$rows" ] || return 0
+  if [ -z "$rows" ]; then
+    # Box gone before capture (concurrent stop / crash / host OOM): record the gap explicitly so a
+    # missing receipt can't read as a clean zero-egress run. A live box with no egress stays silent.
+    if ! running; then
+      _persist_receipt "" unavailable
+      echo "[sluice] ${E_YEL:-}egress receipt unavailable${E_RST:-} - box exited before capture" >&2
+    fi
+    return 0
+  fi
   TAB="$(printf '\t')"
   reached_rows="$(printf '%s\n' "$rows" | awk -F"$TAB" '$1=="reached"' | sort -t"$TAB" -k4,4nr)"
   blocked_rows="$(printf '%s\n' "$rows" | awk -F"$TAB" '$1=="blocked"' | sort -t"$TAB" -k2,2)"
@@ -2441,27 +2533,7 @@ show_egress_receipt() {
       if(nb==0) printf "  %sall egress was allowlisted%s\n", grn, rst;
     }' >&2
 
-  # Persist a durable receipt to the state dir (host-side, outside the box the agent can reach) so the
-  # run's egress is auditable after the fact: hosts reached/blocked + bytes, a network SBOM for the
-  # session. JSON is the artifact; `sluice egress` is the live human view.
-  local _dir _hj="" _first=1 _cls _host _cnt _byt _reached _blocked _tot
-  _dir="${XDG_STATE_HOME:-$HOME/.local/state}/sluice/$slug"
-  if mkdir -p "$_dir" 2>/dev/null; then
-    while IFS="$TAB" read -r _cls _host _cnt _byt; do
-      [ -n "$_host" ] || continue
-      [ "$_first" = 1 ] && _first=0 || _hj="$_hj,"
-      _hj="$_hj{\"host\":\"$(_json_esc "$_host")\",\"class\":\"$_cls\",\"requests\":$_cnt,\"bytes\":$_byt}"
-    done <<EOF
-$rows
-EOF
-    _reached="$(printf '%s\n' "$rows" | awk -F"$TAB" '$1=="reached"' | grep -c . || true)"
-    _blocked="$(printf '%s\n' "$rows" | awk -F"$TAB" '$1=="blocked"' | grep -c . || true)"
-    _tot="$(printf '%s\n' "$rows" | awk -F"$TAB" '{t+=$4} END{print t+0}')"
-    printf '{"box":"%s","generated":"%s","confighash":"%s","allowlist":%s,"totals":{"reached":%s,"blocked":%s,"bytes":%s},"hosts":[%s]}\n' \
-      "$(_json_esc "$container")" "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" "$(config_hash 2>/dev/null || true)" \
-      "$(allowed_domains | tr ' ' '\n' | _json_arr)" "${_reached:-0}" "${_blocked:-0}" "$_tot" "$_hj" \
-      > "$_dir/egress-receipt.json" 2>/dev/null || true
-  fi
+  _persist_receipt "$rows" ok   # latest snapshot + append to the hash-chained audit log
 
   # SLUICE_EGRESS_MAX_BYTES: loud warning when this run sent more than the cap (bounds laundering
   # through an allowed host). `sluice egress` is the CI gate (exits non-zero); the receipt just nudges.
@@ -2760,7 +2832,9 @@ case "${1:-run-default}" in
     shift
     case "${1:-}" in
       ""|--json) cmd_egress "${1:-}"; exit $? ;;
-      *)         die "usage: sluice egress [--json]" ;;
+      --export)  cmd_egress_export; exit $? ;;
+      --verify)  cmd_egress_verify; exit $? ;;
+      *)         die "usage: sluice egress [--json | --export | --verify]" ;;
     esac
     ;;
   lock)
@@ -2776,11 +2850,19 @@ case "${1:-run-default}" in
     esac
     ;;
   update)  build --no-cache; write_lock; echo "${E_DIM}[sluice]${E_RST} updated - the box is down; run 'sluice' to start it (or 'sluice rebuild' to rebuild + start)." >&2; exit 0 ;;
-  shell)   banner; ensure_up; exec_in bash ;;
+  shell)
+    # run_in (not exec_in) so the EXIT trap fires the receipt after the interactive session - the
+    # "every run ends with a receipt" promise holds for `shell` too, not just run-default.
+    banner; ensure_up; arm_receipt
+    _rc=0; run_in bash || _rc=$?
+    exit "$_rc"
+    ;;
   run)
     shift
     [ "$#" -gt 0 ] || die "usage: sluice run <cmd...>"
-    ensure_up; mark_run_start; exec_in "$@"
+    ensure_up; arm_receipt
+    _rc=0; run_in "$@" || _rc=$?
+    exit "$_rc"
     ;;
   run-default)
     banner
@@ -2795,9 +2877,7 @@ case "${1:-run-default}" in
     # boot. Then run SLUICE_RUN_CMD; the EXIT trap prints the receipt (reached + blocked). run_in
     # (not exec_in) so the trap fires after the session, even on Ctrl-C - which is why we capture and
     # re-propagate the command's status ourselves (the trailing hints would otherwise leave $? = 0).
-    _RCPT_OFFSET="$("$RUNNER" exec "$container" sh -c 'wc -c < /var/log/squid/access.log' 2>/dev/null | tr -dc 0-9)"
-    mark_run_start   # so a later `sluice learn` can scope to this run
-    trap show_egress_receipt EXIT
+    arm_receipt   # scope the receipt to this run, mark the start for `learn`, trap it on EXIT
     # F2: one-line plan so the implicit build/run is legible (the no-op case speaks via the status below).
     case "${SLUICE_RUN_CMD:-}" in
       true|:|/bin/true) ;;

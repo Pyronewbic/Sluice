@@ -6,6 +6,7 @@
 load test_helper/common
 
 RCPT() { echo "$WORK/state/sluice/sectest-receipt/egress-receipt.json"; }
+ELOG() { echo "$WORK/state/sluice/sectest-receipt/egress-log.jsonl"; }
 
 setup_file() {
   export WORK; WORK="$(mktemp -d)"; mkdir -p "$WORK/r"
@@ -52,4 +53,38 @@ teardown_file() { destroy_box receipt r; }   # XDG_STATE_HOME is under WORK, so 
   run bash -c "cd '$WORK/r' && SLUICE_EGRESS_MAX_BYTES=1 '$SLUICE' egress --json"
   assert_failure
   assert_output --partial '"over_budget":true'
+}
+
+# --- evidence-grade receipts -------------------------------------------------------------------
+
+@test "receipt: snapshot carries the versioned schema id" {
+  run cat "$(RCPT)"
+  assert_output --partial '"schema":"sluice.egress/v1"'
+}
+
+@test "receipt: an append-only JSONL audit log is written with a hash-chained record" {
+  assert_file_exist "$(ELOG)"
+  run bash -c "head -1 '$(ELOG)' | jq -e '.schema==\"sluice.egress/v1\" and (.self|type==\"string\") and (.prev|type==\"string\")'"
+  assert_success
+}
+
+@test "egress --verify: an untampered chain verifies (exit 0)" {
+  run bash -c "cd '$WORK/r' && XDG_STATE_HOME='$WORK/state' '$SLUICE' egress --verify"
+  assert_success
+  assert_output --partial "hash chain intact"
+}
+
+@test "egress --export: emits the JSONL audit log" {
+  run bash -c "cd '$WORK/r' && XDG_STATE_HOME='$WORK/state' '$SLUICE' egress --export | jq -e '.box==\"sluice-sectest-receipt\"'"
+  assert_success
+}
+
+@test "egress --verify: a tampered record is detected (exit non-zero)" {
+  cp "$(ELOG)" "$(ELOG).bak"
+  # alter a byte inside record 1's signed body, leaving its self/prev intact -> self-hash must mismatch
+  sed '1s/registry\.npmjs\.org/registry.npmjs.evil/' "$(ELOG).bak" > "$(ELOG)"
+  run bash -c "cd '$WORK/r' && XDG_STATE_HOME='$WORK/state' '$SLUICE' egress --verify"
+  mv "$(ELOG).bak" "$(ELOG)"   # restore before other tests read it
+  assert_failure
+  assert_output --partial "TAMPERED"
 }

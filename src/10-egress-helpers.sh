@@ -53,13 +53,16 @@ running() { "$RUNNER" ps --filter "name=$container" --filter status=running --fo
 # inaccessible to the box without a label, so sluice runs it label=disable (see the run paths).
 selinux_enforcing() { [ -r /sys/fs/selinux/enforce ] && [ "$(cat /sys/fs/selinux/enforce 2>/dev/null)" = 1 ]; }
 
-# squid access log. Full by default (box-level audit: egress/doctor/learn); from _RCPT_OFFSET bytes
-# when set, so the run-default egress receipt is scoped to just that run, not the box's whole boot.
+# squid access log. From _RCPT_OFFSET bytes when set (the run-scoped receipt); otherwise the last
+# _SQUID_LOG_CAP bytes - a ceiling so an attacker can't inflate host CPU/IO by spamming the log and
+# forcing an unbounded `cat | awk` on the box-level audit paths (egress/doctor/learn --all). 16 MiB
+# holds far more than any real session; a truncated first line just gets skipped by the awk parsers.
+_SQUID_LOG_CAP=16777216
 _squid_log() {
   if [ -n "${_RCPT_OFFSET:-}" ]; then
     "$RUNNER" exec "${1:-$container}" sh -c "tail -c +$(( _RCPT_OFFSET + 1 )) /var/log/squid/access.log" 2>/dev/null
   else
-    "$RUNNER" exec "${1:-$container}" cat /var/log/squid/access.log 2>/dev/null
+    "$RUNNER" exec "${1:-$container}" sh -c "tail -c $_SQUID_LOG_CAP /var/log/squid/access.log" 2>/dev/null
   fi
 }
 
@@ -156,6 +159,18 @@ egress_tx_total() {
 # arms). Lets `sluice learn` scope to that run instead of the whole boot; empty if no run / box rebooted.
 last_run_offset() { "$RUNNER" exec "$container" cat /run/sluice-run-offset 2>/dev/null | tr -dc 0-9; }
 mark_run_start()  { "$RUNNER" exec "$container" sh -c 'wc -c < /var/log/squid/access.log | tr -dc 0-9 > /run/sluice-run-offset' 2>/dev/null || true; }
+
+# sha256 of stdin (hex only). shasum ships on macOS + the Linux runners (config_hash already uses it).
+_sha256() { shasum -a 256 2>/dev/null | awk '{print $1}'; }
+
+# Arm the at-exit egress receipt for a session: snapshot the proxy-log position so the receipt is
+# scoped to THIS run (not the box's whole boot), mark the run start so a later `learn` can scope to it,
+# and trap the receipt on EXIT (fires on normal exit, die, or Ctrl-C). Shared by run-default/shell/run.
+arm_receipt() {
+  _RCPT_OFFSET="$("$RUNNER" exec "$container" sh -c 'wc -c < /var/log/squid/access.log' 2>/dev/null | tr -dc 0-9)"
+  mark_run_start
+  trap show_egress_receipt EXIT
+}
 
 # This project's effective egress allowlist: config domains + the always-on base.
 allowed_domains() { printf '%s %s' "${SLUICE_ALLOW_DOMAINS:-}" "$(base_domains)"; }
