@@ -55,7 +55,7 @@ OIDC, no long-lived key). From a release's assets:
 sha256sum -c SHA256SUMS                          # integrity
 cosign verify-blob sluice-<version>.tar.gz \     # authenticity
   --bundle sluice-<version>.tar.gz.cosign.bundle \
-  --certificate-identity-regexp='^https://github.com/Pyronewbic/Sluice/' \
+  --certificate-identity-regexp='^https://github\.com/Pyronewbic/Sluice/\.github/workflows/release\.yml@refs/tags/v' \
   --certificate-oidc-issuer=https://token.actions.githubusercontent.com
 ```
 
@@ -68,7 +68,7 @@ at build time, soft by default or enforced with `SLUICE_REQUIRE_SIGNED=1`. To ve
 ```sh
 cosign verify ghcr.io/pyronewbic/sluice-base:latest \
   --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
-  --certificate-identity-regexp='^https://github.com/Pyronewbic/Sluice/'
+  --certificate-identity-regexp='^https://github\.com/Pyronewbic/Sluice/\.github/workflows/publish-base\.yml@refs/tags/v'
 ```
 
 The same flags with `cosign verify-attestation --type cyclonedx` check the image's attached

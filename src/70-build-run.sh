@@ -1,18 +1,25 @@
 verify_base() {
   local img="$1" att
-  case "$img" in ghcr.io/*sluice-base*) ;; *) return 0 ;; esac   # only auto-verify our own base
+  # Only the official base carries a signature we know how to verify. For any other ref (a mirror, a
+  # custom base) REQUIRE_SIGNED must FAIL rather than silently pass - else the knob is a no-op exactly
+  # for the enterprise mirror case it's meant to protect.
+  case "$img" in
+    ghcr.io/*sluice-base*) ;;
+    *) [ "${SLUICE_REQUIRE_SIGNED:-}" = 1 ] && die "SLUICE_REQUIRE_SIGNED=1 but '$img' is not the official signed base (ghcr.io/.../sluice-base) - sluice can't verify a mirrored/custom ref. Use the official base or unset SLUICE_REQUIRE_SIGNED."
+       return 0 ;;
+  esac
   if ! command -v cosign >/dev/null 2>&1; then
     [ "${SLUICE_REQUIRE_SIGNED:-}" = 1 ] && die "SLUICE_REQUIRE_SIGNED=1 but cosign is not installed"
     echo "[sluice] ${E_YEL}note${E_RST}: cosign not installed - skipping base signature check ($img)" >&2; return 0
   fi
   if cosign verify "$img" \
        --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
-       --certificate-identity-regexp='^https://github.com/Pyronewbic/Sluice/' >/dev/null 2>&1; then
+       --certificate-identity-regexp='^https://github\.com/Pyronewbic/Sluice/\.github/workflows/publish-base\.yml@refs/tags/v' >/dev/null 2>&1; then
     echo "[sluice] ${E_GRN}cosign-verified${E_RST} base image: $img" >&2
     # also confirm the signed CycloneDX SBOM attestation (soft; bases signed before this had none).
     cosign verify-attestation --type cyclonedx "$img" \
       --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
-      --certificate-identity-regexp='^https://github.com/Pyronewbic/Sluice/' >/dev/null 2>&1 && att=0 || att=$?
+      --certificate-identity-regexp='^https://github\.com/Pyronewbic/Sluice/\.github/workflows/publish-base\.yml@refs/tags/v' >/dev/null 2>&1 && att=0 || att=$?
     if [ "$att" = 0 ]; then
       echo "[sluice] ${E_GRN}cosign-verified${E_RST} SBOM attestation: $img" >&2
     else
