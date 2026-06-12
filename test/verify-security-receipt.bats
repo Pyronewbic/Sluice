@@ -55,6 +55,23 @@ teardown_file() { destroy_box receipt r; }   # XDG_STATE_HOME is under WORK, so 
   assert_output --partial '"over_budget":true'
 }
 
+@test "egress budget: a non-numeric cap is ignored (no gate, exit 0)" {
+  # the guard treats a garbage cap as "no budget"; under set -euo a removed guard would make it
+  # always-pass OR error, so pin the intended behavior.
+  run bash -c "cd '$WORK/r' && SLUICE_EGRESS_MAX_BYTES=notanumber '$SLUICE' egress"
+  assert_success
+}
+
+@test "egress budget: the -gt boundary - cap == bytes-sent passes, cap == bytes-1 fails" {
+  tx="$(cd "$WORK/r" && "$SLUICE" egress --json 2>/dev/null | jq -r '.tx_bytes')"
+  case "$tx" in ''|*[!0-9]*) skip "no numeric tx_bytes recorded" ;; esac
+  [ "$tx" -gt 0 ] || skip "zero tx bytes"
+  run bash -c "cd '$WORK/r' && SLUICE_EGRESS_MAX_BYTES=$tx '$SLUICE' egress"
+  assert_success                                   # tx == cap is NOT over (strict -gt)
+  run bash -c "cd '$WORK/r' && SLUICE_EGRESS_MAX_BYTES=$((tx - 1)) '$SLUICE' egress"
+  assert_failure                                   # tx > cap
+}
+
 # --- evidence-grade receipts -------------------------------------------------------------------
 
 @test "receipt: snapshot carries the versioned schema id" {
@@ -79,9 +96,10 @@ teardown_file() { destroy_box receipt r; }   # XDG_STATE_HOME is under WORK, so 
   assert_success
 }
 
-@test "egress --verify: a tampered record is detected (exit non-zero)" {
+@test "egress --verify: a tampered record on the real chain is detected (live smoke)" {
+  # End-to-end smoke that a real run-default chain detects tampering; the full tamper matrix
+  # (self-hash / prev-link delete + reorder) is in the no-Docker verify-receipt-unit.bats.
   cp "$(ELOG)" "$(ELOG).bak"
-  # alter a byte inside record 1's signed body, leaving its self/prev intact -> self-hash must mismatch
   sed '1s/registry\.npmjs\.org/registry.npmjs.evil/' "$(ELOG).bak" > "$(ELOG)"
   run bash -c "cd '$WORK/r' && XDG_STATE_HOME='$WORK/state' '$SLUICE' egress --verify"
   mv "$(ELOG).bak" "$(ELOG)"   # restore before other tests read it

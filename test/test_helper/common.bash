@@ -28,17 +28,23 @@ make_box() {
   ( cd "$WORK/$sub" && "$SLUICE" run true ) >/dev/null 2>&1 || true
 }
 
-# destroy_box <slug> <subdir>: the canonical teardown_file. Stop the box, drop its container, nuke the
-# (uid-1000-chowned) WORK tree, then drop the image. Routes through nuke_tree so it is correct under
-# BOTH docker and rootless podman (a bare host rm -rf EACCESes on the box's subuid'd files). Order
-# matters: nuke_tree runs a throwaway container FROM the image, so rmi comes last.
-destroy_box() {
-  local c="sluice-sectest-$1"
-  ( cd "$WORK/$2" 2>/dev/null && "$SLUICE" stop ) >/dev/null 2>&1 || true
+# drop_box <container> <dir-to-stop-from> [extra-tree ...]: the rootless-podman-safe teardown PRIMITIVE.
+# Stop the box (via its project dir), drop its container, nuke the (uid-1000-chowned) WORK tree plus any
+# extra host trees the box wrote (e.g. a state store outside WORK), then drop the image. Routes through
+# nuke_tree so it is correct under BOTH docker and rootless podman (a bare host rm -rf EACCESes on the
+# box's subuid'd files). Order matters: nuke_tree runs a throwaway container FROM the image, so rmi last.
+# destroy_box and the hand-rolled teardowns (boxes not on the sectest-<slug> convention) share this.
+drop_box() {
+  local c="$1" wd="$2"; shift 2
+  ( cd "$wd" 2>/dev/null && "$SLUICE" stop ) >/dev/null 2>&1 || true
   "$ENG" rm -f -v "$c" >/dev/null 2>&1 || true
-  nuke_tree "$c" "$WORK" || true
+  nuke_tree "$c" "$WORK"
+  local extra; for extra in "$@"; do nuke_tree "$c" "$extra"; done
   "$ENG" rmi -f "$c" >/dev/null 2>&1 || true
 }
+
+# destroy_box <slug> <subdir>: the canonical teardown_file for the sectest-<slug> convention.
+destroy_box() { drop_box "sluice-sectest-$1" "$WORK/$2"; }
 
 # chown_back_tree <image> <dir>: chown a whole tree back to the host uid via a throwaway root
 # container (boxes chown their mounts to uid 1000, so on Linux the host can't rm $dir otherwise).

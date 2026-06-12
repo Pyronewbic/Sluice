@@ -16,12 +16,7 @@ setup_file() {
   "${SLUICE_ENGINE:-docker}" exec sluice-bumptest cat /var/log/squid/access.log > "$WORK/blog" 2>/dev/null || true
 }
 
-teardown_file() {
-  ( cd "$WORK/b" 2>/dev/null && "$ROOT/bin/sluice" stop ) >/dev/null 2>&1 || true
-  "$ENG" rm -f -v sluice-bumptest >/dev/null 2>&1 || true
-  nuke_tree sluice-bumptest "$WORK"   # rootless-podman-safe (the box chowned the mount to a host subuid)
-  "$ENG" rmi -f sluice-bumptest >/dev/null 2>&1 || true
-}
+teardown_file() { drop_box sluice-bumptest "$WORK/b"; }
 
 @test "bump: non-listed path on a bumped host denied by squid (TCP_DENIED/403)" {
   run grep -q "TCP_DENIED/403 GET https://api.github.com/octocat" "$WORK/blog"

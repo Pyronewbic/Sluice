@@ -40,7 +40,8 @@ _verify_agent() {
   work="$(mktemp -d)/$name"; mkdir -p "$work"; cp "$preset" "$work/sluice.config.sh"
   c="sluice-$name"
 
-  ( cd "$work" && "$SLUICE" build ) >"$BATS_TEST_TMPDIR/$name.log" 2>&1 \
+  # SLUICE_BUILD_RETRIES rides over the npm-registry TLS-reset flake at build; a real break still fails.
+  ( cd "$work" && SLUICE_BUILD_RETRIES=2 "$SLUICE" build ) >"$BATS_TEST_TMPDIR/$name.log" 2>&1 \
     || { echo "build failed for $name"; cat "$BATS_TEST_TMPDIR/$name.log" >&3 2>/dev/null || true; rm -rf "$(dirname "$work")"; return 1; }
 
   # 1. the CLI binary installed from the npm package + is on PATH
