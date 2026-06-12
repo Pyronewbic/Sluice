@@ -393,16 +393,21 @@ laundering_host() {
 # True if $host is on the baked DoH/DoT denylist (core/doh-endpoints.txt, the single source squid
 # also reads). dstdomain semantics: a leading-dot entry matches the domain + subdomains; else exact.
 doh_listed() {
-  # Match case-insensitively: squid dstdomain / dnsmasq are case-insensitive and the SNI regex accepts
-  # uppercase, so a mixed-case `DNS.GOOGLE` must still hit the (lowercase) denylist - else it tunnels DoH.
-  local host entry; host="$(printf '%s' "$1" | tr 'A-Z' 'a-z')"
+  # Match case-insensitively (squid dstdomain / dnsmasq are; the SNI regex accepts uppercase). $1 may be
+  # a leading-dot WILDCARD. Reject when the candidate IS a DoH endpoint, sits UNDER a DoH wildcard, OR is
+  # a wildcard that COVERS a DoH endpoint host - e.g. `.adguard.com` would re-allow the listed
+  # dns.adguard.com. The denylist is lowercase.
+  local cand ch entry eh
+  cand="$(printf '%s' "$1" | tr 'A-Z' 'a-z')"; ch="${cand#.}"
   [ -f "$CORE/doh-endpoints.txt" ] || return 1
   while IFS= read -r entry; do
     case "$entry" in ''|\#*) continue ;; esac
+    eh="${entry#.}"
     case "$entry" in
-      .*) case ".$host" in *"$entry") return 0 ;; esac ;;
-      *)  [ "$host" = "$entry" ] && return 0 ;;
+      .*) case ".$ch" in *"$entry") return 0 ;; esac ;;   # candidate is, or sits under, a DoH wildcard
+      *)  [ "$ch" = "$entry" ] && return 0 ;;              # candidate is the exact DoH host
     esac
+    case "$cand" in .*) case ".$eh" in *"$cand") return 0 ;; esac ;; esac   # wildcard candidate covers it
   done < "$CORE/doh-endpoints.txt"
   return 1
 }
@@ -2802,7 +2807,7 @@ learn_apply() {   # $1 = newline-separated entries (hosts and/or .domains)
   while IFS= read -r e; do
     [ -n "$e" ] || continue
     h="${e#.}"   # a .domain wildcard matches by its bare host
-    if [ "${SLUICE_ALLOW_DOH:-}" != 1 ] && doh_listed "$h"; then doh="$doh $e"; continue; fi
+    if [ "${SLUICE_ALLOW_DOH:-}" != 1 ] && doh_listed "$e"; then doh="$doh $e"; continue; fi   # $e keeps the leading dot so a wildcard covering a DoH host is caught
     if [ -n "$pdeny" ] && _policy_denied_host "$h" "$pdeny"; then pden="$pden $e"; continue; fi
     laundering_host "$h" && launder="$launder $e"
     keep="$keep $e"

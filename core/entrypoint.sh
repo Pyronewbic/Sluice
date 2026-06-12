@@ -19,14 +19,17 @@ set -e
 drop_doh() {   # stdin = candidate hosts; stdout = those that are NOT a DoH endpoint
   while IFS= read -r h; do
     [ -n "$h" ] || continue
-    hl="$(printf '%s' "$h" | tr 'A-Z' 'a-z')"   # compare case-insensitively (squid/dnsmasq are); a
-    keep=1                                       # mixed-case DNS.GOOGLE must still match the denylist
+    hl="$(printf '%s' "$h" | tr 'A-Z' 'a-z')"; chl="${hl#.}"   # case-insensitive; chl = bare candidate
+    keep=1
     while IFS= read -r e; do
       case "$e" in ''|\#*) continue ;; esac
+      eh="${e#.}"
       case "$e" in
-        .*) case ".$hl" in *"$e") keep=0; break ;; esac ;;
-        *)  [ "$hl" = "$e" ] && { keep=0; break; } ;;
+        .*) case ".$chl" in *"$e") keep=0; break ;; esac ;;   # candidate is, or sits under, a DoH wildcard
+        *)  [ "$chl" = "$e" ] && { keep=0; break; } ;;        # candidate is the exact DoH host
       esac
+      # a leading-dot wildcard candidate that COVERS a DoH endpoint host (.adguard.com -> dns.adguard.com)
+      case "$hl" in .*) case ".$eh" in *"$hl") keep=0; break ;; esac ;; esac
     done < /etc/squid/doh-endpoints.txt
     [ "$keep" = 1 ] && printf '%s\n' "$h"
   done
