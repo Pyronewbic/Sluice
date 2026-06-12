@@ -69,14 +69,18 @@ const map = await agent(`List every agent preset in this repo. Run: ls agents/*.
 Return just the preset names - the filename without the agents/ prefix and without the .config.sh suffix.`,
   { label: 'map-presets', phase: 'Map', schema: MAP_SCHEMA })
 
-const presets = map.presets || []
+const presets = (map && map.presets) || []
+if (!presets.length) {
+  log('No presets mapped (mapper died or agents/ is empty) - nothing to audit')
+  return { confirmed: [], uncertain: [], refuted: [], error: 'no presets mapped' }
+}
 log(`Auditing ${presets.length} agent presets, then verifying each finding`)
 
 // Pipeline (no barrier): a preset's findings stream into Verify as soon as its audit lands, so the
 // fast presets' findings get refuted while the slow presets are still being audited.
 const auditPrompt = (p) => `Audit the agent preset agents/${p}.config.sh for egress drift.
 1. Read agents/${p}.config.sh. List every host/domain it relies on - SLUICE_ALLOW_DOMAINS plus any hosts implied by its setup/prefetch/run commands and the agent CLI's own API endpoints.
-2. Read THREAT_MODEL.md and the base-allowlist notes in sluice.config.example.sh (npm/yarn registries + GitHub git/release hosts are allowed by default, so the preset need not re-list those).
+2. The always-on base allowlist (base_domains() in src/10-egress-helpers.sh) is exactly: github.com api.github.com codeload.github.com objects.githubusercontent.com registry.npmjs.org registry.yarnpkg.com - the preset need not re-list those. Note raw.githubusercontent.com is NOT base (it is a known laundering host). Read THREAT_MODEL.md for what the egress posture promises.
 3. Flag drift: a host not covered by base+preset allowlist, a host that looks renamed or moved, a package whose registry changed, a binary the preset installs that no longer exists upstream, or an egress need the threat model doesn't account for.
 Be concrete - name the host and what's wrong. If the preset is clean, return an empty issues array.`
 
@@ -95,17 +99,22 @@ If the direction is right but a specific (flag, host, package, date) is wrong, p
 const results = await pipeline(
   presets,
   p => agent(auditPrompt(p), { label: `audit:${p}`, phase: 'Audit', schema: AUDIT_SCHEMA }),
-  (audit) => parallel((audit.issues || []).map(issue => () =>
-    agent(verifyPrompt(audit.preset, issue), {
-      label: `verify:${audit.preset}:${issue.host || issue.kind}`,
-      phase: 'Verify',
-      schema: VERDICT_SCHEMA,
-    }).then(v => ({ ...issue, preset: audit.preset, verdict: v })))),
+  // Preset name comes from the pipeline item (p), never the agent-echoed audit.preset.
+  (audit, p) => {
+    if (!audit) { log(`audit:${p} returned null - preset skipped`); return [] }
+    return parallel((audit.issues || []).map(issue => () =>
+      agent(verifyPrompt(p, issue), {
+        label: `verify:${p}:${issue.host || issue.kind}`,
+        phase: 'Verify',
+        schema: VERDICT_SCHEMA,
+      }).then(v => ({ ...issue, preset: p, verdict: v }))))
+  },
 )
 
 const all = results.flat().filter(Boolean)
 const confirmed = all.filter(i => i.verdict && i.verdict.status === 'confirmed')
-const uncertain = all.filter(i => i.verdict && i.verdict.status === 'uncertain')
+// A dead verifier (verdict null) is unverified, not refuted - bucket it with uncertain.
+const uncertain = all.filter(i => !i.verdict || i.verdict.status === 'uncertain')
 const refuted = all.filter(i => i.verdict && i.verdict.status === 'refuted')
 log(`${confirmed.length} confirmed, ${uncertain.length} uncertain, ${refuted.length} refuted (of ${all.length} raw findings)`)
 
