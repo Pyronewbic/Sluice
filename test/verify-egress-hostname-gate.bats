@@ -57,3 +57,13 @@ setup() {
   run _json_esc 'a\b"c'
   assert_output 'a\\b\"c'
 }
+
+@test "term-esc: flattens whitespace + strips control bytes so a crafted filename can't inject escapes" {
+  run _term_esc "$(printf 'a\033[31m\tb\rc\007')"
+  assert_output "a[31m b c"                 # ESC/BEL removed; tab/CR flattened to space; text inert
+}
+
+@test "term-esc: leaves backslash and quote intact (human display, not JSON)" {
+  run _term_esc 'a\b"c'
+  assert_output 'a\b"c'
+}

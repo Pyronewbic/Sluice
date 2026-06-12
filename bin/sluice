@@ -23,6 +23,10 @@ die() { echo "${E_RED:-}[sluice]${E_RST:-} $*" >&2; exit 1; }
 # remaining C0 control byte + DEL (ESC/BEL/OSC) so a box-controlled value (e.g. a logged SNI) can't
 # smuggle a terminal-escape sequence through `--json`/persisted receipts when they're later cat'd.
 _json_esc() { local s="$1"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; s="${s//$'\t'/ }"; s="${s//$'\n'/ }"; s="${s//$'\r'/}"; printf '%s' "$s" | LC_ALL=C tr -d '\000-\037\177'; }
+# Sanitize a box-controlled string for safe display on a TERMINAL: flatten whitespace and DELETE every
+# C0 control byte + DEL (ESC/BEL/OSC). Unlike _json_esc it leaves \ and " intact (this is for humans, not
+# JSON), so a crafted filename / symlink target can't inject escapes or forge a line of `doctor` output.
+_term_esc() { local s="$1"; s="${s//$'\t'/ }"; s="${s//$'\n'/ }"; s="${s//$'\r'/ }"; printf '%s' "$s" | LC_ALL=C tr -d '\000-\037\177'; }
 # Emit a JSON array of strings from newline-separated stdin (blank lines skipped; a final line
 # without a trailing newline still counts - base_domains emits one).
 _json_arr() { local first=1 line; printf '['; while IFS= read -r line || [ -n "$line" ]; do [ -n "$line" ] || continue; [ "$first" = 1 ] && first=0 || printf ','; printf '"%s"' "$(_json_esc "$line")"; done; printf ']'; }
@@ -930,7 +934,7 @@ cmd_doctor() {
   fi
   local _unm
   _unm="$(unmasked_secrets 2>/dev/null | head -6 | tr '\n' ' ' | sed 's/ *$//' || true)"
-  [ -n "$_unm" ] && _doc "" "${C_YEL}note${C_RST}: secret-looking file(s) readable in the box - $_unm - shadow them: SLUICE_MASK=\".env*\" (sluice.config.example.sh)"
+  [ -n "$_unm" ] && _doc "" "${C_YEL}note${C_RST}: secret-looking file(s) readable in the box - $(_term_esc "$_unm") - shadow them: SLUICE_MASK=\".env*\" (sluice.config.example.sh)"
 
   # Symlinks that leave the mounted scope work on the host but dangle inside the box - warn.
   local _links _nl _lp _lt _TAB; _TAB="$(printf '\t')"
@@ -939,7 +943,7 @@ cmd_doctor() {
     _nl="$(printf '%s\n' "$_links" | grep -c . || true)"
     _doc symlinks "${C_YEL}$_nl link(s) point outside the box mount${C_RST} - will be broken inside the box:"
     printf '%s\n' "$_links" | head -10 | while IFS="$_TAB" read -r _lp _lt; do
-      printf '             %s -> %s\n' "$_lp" "$_lt"
+      printf '             %s -> %s\n' "$(_term_esc "$_lp")" "$(_term_esc "$_lt")"
     done
     [ "$_nl" -gt 10 ] && _doc "" "${C_DIM}(+ $((_nl - 10)) more)${C_RST}"
   fi

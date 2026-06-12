@@ -135,7 +135,7 @@ cmd_doctor() {
   fi
   local _unm
   _unm="$(unmasked_secrets 2>/dev/null | head -6 | tr '\n' ' ' | sed 's/ *$//' || true)"
-  [ -n "$_unm" ] && _doc "" "${C_YEL}note${C_RST}: secret-looking file(s) readable in the box - $_unm - shadow them: SLUICE_MASK=\".env*\" (sluice.config.example.sh)"
+  [ -n "$_unm" ] && _doc "" "${C_YEL}note${C_RST}: secret-looking file(s) readable in the box - $(_term_esc "$_unm") - shadow them: SLUICE_MASK=\".env*\" (sluice.config.example.sh)"
 
   # Symlinks that leave the mounted scope work on the host but dangle inside the box - warn.
   local _links _nl _lp _lt _TAB; _TAB="$(printf '\t')"
@@ -144,7 +144,7 @@ cmd_doctor() {
     _nl="$(printf '%s\n' "$_links" | grep -c . || true)"
     _doc symlinks "${C_YEL}$_nl link(s) point outside the box mount${C_RST} - will be broken inside the box:"
     printf '%s\n' "$_links" | head -10 | while IFS="$_TAB" read -r _lp _lt; do
-      printf '             %s -> %s\n' "$_lp" "$_lt"
+      printf '             %s -> %s\n' "$(_term_esc "$_lp")" "$(_term_esc "$_lt")"
     done
     [ "$_nl" -gt 10 ] && _doc "" "${C_DIM}(+ $((_nl - 10)) more)${C_RST}"
   fi
