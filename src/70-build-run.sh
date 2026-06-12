@@ -193,19 +193,9 @@ start() {
   # SELinux only (non-root + caps + egress firewall + dir-only mount still confine it).
   selinux_enforcing && run_args+=(--security-opt label=disable)
 
-  # SLUICE_POLICY_URL: fetch a central allowlist on the host (free egress, before lockdown) and merge
-  # it into the box's policy at run. Plain text, one host/line, # comments OK. Additive + host-trusted;
-  # a fetch failure warns and uses the local allowlist.
-  if [ -n "${SLUICE_POLICY_URL:-}" ]; then
-    local policy_raw policy_hosts
-    if policy_raw="$(curl -fsSL --max-time 10 "$SLUICE_POLICY_URL" 2>/dev/null)"; then
-      policy_hosts="$(printf '%s\n' "$policy_raw" | sed 's/#.*//' | awk '{$1=$1};1' | grep -v '^$' | tr '\n' ' ' | sed 's/ *$//')"
-      [ -n "$policy_hosts" ] && run_args+=(-e "SLUICE_POLICY_ALLOW=$policy_hosts")
-      echo "[sluice] egress policy from $SLUICE_POLICY_URL ($(printf '%s' "$policy_hosts" | wc -w | tr -d ' ') hosts)"
-    else
-      echo "[sluice] ${E_YEL}WARNING:${E_RST} could not fetch SLUICE_POLICY_URL=$SLUICE_POLICY_URL - using the local allowlist" >&2
-    fi
-  fi
+  # Central policy (SLUICE_POLICY_URL + user/system policy.conf) is applied host-side in apply_policy
+  # (slice 60): allow folds into SLUICE_ALLOW_DOMAINS, deny narrows it, forbid/ceilings already gated
+  # the run. So the SLUICE_RUNTIME_ALLOW below carries the policy-effective list - no separate pass.
 
   # Pass the live allowlist at runtime (wins over the baked copy) so an edit (e.g. `sluice learn`) needs
   # no rebuild. Always set, even empty: a removed host takes effect, and the entrypoint can tell it's

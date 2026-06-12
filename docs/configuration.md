@@ -68,9 +68,11 @@ What the filter guarantees - and does not - is in
 - `SLUICE_ALLOW_IPS` - fixed IPs/CIDRs for non-HTTP services, direct egress bypassing the
   proxy. Scope each entry: `ip:port[/proto]`. A catch-all (`0.0.0.0/0`, any `/0`) is refused;
   a colon-less entry (no port) is allowed but warns, since it opens every port to that host.
-- `SLUICE_POLICY_URL` - URL (http/https/file) returning a plain-text allowlist (one host per
-  line, `#` comments), fetched on the host at container start and merged additively.
-  Host-trusted: keep it a URL you control.
+- `SLUICE_POLICY_URL` - URL (http/https/file) to a central egress policy, applied host-side as the
+  final gate. A bare host list is back-compat (additive); v2 directives can also `deny` hosts and
+  refuse to run on a crossed ceiling (`forbid <knob>`, `deny-ip`, `max-allow-ips`,
+  `forbid-laundering`). Also read from `~/.config/sluice/policy.conf` and a root-owned
+  `/etc/sluice/policy.conf` (the org's managed policy). Full reference: [policy.md](policy.md).
 - `SLUICE_BUMP_DOMAINS`, `SLUICE_BUMP_URLS` - scoped TLS interception, opt-in and off by
   default: listed hosts are decrypted so squid can filter by `SLUICE_BUMP_URLS` url_regex;
   every other host is spliced, never decrypted. Weigh it first:

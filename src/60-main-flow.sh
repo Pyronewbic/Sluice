@@ -207,6 +207,110 @@ PROJECT_DIR="$(cd "$(dirname "$PROJECT_CONFIG")" && pwd)"
 # per-project image + container names (SLUICE_NAME overrides the dir-name default)
 derive_names
 
+# --- central egress policy (v2): deny-capable, ceiling-setting ------------------------------------
+# Sources, lowest trust first (a deny/forbid from ANY source is final): $SLUICE_POLICY_URL (env, per
+# user/CI), ~/.config/sluice/policy.conf (user), /etc/sluice/policy.conf (root-owned - the org's MANAGED
+# policy; tamper-resistant ONLY because a dev can't edit it without root, and the org pushes it). OSS
+# ships the enforcement; the can't-remove-it property is the org's root-owned-file deployment.
+# Line directives (a bare host = allow, back-compat): allow H | deny H | deny-ip CIDR |
+#   forbid SLUICE_X | forbid-laundering | max-allow-ips N. Host-side final gate BEFORE build/run:
+# effective allowlist = (local + allow) - deny; a forbidden loosening knob / laundering host / denied
+# or over-cap ALLOW_IPS makes us DIE. Inert when no policy is configured. (Signing is v2.1.)
+policy_configured() { [ -n "${SLUICE_POLICY_URL:-}" ] || [ -f "$HOME/.config/sluice/policy.conf" ] || [ -f /etc/sluice/policy.conf ]; }
+
+# Merged policy text from all sources (low->high precedence). A configured-but-unfetchable URL is fatal
+# (a managed policy must never silently fall back to local-only).
+_policy_raw() {
+  local url="${SLUICE_POLICY_URL:-}" uf="$HOME/.config/sluice/policy.conf" sf="/etc/sluice/policy.conf" chunk
+  if [ -n "$url" ]; then
+    chunk="$(curl -fsSL --max-time 10 "$url" 2>/dev/null)" \
+      || die "SLUICE_POLICY_URL=$url could not be fetched - refusing to run without the configured policy (make it reachable, or unset it)."
+    printf '%s\n' "$chunk"
+  fi
+  [ -f "$uf" ] && { cat "$uf"; echo; }
+  [ -f "$sf" ] && { cat "$sf"; echo; }
+  return 0   # a false final [ -f ] test would otherwise abort body=$(_policy_raw) under set -e
+}
+
+_ip2int() {
+  local a b c d; IFS=. read -r a b c d <<<"${1:-0.0.0.0}"
+  printf '%s' "$(( ((a&255)<<24)|((b&255)<<16)|((c&255)<<8)|(d&255) ))"
+}
+# 0 if IPv4 $1 is within $2 (ip or ip/bits).
+_ip_in_cidr() {
+  local ip="$1" base bits a b mask
+  case "$2" in */*) base="${2%/*}"; bits="${2#*/}" ;; *) base="$2"; bits=32 ;; esac
+  case "$bits" in ''|*[!0-9]*) bits=32 ;; esac
+  a="$(_ip2int "$ip")"; b="$(_ip2int "$base")"
+  [ "$bits" -le 0 ] && return 0
+  [ "$bits" -ge 32 ] && { [ "$a" = "$b" ]; return; }
+  mask=$(( 0xFFFFFFFF ^ ((1 << (32 - bits)) - 1) ))
+  [ "$(( a & mask ))" -eq "$(( b & mask ))" ]
+}
+# 0 if host $1 is denied by the space-list $2 (exact, or a leading-dot wildcard matching subdomains).
+_policy_denied_host() {
+  local h="$1" d
+  for d in $2; do
+    [ "$h" = "$d" ] && return 0
+    case "$d" in .*) case ".$h" in *"$d") return 0 ;; esac ;; esac
+  done
+  return 1
+}
+
+apply_policy() {
+  policy_configured || return 0
+  local body allow="" deny="" denyip="" forbid="" maxips="" launder=0 line verb arg
+  body="$(_policy_raw)"
+  while IFS= read -r line; do
+    line="${line%%#*}"; line="$(printf '%s' "$line" | awk '{$1=$1};1')"; [ -n "$line" ] || continue
+    verb="${line%% *}"; arg="${line#"$verb"}"; arg="$(printf '%s' "$arg" | awk '{$1=$1};1')"
+    case "$verb" in
+      allow)             allow="$allow $arg" ;;
+      deny)              deny="$deny $arg" ;;
+      deny-ip)           denyip="$denyip $arg" ;;
+      forbid)            forbid="$forbid $arg" ;;
+      forbid-laundering) launder=1 ;;
+      max-allow-ips)     maxips="$arg" ;;
+      *) if [ -z "$arg" ] && printf '%s' "$verb" | grep -qE '^\.?[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$'; then allow="$allow $verb"
+         else echo "${E_YEL}[sluice] policy: ignoring unknown directive '$verb'${E_RST}" >&2; fi ;;
+    esac
+  done <<EOF
+$body
+EOF
+  # 1) forbidden loosening knobs: the org said no - die if the local config set one. (if/fi, not
+  # `&& die`, so a not-set knob doesn't return non-zero and trip set -e.)
+  local k
+  for k in $forbid; do
+    case "$k" in
+      SLUICE_DNS_OPEN|SLUICE_ALLOW_DOH) if [ "${!k:-}" = 1 ]; then die "policy forbids ${k}=1 (your config sets it) - remove it to run under this policy."; fi ;;
+      *) if [ -n "${!k:-}" ]; then die "policy forbids setting ${k} (your config sets it) - remove it to run under this policy."; fi ;;
+    esac
+  done
+  # 2) effective allowlist = (local + policy allow) - policy deny.
+  local merged eff="" h
+  merged="$(printf '%s %s' "${SLUICE_ALLOW_DOMAINS:-}" "$allow" | tr ' ' '\n' | sed '/^$/d' | sort -u)"
+  for h in $merged; do _policy_denied_host "$h" "$deny" || eff="$eff $h"; done
+  SLUICE_ALLOW_DOMAINS="$(printf '%s' "$eff" | awk '{$1=$1};1')"
+  # 3) forbid-laundering: refuse any laundering-capable host left on the effective allowlist.
+  if [ "$launder" = 1 ]; then
+    local risky=""; for h in $SLUICE_ALLOW_DOMAINS; do if laundering_host "$h"; then risky="$risky $h"; fi; done
+    if [ -n "$risky" ]; then die "policy forbids laundering-capable allowlisted host(s):$risky"; fi
+  fi
+  # 4) ALLOW_IPS ceilings: REFUSE (don't mutate - the firewall reads the BAKED list, so a host-side drop
+  # wouldn't reach a running box; a hard refuse is honest and matches the policy contract).
+  local ipn=0 e ipp d
+  for e in ${SLUICE_ALLOW_IPS:-}; do
+    ipn=$((ipn+1)); ipp="${e%%:*}"; ipp="${ipp%%/*}"
+    for d in $denyip; do if _ip_in_cidr "$ipp" "$d"; then die "policy denies SLUICE_ALLOW_IPS '$e' (matches deny-ip $d)"; fi; done
+  done
+  case "$maxips" in ''|*[!0-9]*) ;; *) if [ "$ipn" -gt "$maxips" ]; then die "policy caps SLUICE_ALLOW_IPS at $maxips (your config has $ipn)"; fi ;; esac
+  # remember source + counts for visibility (banner/run line).
+  _POLICY_SRC="$([ -f /etc/sluice/policy.conf ] && echo /etc/sluice/policy.conf || { [ -f "$HOME/.config/sluice/policy.conf" ] && echo "$HOME/.config/sluice/policy.conf" || echo "${SLUICE_POLICY_URL:-}"; })"
+  _POLICY_SUMMARY="$(printf '%s allow, %s deny, %s forbid' "$(printf '%s' "$allow" | wc -w | tr -d ' ')" "$(printf '%s' "$deny" | wc -w | tr -d ' ')" "$(printf '%s' "$forbid" | wc -w | tr -d ' ')")"
+  echo "${E_DIM}[sluice]${E_RST} managed egress policy: $(_tilde "$_POLICY_SRC") ($_POLICY_SUMMARY)" >&2
+}
+case "${1:-run-default}" in run-default|run|shell|build|rebuild|update) apply_policy ;; esac
+
 # Advisory: in a monorepo it's easy to build/run against a config found by walking UP from a subdir
 # without noticing. Name the source (like `-b` announces its target). Run/build paths only; skipped
 # under `-b` (PROJECT_DIR is then the targeted box's dir, already echoed).
