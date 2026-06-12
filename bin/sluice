@@ -2480,8 +2480,13 @@ start() {
     local _ro_up
     _ro_up="$("$RUNNER" run --rm --entrypoint sh "$tag" -c 'awk "/^nameserver/{print \$2}" /etc/resolv.conf | grep -v : | tr "\n" " "' 2>/dev/null | sed 's/ *$//')"
     [ -n "$_ro_up" ] || _ro_up="127.0.0.11"
+    # Pin mode + size on the system tmpfs: the default (1777, uncapped) would let uid 1000 write these
+    # system scratch dirs and fill /var/log/squid to starve squid's access log. /tmp stays 1777 (world
+    # scratch); /run + the squid dirs are root/squid-owned 0755 (the entrypoint chowns the squid dirs)
+    # and size-capped so a runaway can't exhaust host RAM.
     run_args+=(--read-only
-      --tmpfs /tmp --tmpfs /run --tmpfs /var/log/squid --tmpfs /var/cache/squid
+      --tmpfs "/tmp:mode=1777" --tmpfs "/run:mode=0755,size=16m"
+      --tmpfs "/var/log/squid:mode=0755,size=64m" --tmpfs "/var/cache/squid:mode=0755,size=256m"
       -v /etc/squid -v /home/sluice
       --dns 127.0.0.1 -e "SLUICE_DNS_UPSTREAM=$_ro_up" -e SLUICE_READONLY_ROOT=1)
   fi
