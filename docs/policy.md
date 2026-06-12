@@ -48,7 +48,9 @@ config (and any `sluice learn` edits) - so policy wins:
 
 - **Allowlist** (`allow`/`deny`): effective = (local + `allow`) - `deny`. The box receives the
   narrowed list at start, and `sluice learn` will not re-add a denied host. `deny` is non-fatal -
-  the host is simply unreachable.
+  the host is simply unreachable. One exception is fatal: a local `allow` **wildcard** that would
+  cover a denied host (e.g. `.githubusercontent.com` against `deny gist.githubusercontent.com`)
+  **refuses to run** rather than let the wildcard silently re-admit it - narrow it to exact hosts.
 - **Ceilings** (`forbid`/`deny-ip`/`max-allow-ips`/`forbid-laundering`): a violation **refuses to
   run** (exit non-zero), naming the offending knob/host. `SLUICE_ALLOW_IPS` is refused rather than
   silently trimmed because the firewall reads the baked list - a host-side trim wouldn't reach a

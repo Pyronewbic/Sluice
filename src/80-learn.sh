@@ -45,6 +45,11 @@ show_egress_receipt() {
     if ! running; then
       _persist_receipt "" unavailable
       echo "[sluice] ${E_YEL:-}egress receipt unavailable${E_RST:-} - box exited before capture" >&2
+    elif ! _audit_readable; then
+      # Box is up but the in-box audit read couldn't run (pids cgroup exhausted): record the gap rather
+      # than let an unreadable run look like clean zero egress.
+      _persist_receipt "" unavailable
+      echo "[sluice] ${E_YEL:-}egress receipt unavailable${E_RST:-} - could not read the in-box audit log (pids limit?)" >&2
     fi
     return 0
   fi
@@ -117,7 +122,7 @@ merge_allow() {
 reload_allowlist() {
   [ "$#" -gt 0 ] || return 0
   running || return 1
-  printf '%s\n' "$@" | "$RUNNER" exec -i "$container" sh -c \
+  printf '%s\n' "$@" | _root_exec -i "$container" sh -c \
     'cat >> /etc/squid/allowlist.txt && sort -u /etc/squid/allowlist.txt -o /etc/squid/allowlist.txt && pkill -HUP -x squid && { [ -x /usr/local/bin/sluice-dns-allow ] && /usr/local/bin/sluice-dns-allow && pkill -HUP -x dnsmasq; true; }' \
     >/dev/null 2>&1
 }
@@ -138,8 +143,8 @@ learn_apply() {   # $1 = newline-separated entries (hosts and/or .domains)
   while IFS= read -r e; do
     [ -n "$e" ] || continue
     h="${e#.}"   # a .domain wildcard matches by its bare host
-    if [ "${SLUICE_ALLOW_DOH:-}" != 1 ] && doh_listed "$h"; then doh="$doh $e"; continue; fi
-    if [ -n "$pdeny" ] && _policy_denied_host "$h" "$pdeny"; then pden="$pden $e"; continue; fi
+    if [ "${SLUICE_ALLOW_DOH:-}" != 1 ] && doh_listed "$e"; then doh="$doh $e"; continue; fi   # $e keeps the leading dot so a wildcard covering a DoH host is caught
+    if [ -n "$pdeny" ] && { _policy_denied_host "$h" "$pdeny" || _allow_covers_denied "$e" "$pdeny"; }; then pden="$pden $e"; continue; fi
     laundering_host "$h" && launder="$launder $e"
     keep="$keep $e"
   done <<EOF
@@ -297,13 +302,11 @@ EOF
     -v "$PROJECT_DIR":"$PROJECT_DIR" -e "SLUICE_WORKDIR=$PROJECT_DIR")
   [ -n "${SLUICE_MEMORY:-}" ] && run_args+=(--memory "$SLUICE_MEMORY")
   selinux_enforcing && run_args+=(--security-opt label=disable)   # see the main run path
-  if git -C "$PROJECT_DIR" rev-parse --git-common-dir >/dev/null 2>&1; then
-    local common; common="$(git -C "$PROJECT_DIR" rev-parse --git-common-dir)"
-    case "$common" in /*) ;; *) common="$PROJECT_DIR/$common";; esac
-    common="$(cd "$common" 2>/dev/null && pwd || true)"
-    if [ -n "$common" ]; then
-      case "$common/" in "$PROJECT_DIR"/*) ;; *) run_args+=(-v "$common":"$common" -e "SLUICE_GITDIR=$common");; esac
-    fi
+  # Validated worktree common-dir mount (see _validated_git_common_dir): refuse a box-rewritten .git
+  # that would redirect us into an arbitrary repo. Skipped under overlay, matching the main run path.
+  if [ "${SLUICE_WORKSPACE:-}" != overlay ]; then
+    local common; common="$(_validated_git_common_dir)"
+    [ -n "$common" ] && run_args+=(-v "$common":"$common" -e "SLUICE_GITDIR=$common")
   fi
 
   # Egress is OPEN for this run - keep SLUICE_MASK shadowing in force so in-repo secrets stay unreadable.

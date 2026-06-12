@@ -23,6 +23,10 @@ die() { echo "${E_RED:-}[sluice]${E_RST:-} $*" >&2; exit 1; }
 # remaining C0 control byte + DEL (ESC/BEL/OSC) so a box-controlled value (e.g. a logged SNI) can't
 # smuggle a terminal-escape sequence through `--json`/persisted receipts when they're later cat'd.
 _json_esc() { local s="$1"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; s="${s//$'\t'/ }"; s="${s//$'\n'/ }"; s="${s//$'\r'/}"; printf '%s' "$s" | LC_ALL=C tr -d '\000-\037\177'; }
+# Sanitize a box-controlled string for safe display on a TERMINAL: flatten whitespace and DELETE every
+# C0 control byte + DEL (ESC/BEL/OSC). Unlike _json_esc it leaves \ and " intact (this is for humans, not
+# JSON), so a crafted filename / symlink target can't inject escapes or forge a line of `doctor` output.
+_term_esc() { local s="$1"; s="${s//$'\t'/ }"; s="${s//$'\n'/ }"; s="${s//$'\r'/ }"; printf '%s' "$s" | LC_ALL=C tr -d '\000-\037\177'; }
 # Emit a JSON array of strings from newline-separated stdin (blank lines skipped; a final line
 # without a trailing newline still counts - base_domains emits one).
 _json_arr() { local first=1 line; printf '['; while IFS= read -r line || [ -n "$line" ]; do [ -n "$line" ] || continue; [ "$first" = 1 ] && first=0 || printf ','; printf '"%s"' "$(_json_esc "$line")"; done; printf ']'; }
@@ -239,6 +243,18 @@ running() { "$RUNNER" ps --filter "name=$container" --filter status=running --fo
 # inaccessible to the box without a label, so sluice runs it label=disable (see the run paths).
 selinux_enforcing() { [ -r /sys/fs/selinux/enforce ] && [ "$(cat /sys/fs/selinux/enforce 2>/dev/null)" = 1 ]; }
 
+# Root-context maintenance execs (receipt/learn/apply) run as the container's root - NOT --user sluice.
+# The image PATH must never let a uid-1000-writable dir (/home/sluice/.npm-global/bin) shadow a system
+# tool here, or a planted ~/.npm-global/bin/tail runs as root. Force a clean system PATH on every such
+# exec. Session execs (_exec_args) stay --user sluice and keep the full PATH for the workload's tools.
+_ROOT_PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+_root_exec() { "$RUNNER" exec -e "PATH=$_ROOT_PATH" "$@"; }
+
+# True when the box's in-container audit log is actually READABLE. A uid-1000 workload can exhaust the
+# pids cgroup so `<engine> exec` can't fork - _squid_log would then return empty (a FAILED read), which
+# would misread as zero egress. Callers gate on this to record `unavailable` / fail the byte gate closed.
+_audit_readable() { _root_exec "$container" true >/dev/null 2>&1; }
+
 # squid access log. From _RCPT_OFFSET bytes when set (the run-scoped receipt); otherwise the last
 # _SQUID_LOG_CAP bytes - a ceiling so an attacker can't inflate host CPU/IO by spamming the log and
 # forcing an unbounded `cat | awk` on the box-level audit paths (egress/doctor/learn --all). 16 MiB
@@ -246,9 +262,9 @@ selinux_enforcing() { [ -r /sys/fs/selinux/enforce ] && [ "$(cat /sys/fs/selinux
 _SQUID_LOG_CAP=16777216
 _squid_log() {
   if [ -n "${_RCPT_OFFSET:-}" ]; then
-    "$RUNNER" exec "${1:-$container}" sh -c "tail -c +$(( _RCPT_OFFSET + 1 )) /var/log/squid/access.log" 2>/dev/null
+    _root_exec "${1:-$container}" sh -c "tail -c +$(( _RCPT_OFFSET + 1 )) /var/log/squid/access.log" 2>/dev/null
   else
-    "$RUNNER" exec "${1:-$container}" sh -c "tail -c $_SQUID_LOG_CAP /var/log/squid/access.log" 2>/dev/null
+    _root_exec "${1:-$container}" sh -c "tail -c $_SQUID_LOG_CAP /var/log/squid/access.log" 2>/dev/null
   fi
 }
 
@@ -343,8 +359,8 @@ egress_tx_total() {
 
 # The proxy-log byte offset captured at the start of the last `sluice` run (written to /run by the run
 # arms). Lets `sluice learn` scope to that run instead of the whole boot; empty if no run / box rebooted.
-last_run_offset() { "$RUNNER" exec "$container" cat /run/sluice-run-offset 2>/dev/null | tr -dc 0-9; }
-mark_run_start()  { "$RUNNER" exec "$container" sh -c 'wc -c < /var/log/squid/access.log | tr -dc 0-9 > /run/sluice-run-offset' 2>/dev/null || true; }
+last_run_offset() { _root_exec "$container" cat /run/sluice-run-offset 2>/dev/null | tr -dc 0-9; }
+mark_run_start()  { _root_exec "$container" sh -c 'wc -c < /var/log/squid/access.log | tr -dc 0-9 > /run/sluice-run-offset' 2>/dev/null || true; }
 
 # sha256 of stdin (hex only). shasum ships on macOS + the Linux runners (config_hash already uses it).
 _sha256() { shasum -a 256 2>/dev/null | awk '{print $1}'; }
@@ -353,7 +369,7 @@ _sha256() { shasum -a 256 2>/dev/null | awk '{print $1}'; }
 # scoped to THIS run (not the box's whole boot), mark the run start so a later `learn` can scope to it,
 # and trap the receipt on EXIT (fires on normal exit, die, or Ctrl-C). Shared by run-default/shell/run.
 arm_receipt() {
-  _RCPT_OFFSET="$("$RUNNER" exec "$container" sh -c 'wc -c < /var/log/squid/access.log' 2>/dev/null | tr -dc 0-9)"
+  _RCPT_OFFSET="$(_root_exec "$container" sh -c 'wc -c < /var/log/squid/access.log' 2>/dev/null | tr -dc 0-9)"
   mark_run_start
   trap show_egress_receipt EXIT
 }
@@ -377,14 +393,21 @@ laundering_host() {
 # True if $host is on the baked DoH/DoT denylist (core/doh-endpoints.txt, the single source squid
 # also reads). dstdomain semantics: a leading-dot entry matches the domain + subdomains; else exact.
 doh_listed() {
-  local host="$1" entry
+  # Match case-insensitively (squid dstdomain / dnsmasq are; the SNI regex accepts uppercase). $1 may be
+  # a leading-dot WILDCARD. Reject when the candidate IS a DoH endpoint, sits UNDER a DoH wildcard, OR is
+  # a wildcard that COVERS a DoH endpoint host - e.g. `.adguard.com` would re-allow the listed
+  # dns.adguard.com. The denylist is lowercase.
+  local cand ch entry eh
+  cand="$(printf '%s' "$1" | tr 'A-Z' 'a-z')"; ch="${cand#.}"
   [ -f "$CORE/doh-endpoints.txt" ] || return 1
   while IFS= read -r entry; do
     case "$entry" in ''|\#*) continue ;; esac
+    eh="${entry#.}"
     case "$entry" in
-      .*) case ".$host" in *"$entry") return 0 ;; esac ;;
-      *)  [ "$host" = "$entry" ] && return 0 ;;
+      .*) case ".$ch" in *"$entry") return 0 ;; esac ;;   # candidate is, or sits under, a DoH wildcard
+      *)  [ "$ch" = "$entry" ] && return 0 ;;              # candidate is the exact DoH host
     esac
+    case "$cand" in .*) case ".$eh" in *"$cand") return 0 ;; esac ;; esac   # wildcard candidate covers it
   done < "$CORE/doh-endpoints.txt"
   return 1
 }
@@ -407,7 +430,7 @@ blocked_new() {
 # base_domains() is still added by allowed_domains(), so base hosts never count as blocked.
 box_blocked_count() {
   local al
-  al="$("$RUNNER" exec "$1" cat /etc/squid/allowlist.txt 2>/dev/null | tr '\n' ' ' || true)"
+  al="$(_root_exec "$1" cat /etc/squid/allowlist.txt 2>/dev/null | tr '\n' ' ' || true)"
   ( container="$1"; SLUICE_ALLOW_DOMAINS="$al"; blocked_new 2>/dev/null | grep -c . ) || true
 }
 
@@ -418,6 +441,17 @@ cmd_egress() {
   local mode="${1:-}" rows TAB
   running || die "no running sandbox. Start it ('sluice'), exercise it, then run 'sluice egress'."
   rows="$(egress_rows 2>/dev/null || true)"
+  # Empty rows mean "no egress" OR a FAILED in-box read (uid 1000 filled the pids cgroup so the audit
+  # exec couldn't fork). Never let a failed read pass as a clean zero - fail closed so a CI byte gate
+  # can't go green on an un-audited run.
+  if [ -z "$rows" ] && ! _audit_readable; then
+    if [ "$mode" = --json ]; then
+      printf '{"schema":"sluice.egress/v1","box":"%s","unavailable":true}\n' "$(_json_esc "$container")"
+    else
+      echo "[sluice] ${E_YEL:-}egress audit unavailable${E_RST:-} - could not read the in-box log (pids limit?); failing closed." >&2
+    fi
+    return 2
+  fi
   TAB="$(printf '\t')"
   # SLUICE_EGRESS_MAX_BYTES: a volume budget on what LEFT the box (tx to reached hosts). Over the cap,
   # this command exits non-zero so CI can gate it - bounds how much can be laundered through an
@@ -905,7 +939,7 @@ cmd_doctor() {
   fi
   local _unm
   _unm="$(unmasked_secrets 2>/dev/null | head -6 | tr '\n' ' ' | sed 's/ *$//' || true)"
-  [ -n "$_unm" ] && _doc "" "${C_YEL}note${C_RST}: secret-looking file(s) readable in the box - $_unm - shadow them: SLUICE_MASK=\".env*\" (sluice.config.example.sh)"
+  [ -n "$_unm" ] && _doc "" "${C_YEL}note${C_RST}: secret-looking file(s) readable in the box - $(_term_esc "$_unm") - shadow them: SLUICE_MASK=\".env*\" (sluice.config.example.sh)"
 
   # Symlinks that leave the mounted scope work on the host but dangle inside the box - warn.
   local _links _nl _lp _lt _TAB; _TAB="$(printf '\t')"
@@ -914,7 +948,7 @@ cmd_doctor() {
     _nl="$(printf '%s\n' "$_links" | grep -c . || true)"
     _doc symlinks "${C_YEL}$_nl link(s) point outside the box mount${C_RST} - will be broken inside the box:"
     printf '%s\n' "$_links" | head -10 | while IFS="$_TAB" read -r _lp _lt; do
-      printf '             %s -> %s\n' "$_lp" "$_lt"
+      printf '             %s -> %s\n' "$(_term_esc "$_lp")" "$(_term_esc "$_lt")"
     done
     [ "$_nl" -gt 10 ] && _doc "" "${C_DIM}(+ $((_nl - 10)) more)${C_RST}"
   fi
@@ -2075,6 +2109,19 @@ _policy_denied_host() {
   return 1
 }
 
+# 0 if the leading-dot allow wildcard $1 COVERS any deny token in the space-list $2 - i.e. allowing it
+# would silently re-admit a host the policy denies (deny is host-granular; a .parent allow swallows it).
+# Only meaningful for a leading-dot wildcard; an exact allow host is handled by _policy_denied_host.
+_allow_covers_denied() {
+  local w="$1" d db
+  case "$w" in .*) ;; *) return 1 ;; esac
+  for d in $2; do
+    db="${d#.}"                          # a deny wildcard .x denies x + subs; covering x suffices
+    case ".$db" in *"$w") return 0 ;; esac
+  done
+  return 1
+}
+
 apply_policy() {
   policy_configured || return 0
   local body allow="" deny="" denyip="" forbid="" maxips="" launder=0 strict=0 rsbase=0 unknowns="" line verb arg
@@ -2114,10 +2161,17 @@ EOF
       *) if [ -n "${!k:-}" ]; then die "policy forbids setting ${k} (your config sets it) - remove it to run under this policy."; fi ;;
     esac
   done
-  # 2) effective allowlist = (local + policy allow) - policy deny.
-  local merged eff="" h
+  # 2) effective allowlist = (local + policy allow) - policy deny. A leading-dot allow wildcard that
+  # COVERS a deny token would silently re-admit the denied host, so refuse the run and name it rather
+  # than let local config quietly defeat managed policy (deny is final).
+  local merged eff="" h conflict=""
   merged="$(printf '%s %s' "${SLUICE_ALLOW_DOMAINS:-}" "$allow" | tr ' ' '\n' | sed '/^$/d' | sort -u)"
-  for h in $merged; do _policy_denied_host "$h" "$deny" || eff="$eff $h"; done
+  for h in $merged; do
+    if _policy_denied_host "$h" "$deny"; then continue
+    elif _allow_covers_denied "$h" "$deny"; then conflict="$conflict $h"
+    else eff="$eff $h"; fi
+  done
+  [ -n "$conflict" ] && die "policy: allowlist wildcard(s)$conflict would re-admit a host the policy denies - narrow them to exact hosts to run under this policy (deny is final)."
   SLUICE_ALLOW_DOMAINS="$(printf '%s' "$eff" | awk '{$1=$1};1')"
   # 3) forbid-laundering: refuse any laundering-capable host left on the effective allowlist.
   if [ "$launder" = 1 ]; then
@@ -2338,6 +2392,38 @@ EOF
   MASKED_PATHS="${MASKED_PATHS# }"
 }
 
+# Echo the git common dir to rw-mount for a LINKED worktree - but only when the worktree linkage
+# verifies bidirectionally. In non-overlay mode the box (uid 1000) owns $PROJECT_DIR/.git and can rewrite
+# it to `gitdir: <other repo>`, which would otherwise steer sluice into rw-mounting + chown'ing an
+# arbitrary host repo (cross-repo rewrite; git-hook RCE on Linux). We mount $common only when it is
+# OUTSIDE the project AND the worktree's own git dir sits under $common/worktrees/ AND its backlink
+# ($common/worktrees/<id>/gitdir) points back at THIS project's .git - a file the box cannot forge (it
+# lives outside the box's writable mount). Otherwise warn and mount nothing (use SLUICE_MOUNTS to opt in).
+_validated_git_common_dir() {
+  git -C "$PROJECT_DIR" rev-parse --git-common-dir >/dev/null 2>&1 || return 0
+  local pd common gd back proj_git
+  pd="$(cd "$PROJECT_DIR" 2>/dev/null && pwd -P || true)"; [ -n "$pd" ] || return 0
+  common="$(git -C "$PROJECT_DIR" rev-parse --git-common-dir 2>/dev/null)"
+  case "$common" in /*) ;; *) common="$PROJECT_DIR/$common" ;; esac
+  common="$(cd "$common" 2>/dev/null && pwd -P || true)"
+  [ -n "$common" ] || return 0
+  case "$common/" in "$pd"/*) return 0 ;; esac          # common dir already inside the project mount
+  gd="$(git -C "$PROJECT_DIR" rev-parse --absolute-git-dir 2>/dev/null)"
+  gd="$(cd "$gd" 2>/dev/null && pwd -P || true)"
+  proj_git="$pd/.git"
+  if [ -n "$gd" ] && [ -f "$gd/gitdir" ]; then
+    case "$gd/" in "$common"/worktrees/*)
+      back="$(tr -d '\r\n' < "$gd/gitdir" 2>/dev/null)"
+      case "$back" in /*)
+        back="$(cd "$(dirname "$back")" 2>/dev/null && pwd -P || true)/$(basename "$back")"
+        [ "$back" = "$proj_git" ] && { printf '%s\n' "$common"; return 0; } ;;
+      esac ;;
+    esac
+  fi
+  echo "[sluice] ${E_YEL:-}not mounting the git common dir${E_RST:-} ($common) - its worktree linkage doesn't verify against this repo; mount it explicitly via SLUICE_MOUNTS if intended." >&2
+  return 0
+}
+
 # start: run the idle container (firewall comes up in the entrypoint)
 start() {
   "$RUNNER" rm -f -v "$container" >/dev/null 2>&1 || true
@@ -2394,8 +2480,13 @@ start() {
     local _ro_up
     _ro_up="$("$RUNNER" run --rm --entrypoint sh "$tag" -c 'awk "/^nameserver/{print \$2}" /etc/resolv.conf | grep -v : | tr "\n" " "' 2>/dev/null | sed 's/ *$//')"
     [ -n "$_ro_up" ] || _ro_up="127.0.0.11"
+    # Pin mode + size on the system tmpfs: the default (1777, uncapped) would let uid 1000 write these
+    # system scratch dirs and fill /var/log/squid to starve squid's access log. /tmp stays 1777 (world
+    # scratch); /run + the squid dirs are root/squid-owned 0755 (the entrypoint chowns the squid dirs)
+    # and size-capped so a runaway can't exhaust host RAM.
     run_args+=(--read-only
-      --tmpfs /tmp --tmpfs /run --tmpfs /var/log/squid --tmpfs /var/cache/squid
+      --tmpfs "/tmp:mode=1777" --tmpfs "/run:mode=0755,size=16m"
+      --tmpfs "/var/log/squid:mode=0755,size=64m" --tmpfs "/var/cache/squid:mode=0755,size=256m"
       -v /etc/squid -v /home/sluice
       --dns 127.0.0.1 -e "SLUICE_DNS_UPSTREAM=$_ro_up" -e SLUICE_READONLY_ROOT=1)
   fi
@@ -2434,14 +2525,11 @@ start() {
   fi
 
   # git worktree: also mount the common dir (when outside the project) so refs resolve + write. Skipped
-  # in overlay mode - an rw common-dir mount would let the agent escape the read-only protection.
-  if [ "${SLUICE_WORKSPACE:-}" != overlay ] && git -C "$PROJECT_DIR" rev-parse --git-common-dir >/dev/null 2>&1; then
-    local common; common="$(git -C "$PROJECT_DIR" rev-parse --git-common-dir)"
-    case "$common" in /*) ;; *) common="$PROJECT_DIR/$common";; esac
-    common="$(cd "$common" 2>/dev/null && pwd || true)"
-    if [ -n "$common" ]; then
-      case "$common/" in "$PROJECT_DIR"/*) ;; *) run_args+=(-v "$common":"$common" -e "SLUICE_GITDIR=$common");; esac
-    fi
+  # in overlay mode - an rw common-dir mount would let the agent escape the read-only protection. The
+  # linkage is validated so a box-rewritten .git can't redirect the mount to an arbitrary repo (see helper).
+  if [ "${SLUICE_WORKSPACE:-}" != overlay ]; then
+    local common; common="$(_validated_git_common_dir)"
+    [ -n "$common" ] && run_args+=(-v "$common":"$common" -e "SLUICE_GITDIR=$common")
   fi
 
   # Extra mounts (newline-separated host:container[:ro]).
@@ -2533,7 +2621,7 @@ workspace_is_overlay() { [ "${SLUICE_WORKSPACE:-}" = overlay ]; }
 # `sluice apply` removes - so a file the host added mid-session never inflates the deleted count.
 workspace_counts() {
   running || { echo "0 0 0"; return 0; }
-  "$RUNNER" exec "$container" sh -c '
+  _root_exec "$container" sh -c '
     O=/mnt/sluice-orig; W="$1"; [ -d "$O" ] || { echo "0 0 0"; exit 0; }
     d="$(diff -rq "$O" "$W" 2>/dev/null)"
     added="$(printf "%s\n" "$d" | grep -c "^Only in $W")"
@@ -2552,7 +2640,7 @@ workspace_counts() {
 cmd_workspace_diff() {
   workspace_is_overlay || die "sluice diff needs SLUICE_WORKSPACE=overlay (the protected-copy workspace)"
   ensure_up
-  "$RUNNER" exec "$container" sh -c 'diff -ruN --exclude=.git /mnt/sluice-orig "$1" 2>/dev/null' _ "$PROJECT_DIR" || true
+  _root_exec "$container" sh -c 'diff -ruN --exclude=.git /mnt/sluice-orig "$1" 2>/dev/null' _ "$PROJECT_DIR" || true
 }
 
 # `sluice apply`: write the working copy back onto the host repo (adds/mods via tar, then deletions).
@@ -2575,7 +2663,7 @@ EOF
   fi
   # Adds + modifications: tar the working copy over the host repo. Surface failures (no 2>/dev/null,
   # check the pipe status) instead of printing a false 'applied'.
-  if ! "$RUNNER" exec "$container" sh -c 'cd "$1" && tar -cf - .' _ "$PROJECT_DIR" | tar -C "$PROJECT_DIR" -xf -; then
+  if ! _root_exec "$container" sh -c 'cd "$1" && tar -cf - .' _ "$PROJECT_DIR" | tar -C "$PROJECT_DIR" -xf -; then
     die "apply failed writing to $PROJECT_DIR (check permissions and free space; the host repo may be partially updated)"
   fi
   # Deletions: remove host files the box deleted, against the BOOT-TIME snapshot (not the live ro
@@ -2586,8 +2674,8 @@ EOF
   elif [ "${SLUICE_APPLY_NO_DELETE:-}" = 1 ]; then
     echo "[sluice] ${E_YEL}SLUICE_APPLY_NO_DELETE=1${E_RST} - keeping the $d host file(s) the box deleted." >&2
     applied_del=0
-  elif "$RUNNER" exec "$container" sh -c 'test -f /run/sluice-orig-manifest' 2>/dev/null; then
-    "$RUNNER" exec "$container" sh -c 'cd "$1" && find . -mindepth 1 | sort > /tmp/w; comm -23 /run/sluice-orig-manifest /tmp/w' _ "$PROJECT_DIR" 2>/dev/null \
+  elif _root_exec "$container" sh -c 'test -f /run/sluice-orig-manifest' 2>/dev/null; then
+    _root_exec "$container" sh -c 'cd "$1" && find . -mindepth 1 | sort > /tmp/w; comm -23 /run/sluice-orig-manifest /tmp/w' _ "$PROJECT_DIR" 2>/dev/null \
       | while IFS= read -r p; do [ -n "$p" ] && rm -rf "${PROJECT_DIR:?}/${p#./}" 2>/dev/null; done
   else
     echo "[sluice] ${E_YEL}note:${E_RST} this box predates the apply-safety snapshot - skipping the $d deletion(s); 'sluice rebuild' then re-apply to propagate them." >&2
@@ -2646,6 +2734,11 @@ show_egress_receipt() {
     if ! running; then
       _persist_receipt "" unavailable
       echo "[sluice] ${E_YEL:-}egress receipt unavailable${E_RST:-} - box exited before capture" >&2
+    elif ! _audit_readable; then
+      # Box is up but the in-box audit read couldn't run (pids cgroup exhausted): record the gap rather
+      # than let an unreadable run look like clean zero egress.
+      _persist_receipt "" unavailable
+      echo "[sluice] ${E_YEL:-}egress receipt unavailable${E_RST:-} - could not read the in-box audit log (pids limit?)" >&2
     fi
     return 0
   fi
@@ -2718,7 +2811,7 @@ merge_allow() {
 reload_allowlist() {
   [ "$#" -gt 0 ] || return 0
   running || return 1
-  printf '%s\n' "$@" | "$RUNNER" exec -i "$container" sh -c \
+  printf '%s\n' "$@" | _root_exec -i "$container" sh -c \
     'cat >> /etc/squid/allowlist.txt && sort -u /etc/squid/allowlist.txt -o /etc/squid/allowlist.txt && pkill -HUP -x squid && { [ -x /usr/local/bin/sluice-dns-allow ] && /usr/local/bin/sluice-dns-allow && pkill -HUP -x dnsmasq; true; }' \
     >/dev/null 2>&1
 }
@@ -2739,8 +2832,8 @@ learn_apply() {   # $1 = newline-separated entries (hosts and/or .domains)
   while IFS= read -r e; do
     [ -n "$e" ] || continue
     h="${e#.}"   # a .domain wildcard matches by its bare host
-    if [ "${SLUICE_ALLOW_DOH:-}" != 1 ] && doh_listed "$h"; then doh="$doh $e"; continue; fi
-    if [ -n "$pdeny" ] && _policy_denied_host "$h" "$pdeny"; then pden="$pden $e"; continue; fi
+    if [ "${SLUICE_ALLOW_DOH:-}" != 1 ] && doh_listed "$e"; then doh="$doh $e"; continue; fi   # $e keeps the leading dot so a wildcard covering a DoH host is caught
+    if [ -n "$pdeny" ] && { _policy_denied_host "$h" "$pdeny" || _allow_covers_denied "$e" "$pdeny"; }; then pden="$pden $e"; continue; fi
     laundering_host "$h" && launder="$launder $e"
     keep="$keep $e"
   done <<EOF
@@ -2898,13 +2991,11 @@ EOF
     -v "$PROJECT_DIR":"$PROJECT_DIR" -e "SLUICE_WORKDIR=$PROJECT_DIR")
   [ -n "${SLUICE_MEMORY:-}" ] && run_args+=(--memory "$SLUICE_MEMORY")
   selinux_enforcing && run_args+=(--security-opt label=disable)   # see the main run path
-  if git -C "$PROJECT_DIR" rev-parse --git-common-dir >/dev/null 2>&1; then
-    local common; common="$(git -C "$PROJECT_DIR" rev-parse --git-common-dir)"
-    case "$common" in /*) ;; *) common="$PROJECT_DIR/$common";; esac
-    common="$(cd "$common" 2>/dev/null && pwd || true)"
-    if [ -n "$common" ]; then
-      case "$common/" in "$PROJECT_DIR"/*) ;; *) run_args+=(-v "$common":"$common" -e "SLUICE_GITDIR=$common");; esac
-    fi
+  # Validated worktree common-dir mount (see _validated_git_common_dir): refuse a box-rewritten .git
+  # that would redirect us into an arbitrary repo. Skipped under overlay, matching the main run path.
+  if [ "${SLUICE_WORKSPACE:-}" != overlay ]; then
+    local common; common="$(_validated_git_common_dir)"
+    [ -n "$common" ] && run_args+=(-v "$common":"$common" -e "SLUICE_GITDIR=$common")
   fi
 
   # Egress is OPEN for this run - keep SLUICE_MASK shadowing in force so in-repo secrets stay unreadable.

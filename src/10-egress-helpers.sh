@@ -53,6 +53,18 @@ running() { "$RUNNER" ps --filter "name=$container" --filter status=running --fo
 # inaccessible to the box without a label, so sluice runs it label=disable (see the run paths).
 selinux_enforcing() { [ -r /sys/fs/selinux/enforce ] && [ "$(cat /sys/fs/selinux/enforce 2>/dev/null)" = 1 ]; }
 
+# Root-context maintenance execs (receipt/learn/apply) run as the container's root - NOT --user sluice.
+# The image PATH must never let a uid-1000-writable dir (/home/sluice/.npm-global/bin) shadow a system
+# tool here, or a planted ~/.npm-global/bin/tail runs as root. Force a clean system PATH on every such
+# exec. Session execs (_exec_args) stay --user sluice and keep the full PATH for the workload's tools.
+_ROOT_PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+_root_exec() { "$RUNNER" exec -e "PATH=$_ROOT_PATH" "$@"; }
+
+# True when the box's in-container audit log is actually READABLE. A uid-1000 workload can exhaust the
+# pids cgroup so `<engine> exec` can't fork - _squid_log would then return empty (a FAILED read), which
+# would misread as zero egress. Callers gate on this to record `unavailable` / fail the byte gate closed.
+_audit_readable() { _root_exec "$container" true >/dev/null 2>&1; }
+
 # squid access log. From _RCPT_OFFSET bytes when set (the run-scoped receipt); otherwise the last
 # _SQUID_LOG_CAP bytes - a ceiling so an attacker can't inflate host CPU/IO by spamming the log and
 # forcing an unbounded `cat | awk` on the box-level audit paths (egress/doctor/learn --all). 16 MiB
@@ -60,9 +72,9 @@ selinux_enforcing() { [ -r /sys/fs/selinux/enforce ] && [ "$(cat /sys/fs/selinux
 _SQUID_LOG_CAP=16777216
 _squid_log() {
   if [ -n "${_RCPT_OFFSET:-}" ]; then
-    "$RUNNER" exec "${1:-$container}" sh -c "tail -c +$(( _RCPT_OFFSET + 1 )) /var/log/squid/access.log" 2>/dev/null
+    _root_exec "${1:-$container}" sh -c "tail -c +$(( _RCPT_OFFSET + 1 )) /var/log/squid/access.log" 2>/dev/null
   else
-    "$RUNNER" exec "${1:-$container}" sh -c "tail -c $_SQUID_LOG_CAP /var/log/squid/access.log" 2>/dev/null
+    _root_exec "${1:-$container}" sh -c "tail -c $_SQUID_LOG_CAP /var/log/squid/access.log" 2>/dev/null
   fi
 }
 
@@ -157,8 +169,8 @@ egress_tx_total() {
 
 # The proxy-log byte offset captured at the start of the last `sluice` run (written to /run by the run
 # arms). Lets `sluice learn` scope to that run instead of the whole boot; empty if no run / box rebooted.
-last_run_offset() { "$RUNNER" exec "$container" cat /run/sluice-run-offset 2>/dev/null | tr -dc 0-9; }
-mark_run_start()  { "$RUNNER" exec "$container" sh -c 'wc -c < /var/log/squid/access.log | tr -dc 0-9 > /run/sluice-run-offset' 2>/dev/null || true; }
+last_run_offset() { _root_exec "$container" cat /run/sluice-run-offset 2>/dev/null | tr -dc 0-9; }
+mark_run_start()  { _root_exec "$container" sh -c 'wc -c < /var/log/squid/access.log | tr -dc 0-9 > /run/sluice-run-offset' 2>/dev/null || true; }
 
 # sha256 of stdin (hex only). shasum ships on macOS + the Linux runners (config_hash already uses it).
 _sha256() { shasum -a 256 2>/dev/null | awk '{print $1}'; }
@@ -167,7 +179,7 @@ _sha256() { shasum -a 256 2>/dev/null | awk '{print $1}'; }
 # scoped to THIS run (not the box's whole boot), mark the run start so a later `learn` can scope to it,
 # and trap the receipt on EXIT (fires on normal exit, die, or Ctrl-C). Shared by run-default/shell/run.
 arm_receipt() {
-  _RCPT_OFFSET="$("$RUNNER" exec "$container" sh -c 'wc -c < /var/log/squid/access.log' 2>/dev/null | tr -dc 0-9)"
+  _RCPT_OFFSET="$(_root_exec "$container" sh -c 'wc -c < /var/log/squid/access.log' 2>/dev/null | tr -dc 0-9)"
   mark_run_start
   trap show_egress_receipt EXIT
 }
@@ -191,14 +203,21 @@ laundering_host() {
 # True if $host is on the baked DoH/DoT denylist (core/doh-endpoints.txt, the single source squid
 # also reads). dstdomain semantics: a leading-dot entry matches the domain + subdomains; else exact.
 doh_listed() {
-  local host="$1" entry
+  # Match case-insensitively (squid dstdomain / dnsmasq are; the SNI regex accepts uppercase). $1 may be
+  # a leading-dot WILDCARD. Reject when the candidate IS a DoH endpoint, sits UNDER a DoH wildcard, OR is
+  # a wildcard that COVERS a DoH endpoint host - e.g. `.adguard.com` would re-allow the listed
+  # dns.adguard.com. The denylist is lowercase.
+  local cand ch entry eh
+  cand="$(printf '%s' "$1" | tr 'A-Z' 'a-z')"; ch="${cand#.}"
   [ -f "$CORE/doh-endpoints.txt" ] || return 1
   while IFS= read -r entry; do
     case "$entry" in ''|\#*) continue ;; esac
+    eh="${entry#.}"
     case "$entry" in
-      .*) case ".$host" in *"$entry") return 0 ;; esac ;;
-      *)  [ "$host" = "$entry" ] && return 0 ;;
+      .*) case ".$ch" in *"$entry") return 0 ;; esac ;;   # candidate is, or sits under, a DoH wildcard
+      *)  [ "$ch" = "$entry" ] && return 0 ;;              # candidate is the exact DoH host
     esac
+    case "$cand" in .*) case ".$eh" in *"$cand") return 0 ;; esac ;; esac   # wildcard candidate covers it
   done < "$CORE/doh-endpoints.txt"
   return 1
 }
@@ -221,7 +240,7 @@ blocked_new() {
 # base_domains() is still added by allowed_domains(), so base hosts never count as blocked.
 box_blocked_count() {
   local al
-  al="$("$RUNNER" exec "$1" cat /etc/squid/allowlist.txt 2>/dev/null | tr '\n' ' ' || true)"
+  al="$(_root_exec "$1" cat /etc/squid/allowlist.txt 2>/dev/null | tr '\n' ' ' || true)"
   ( container="$1"; SLUICE_ALLOW_DOMAINS="$al"; blocked_new 2>/dev/null | grep -c . ) || true
 }
 

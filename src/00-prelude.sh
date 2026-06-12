@@ -23,6 +23,10 @@ die() { echo "${E_RED:-}[sluice]${E_RST:-} $*" >&2; exit 1; }
 # remaining C0 control byte + DEL (ESC/BEL/OSC) so a box-controlled value (e.g. a logged SNI) can't
 # smuggle a terminal-escape sequence through `--json`/persisted receipts when they're later cat'd.
 _json_esc() { local s="$1"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; s="${s//$'\t'/ }"; s="${s//$'\n'/ }"; s="${s//$'\r'/}"; printf '%s' "$s" | LC_ALL=C tr -d '\000-\037\177'; }
+# Sanitize a box-controlled string for safe display on a TERMINAL: flatten whitespace and DELETE every
+# C0 control byte + DEL (ESC/BEL/OSC). Unlike _json_esc it leaves \ and " intact (this is for humans, not
+# JSON), so a crafted filename / symlink target can't inject escapes or forge a line of `doctor` output.
+_term_esc() { local s="$1"; s="${s//$'\t'/ }"; s="${s//$'\n'/ }"; s="${s//$'\r'/ }"; printf '%s' "$s" | LC_ALL=C tr -d '\000-\037\177'; }
 # Emit a JSON array of strings from newline-separated stdin (blank lines skipped; a final line
 # without a trailing newline still counts - base_domains emits one).
 _json_arr() { local first=1 line; printf '['; while IFS= read -r line || [ -n "$line" ]; do [ -n "$line" ] || continue; [ "$first" = 1 ] && first=0 || printf ','; printf '"%s"' "$(_json_esc "$line")"; done; printf ']'; }

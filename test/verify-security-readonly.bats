@@ -26,3 +26,15 @@ teardown_file() { destroy_box ro ro; }
   run "$ENG" exec sluice-sectest-ro sh -c 'grep -q registry.npmjs.org /etc/squid/allowlist.txt'
   assert_success
 }
+
+@test "readonly: system tmpfs are not world-writable (no 1777 default) - uid 1000 can't fill them" {
+  # /run + /var/log/squid are root/squid-owned 0755; uid 1000 must be unable to create files there
+  # (a 1777 default would let it fill the squid log tmpfs and starve the access log).
+  run "$ENG" exec --user sluice sluice-sectest-ro sh -c 'touch /run/evil 2>/dev/null || touch /var/log/squid/evil 2>/dev/null'
+  assert_failure
+}
+
+@test "readonly: /tmp is still usable world scratch (sticky 1777)" {
+  run "$ENG" exec --user sluice sluice-sectest-ro sh -c 'touch /tmp/.p && rm /tmp/.p'
+  assert_success
+}

@@ -135,6 +135,38 @@ EOF
   MASKED_PATHS="${MASKED_PATHS# }"
 }
 
+# Echo the git common dir to rw-mount for a LINKED worktree - but only when the worktree linkage
+# verifies bidirectionally. In non-overlay mode the box (uid 1000) owns $PROJECT_DIR/.git and can rewrite
+# it to `gitdir: <other repo>`, which would otherwise steer sluice into rw-mounting + chown'ing an
+# arbitrary host repo (cross-repo rewrite; git-hook RCE on Linux). We mount $common only when it is
+# OUTSIDE the project AND the worktree's own git dir sits under $common/worktrees/ AND its backlink
+# ($common/worktrees/<id>/gitdir) points back at THIS project's .git - a file the box cannot forge (it
+# lives outside the box's writable mount). Otherwise warn and mount nothing (use SLUICE_MOUNTS to opt in).
+_validated_git_common_dir() {
+  git -C "$PROJECT_DIR" rev-parse --git-common-dir >/dev/null 2>&1 || return 0
+  local pd common gd back proj_git
+  pd="$(cd "$PROJECT_DIR" 2>/dev/null && pwd -P || true)"; [ -n "$pd" ] || return 0
+  common="$(git -C "$PROJECT_DIR" rev-parse --git-common-dir 2>/dev/null)"
+  case "$common" in /*) ;; *) common="$PROJECT_DIR/$common" ;; esac
+  common="$(cd "$common" 2>/dev/null && pwd -P || true)"
+  [ -n "$common" ] || return 0
+  case "$common/" in "$pd"/*) return 0 ;; esac          # common dir already inside the project mount
+  gd="$(git -C "$PROJECT_DIR" rev-parse --absolute-git-dir 2>/dev/null)"
+  gd="$(cd "$gd" 2>/dev/null && pwd -P || true)"
+  proj_git="$pd/.git"
+  if [ -n "$gd" ] && [ -f "$gd/gitdir" ]; then
+    case "$gd/" in "$common"/worktrees/*)
+      back="$(tr -d '\r\n' < "$gd/gitdir" 2>/dev/null)"
+      case "$back" in /*)
+        back="$(cd "$(dirname "$back")" 2>/dev/null && pwd -P || true)/$(basename "$back")"
+        [ "$back" = "$proj_git" ] && { printf '%s\n' "$common"; return 0; } ;;
+      esac ;;
+    esac
+  fi
+  echo "[sluice] ${E_YEL:-}not mounting the git common dir${E_RST:-} ($common) - its worktree linkage doesn't verify against this repo; mount it explicitly via SLUICE_MOUNTS if intended." >&2
+  return 0
+}
+
 # start: run the idle container (firewall comes up in the entrypoint)
 start() {
   "$RUNNER" rm -f -v "$container" >/dev/null 2>&1 || true
@@ -191,8 +223,13 @@ start() {
     local _ro_up
     _ro_up="$("$RUNNER" run --rm --entrypoint sh "$tag" -c 'awk "/^nameserver/{print \$2}" /etc/resolv.conf | grep -v : | tr "\n" " "' 2>/dev/null | sed 's/ *$//')"
     [ -n "$_ro_up" ] || _ro_up="127.0.0.11"
+    # Pin mode + size on the system tmpfs: the default (1777, uncapped) would let uid 1000 write these
+    # system scratch dirs and fill /var/log/squid to starve squid's access log. /tmp stays 1777 (world
+    # scratch); /run + the squid dirs are root/squid-owned 0755 (the entrypoint chowns the squid dirs)
+    # and size-capped so a runaway can't exhaust host RAM.
     run_args+=(--read-only
-      --tmpfs /tmp --tmpfs /run --tmpfs /var/log/squid --tmpfs /var/cache/squid
+      --tmpfs "/tmp:mode=1777" --tmpfs "/run:mode=0755,size=16m"
+      --tmpfs "/var/log/squid:mode=0755,size=64m" --tmpfs "/var/cache/squid:mode=0755,size=256m"
       -v /etc/squid -v /home/sluice
       --dns 127.0.0.1 -e "SLUICE_DNS_UPSTREAM=$_ro_up" -e SLUICE_READONLY_ROOT=1)
   fi
@@ -231,14 +268,11 @@ start() {
   fi
 
   # git worktree: also mount the common dir (when outside the project) so refs resolve + write. Skipped
-  # in overlay mode - an rw common-dir mount would let the agent escape the read-only protection.
-  if [ "${SLUICE_WORKSPACE:-}" != overlay ] && git -C "$PROJECT_DIR" rev-parse --git-common-dir >/dev/null 2>&1; then
-    local common; common="$(git -C "$PROJECT_DIR" rev-parse --git-common-dir)"
-    case "$common" in /*) ;; *) common="$PROJECT_DIR/$common";; esac
-    common="$(cd "$common" 2>/dev/null && pwd || true)"
-    if [ -n "$common" ]; then
-      case "$common/" in "$PROJECT_DIR"/*) ;; *) run_args+=(-v "$common":"$common" -e "SLUICE_GITDIR=$common");; esac
-    fi
+  # in overlay mode - an rw common-dir mount would let the agent escape the read-only protection. The
+  # linkage is validated so a box-rewritten .git can't redirect the mount to an arbitrary repo (see helper).
+  if [ "${SLUICE_WORKSPACE:-}" != overlay ]; then
+    local common; common="$(_validated_git_common_dir)"
+    [ -n "$common" ] && run_args+=(-v "$common":"$common" -e "SLUICE_GITDIR=$common")
   fi
 
   # Extra mounts (newline-separated host:container[:ro]).
@@ -330,7 +364,7 @@ workspace_is_overlay() { [ "${SLUICE_WORKSPACE:-}" = overlay ]; }
 # `sluice apply` removes - so a file the host added mid-session never inflates the deleted count.
 workspace_counts() {
   running || { echo "0 0 0"; return 0; }
-  "$RUNNER" exec "$container" sh -c '
+  _root_exec "$container" sh -c '
     O=/mnt/sluice-orig; W="$1"; [ -d "$O" ] || { echo "0 0 0"; exit 0; }
     d="$(diff -rq "$O" "$W" 2>/dev/null)"
     added="$(printf "%s\n" "$d" | grep -c "^Only in $W")"
@@ -349,7 +383,7 @@ workspace_counts() {
 cmd_workspace_diff() {
   workspace_is_overlay || die "sluice diff needs SLUICE_WORKSPACE=overlay (the protected-copy workspace)"
   ensure_up
-  "$RUNNER" exec "$container" sh -c 'diff -ruN --exclude=.git /mnt/sluice-orig "$1" 2>/dev/null' _ "$PROJECT_DIR" || true
+  _root_exec "$container" sh -c 'diff -ruN --exclude=.git /mnt/sluice-orig "$1" 2>/dev/null' _ "$PROJECT_DIR" || true
 }
 
 # `sluice apply`: write the working copy back onto the host repo (adds/mods via tar, then deletions).
@@ -372,7 +406,7 @@ EOF
   fi
   # Adds + modifications: tar the working copy over the host repo. Surface failures (no 2>/dev/null,
   # check the pipe status) instead of printing a false 'applied'.
-  if ! "$RUNNER" exec "$container" sh -c 'cd "$1" && tar -cf - .' _ "$PROJECT_DIR" | tar -C "$PROJECT_DIR" -xf -; then
+  if ! _root_exec "$container" sh -c 'cd "$1" && tar -cf - .' _ "$PROJECT_DIR" | tar -C "$PROJECT_DIR" -xf -; then
     die "apply failed writing to $PROJECT_DIR (check permissions and free space; the host repo may be partially updated)"
   fi
   # Deletions: remove host files the box deleted, against the BOOT-TIME snapshot (not the live ro
@@ -383,8 +417,8 @@ EOF
   elif [ "${SLUICE_APPLY_NO_DELETE:-}" = 1 ]; then
     echo "[sluice] ${E_YEL}SLUICE_APPLY_NO_DELETE=1${E_RST} - keeping the $d host file(s) the box deleted." >&2
     applied_del=0
-  elif "$RUNNER" exec "$container" sh -c 'test -f /run/sluice-orig-manifest' 2>/dev/null; then
-    "$RUNNER" exec "$container" sh -c 'cd "$1" && find . -mindepth 1 | sort > /tmp/w; comm -23 /run/sluice-orig-manifest /tmp/w' _ "$PROJECT_DIR" 2>/dev/null \
+  elif _root_exec "$container" sh -c 'test -f /run/sluice-orig-manifest' 2>/dev/null; then
+    _root_exec "$container" sh -c 'cd "$1" && find . -mindepth 1 | sort > /tmp/w; comm -23 /run/sluice-orig-manifest /tmp/w' _ "$PROJECT_DIR" 2>/dev/null \
       | while IFS= read -r p; do [ -n "$p" ] && rm -rf "${PROJECT_DIR:?}/${p#./}" 2>/dev/null; done
   else
     echo "[sluice] ${E_YEL}note:${E_RST} this box predates the apply-safety snapshot - skipping the $d deletion(s); 'sluice rebuild' then re-apply to propagate them." >&2

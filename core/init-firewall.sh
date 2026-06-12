@@ -88,13 +88,15 @@ case "$(iptables -S OUTPUT 2>/dev/null | head -1)" in
   '-P OUTPUT DROP') ;;
   *) echo "[firewall] FAIL: OUTPUT policy is not DROP - egress not default-closed" >&2; exit 1 ;;
 esac
-# If ip6tables is usable, its OUTPUT policy MUST be DROP; otherwise the --sysctl disable_ipv6 set at
-# run is the closure (no v6 stack to filter). Catches the double-no-op that would leave v6 wide open.
-if command -v ip6tables >/dev/null 2>&1 && ip6tables -S OUTPUT >/dev/null 2>&1; then
-  case "$(ip6tables -S OUTPUT 2>/dev/null | head -1)" in
-    '-P OUTPUT DROP') ;;
-    *) echo "[firewall] FAIL: IPv6 OUTPUT is not default-DROP - v6 egress may be open" >&2; exit 1 ;;
-  esac
+# Prove IPv6 egress is actually closed, INDEPENDENT of whether ip6tables is usable - a bare skip would
+# rest v6 closure on an unverified --sysctl. Closed if the v6 stack is absent, OR disable_ipv6 took, OR
+# ip6tables OUTPUT policy is DROP. Mirrors the disjunction in test/verify-security-egress-bypass.bats.
+if [ ! -d /proc/sys/net/ipv6 ]; then :
+elif [ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6 2>/dev/null)" = 1 ]; then :
+elif [ "$(ip6tables -S OUTPUT 2>/dev/null | head -1)" = '-P OUTPUT DROP' ]; then :
+else
+  echo "[firewall] FAIL: IPv6 egress not closed - disable_ipv6 off AND ip6tables OUTPUT not DROP" >&2
+  exit 1
 fi
 
 # Audit mode (learn --audit) opens all HTTP/HTTPS via squid, so the enforce-mode deny asserts below
@@ -119,6 +121,14 @@ else
   # the SNI filter, direct-IP block, and DNS scoping all at once.
   if curl -sS -o /dev/null --max-time 6 -x 127.0.0.1:3128 https://1.1.1.1 2>/dev/null; then
     echo "[firewall] FAIL: forward-proxy CONNECT (3128) reached a raw IP - egress filter bypassable" >&2
+    exit 1
+  fi
+  # Deny: a forged Host over plaintext HTTP to a non-allowlisted IP must NOT be forwarded. squid
+  # intercepts :80 and authorizes by the client-supplied Host; host_verify_strict (squid.conf) refuses a
+  # Host that doesn't resolve to the connected IP. -f so squid's 409 denial counts as blocked (non-zero);
+  # only a real 2xx/3xx (squid forwarded to the bogus IP) trips FAIL. Never false-fails a healthy box.
+  if curl -fsS -o /dev/null --max-time 6 --resolve registry.npmjs.org:80:1.1.1.1 http://registry.npmjs.org/ 2>/dev/null; then
+    echo "[firewall] FAIL: forged-Host HTTP reached a non-allowlisted IP - host verification off" >&2
     exit 1
   fi
 fi

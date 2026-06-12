@@ -2,6 +2,17 @@ cmd_egress() {
   local mode="${1:-}" rows TAB
   running || die "no running sandbox. Start it ('sluice'), exercise it, then run 'sluice egress'."
   rows="$(egress_rows 2>/dev/null || true)"
+  # Empty rows mean "no egress" OR a FAILED in-box read (uid 1000 filled the pids cgroup so the audit
+  # exec couldn't fork). Never let a failed read pass as a clean zero - fail closed so a CI byte gate
+  # can't go green on an un-audited run.
+  if [ -z "$rows" ] && ! _audit_readable; then
+    if [ "$mode" = --json ]; then
+      printf '{"schema":"sluice.egress/v1","box":"%s","unavailable":true}\n' "$(_json_esc "$container")"
+    else
+      echo "[sluice] ${E_YEL:-}egress audit unavailable${E_RST:-} - could not read the in-box log (pids limit?); failing closed." >&2
+    fi
+    return 2
+  fi
   TAB="$(printf '\t')"
   # SLUICE_EGRESS_MAX_BYTES: a volume budget on what LEFT the box (tx to reached hosts). Over the cap,
   # this command exits non-zero so CI can gate it - bounds how much can be laundered through an
