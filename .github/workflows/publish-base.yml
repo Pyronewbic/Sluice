@@ -80,7 +80,7 @@ jobs:
         run: |
           cosign verify-attestation --type cyclonedx "${IMAGE}@${DIGEST}" \
             --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
-            --certificate-identity-regexp='^https://github.com/Pyronewbic/Sluice/' >/dev/null
+            --certificate-identity-regexp='^https://github\.com/Pyronewbic/Sluice/\.github/workflows/publish-base\.yml@refs/tags/v' >/dev/null
         env:
           DIGEST: ${{ steps.push.outputs.digest }}
 
@@ -88,4 +88,4 @@ jobs:
         run: |
           cosign verify "${IMAGE}:${GITHUB_REF_NAME}" \
             --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
-            --certificate-identity-regexp='^https://github.com/Pyronewbic/Sluice/'
+            --certificate-identity-regexp='^https://github\.com/Pyronewbic/Sluice/\.github/workflows/publish-base\.yml@refs/tags/v'
