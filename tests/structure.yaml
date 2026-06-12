@@ -6,10 +6,7 @@
 schemaVersion: "2.0.0"
 
 fileExistenceTests:
-  # No in-box route to root: neither the setuid binary nor a NOPASSWD drop-in is shipped.
-  - name: "no setuid sudo"
-    path: /usr/bin/sudo
-    shouldExist: false
+  # No NOPASSWD sudoers drop-in shipped (a setuid sudo binary is caught by "sudo not on PATH" below).
   - name: "no firewall sudoers drop-in"
     path: /etc/sudoers.d/firewall
     shouldExist: false
@@ -31,6 +28,11 @@ fileExistenceTests:
     path: /usr/local/bin/init-firewall.sh
     shouldExist: true
     permissions: "-rwxr-xr-x"
+  # The third root-run boot script (DNS forwarder generator, allowlist-scoped; anti-DNS-tunnel).
+  - name: "dns-allow is executable"
+    path: /usr/local/bin/sluice-dns-allow
+    shouldExist: true
+    permissions: "-rwxr-xr-x"
 
 commandTests:
   # The non-root session user is uid 1000.
@@ -38,11 +40,14 @@ commandTests:
     command: id
     args: ["-u", "sluice"]
     expectedOutput: ["^1000\\s*$"]
-  # The squid service user exists (the only uid with direct egress).
-  - name: "squid service user exists"
+  # squid's uid must be NOT 0 and NOT 1000: the firewall grants direct egress to exactly this uid and
+  # excludes it from the 80/443 REDIRECT (init-firewall.sh keys on id -u squid), so a collision with
+  # root or the app user opens an un-filtered egress path. No shell vars (cst env-substitutes the config).
+  - name: "squid uid disjoint from root and sluice"
     command: id
-    args: ["squid"]
-    exitCode: 0
+    args: ["-u", "squid"]
+    expectedOutput: ["^[0-9]+\\s*$"]            # numeric uid; fails closed if id errors (empty output)
+    excludedOutput: ["^0\\s*$", "^1000\\s*$"]   # must NOT be root (0) or the app user (1000)
   # The firewall + tooling are present (diff = diffutils, which the old ad-hoc smoke missed). No shell
   # vars: container-structure-test does env substitution on the config, which would eat a $-loop.
   - name: "firewall + base tooling present"
@@ -56,12 +61,14 @@ commandTests:
     command: sh
     args: ["-c", "command -v sudo || true"]
     excludedOutput: ["sudo"]
-  # NO setuid-root binary anywhere: the shadow package ships chfn/chsh/passwd/... setuid, stripped in
-  # the Dockerfile, so uid 1000 has no setuid-root primitive even independent of no-new-privileges.
-  - name: "no setuid-root binaries remain"
+  # NO setuid/setgid-root binary anywhere: the shadow package ships chfn/chsh/passwd/... setuid, stripped
+  # in the Dockerfile (chmod -s clears both bits), so uid 1000 has no setuid/setgid primitive even
+  # independent of no-new-privileges. find's stderr is merged into the count (2>&1), so a partial or
+  # failed walk yields a nonzero line and fails closed instead of under-counting to a false pass.
+  - name: "no setuid/setgid-root binaries remain"
     command: sh
-    args: ["-c", "find / -xdev -type f -perm -4000 2>/dev/null | wc -l | tr -d ' '"]
-    expectedOutput: ["^0\\s*$"]   # \s* absorbs wc's trailing newline (matches the uid-1000 test)
+    args: ["-c", "find / -xdev -type f \\( -perm -4000 -o -perm -2000 \\) -print 2>&1 | grep -c . | tr -d ' '"]
+    expectedOutput: ["^0\\s*$"]   # also covers setgid (-2000), matching the Dockerfile sweep
 
 metadataTest:
   entrypoint: ["/usr/local/bin/entrypoint.sh"]

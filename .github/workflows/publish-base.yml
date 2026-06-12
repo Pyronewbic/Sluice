@@ -42,10 +42,8 @@ jobs:
           target: base
           load: true
           tags: sluice-base:smoke
-      - name: Install container-structure-test
-        run: |
-          curl -fsSL https://storage.googleapis.com/container-structure-test/latest/container-structure-test-linux-amd64 -o cst
-          chmod +x cst && sudo mv cst /usr/local/bin/container-structure-test
+      - name: Install container-structure-test (pinned, checksummed)
+        run: bash scripts/install-cst.sh
       - name: Assert base invariants
         # Same spec the PR gate runs (acceptance.yml) - no sudo, uid 1000, firewall packages, keyless.
         run: container-structure-test test --image sluice-base:smoke --config tests/structure.yaml

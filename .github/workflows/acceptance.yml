@@ -45,10 +45,8 @@ jobs:
             sleep $((i * 10))
           done
           exit 1
-      - name: Install container-structure-test
-        run: |
-          curl -fsSL https://storage.googleapis.com/container-structure-test/latest/container-structure-test-linux-amd64 -o cst
-          chmod +x cst && sudo mv cst /usr/local/bin/container-structure-test
+      - name: Install container-structure-test (pinned, checksummed)
+        run: bash scripts/install-cst.sh
       - name: Assert baked invariants (no sudo, uid 1000, firewall packages)
         run: container-structure-test test --image sluice-base:gate --config tests/structure.yaml
 
