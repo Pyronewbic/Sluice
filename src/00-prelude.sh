@@ -19,8 +19,10 @@ CORE="$ROOT/core"
 die() { echo "${E_RED:-}[sluice]${E_RST:-} $*" >&2; exit 1; }
 
 # minimal JSON emit (host jq is not assumed; fields here are short/flat)
-# Escape a string for a JSON value: backslash + doublequote, and flatten stray control chars.
-_json_esc() { local s="$1"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; s="${s//$'\t'/ }"; s="${s//$'\n'/ }"; s="${s//$'\r'/}"; printf '%s' "$s"; }
+# Escape a string for a JSON value: backslash + doublequote, flatten tab/newline, then DELETE every
+# remaining C0 control byte + DEL (ESC/BEL/OSC) so a box-controlled value (e.g. a logged SNI) can't
+# smuggle a terminal-escape sequence through `--json`/persisted receipts when they're later cat'd.
+_json_esc() { local s="$1"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; s="${s//$'\t'/ }"; s="${s//$'\n'/ }"; s="${s//$'\r'/}"; printf '%s' "$s" | LC_ALL=C tr -d '\000-\037\177'; }
 # Emit a JSON array of strings from newline-separated stdin (blank lines skipped; a final line
 # without a trailing newline still counts - base_domains emits one).
 _json_arr() { local first=1 line; printf '['; while IFS= read -r line || [ -n "$line" ]; do [ -n "$line" ] || continue; [ "$first" = 1 ] && first=0 || printf ','; printf '"%s"' "$(_json_esc "$line")"; done; printf ']'; }

@@ -35,6 +35,10 @@ iptables -t nat -A OUTPUT -p tcp --dport 443 -m owner ! --uid-owner "$SQUID_UID"
 # 127.0.0.0/8 accept just below would otherwise hand it over, and it forwards arbitrary names.
 # dnsmasq itself runs as root and still forwards through it.
 iptables -A OUTPUT -d 127.0.0.11 -m owner ! --uid-owner 0 -j DROP
+# squid's forward-proxy port (3128) is a non-intercept CONNECT proxy: anyone who reaches it can
+# blind-tunnel to ANY ip:port, bypassing the SNI filter + direct-IP block. Nothing but squid needs it
+# (and squid never dials its own 3128), so REJECT every other uid before the loopback ACCEPT below.
+iptables -A OUTPUT -p tcp -d 127.0.0.1 --dport 3128 -m owner ! --uid-owner "$SQUID_UID" -j REJECT --reject-with tcp-reset
 iptables -A OUTPUT -o lo -j ACCEPT                                     # loopback
 iptables -A OUTPUT -d 127.0.0.0/8 -j ACCEPT                            # REDIRECT'd pkts (dst rewritten to localhost -> squid)
 iptables -A OUTPUT -m owner --uid-owner "$SQUID_UID" -j ACCEPT         # squid's own egress (enforces the allowlist)
@@ -109,6 +113,12 @@ else
   # Deny: a direct-IP HTTPS connection carries no SNI -> the proxy must block it.
   if curl -sS -o /dev/null --max-time 6 https://1.1.1.1 2>/dev/null; then
     echo "[firewall] FAIL: direct-IP egress reachable - proxy bypassed" >&2
+    exit 1
+  fi
+  # Deny: the forward-proxy port (3128) must NOT tunnel a CONNECT to a raw IP - that path would bypass
+  # the SNI filter, direct-IP block, and DNS scoping all at once.
+  if curl -sS -o /dev/null --max-time 6 -x 127.0.0.1:3128 https://1.1.1.1 2>/dev/null; then
+    echo "[firewall] FAIL: forward-proxy CONNECT (3128) reached a raw IP - egress filter bypassable" >&2
     exit 1
   fi
 fi
