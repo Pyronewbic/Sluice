@@ -74,6 +74,7 @@ blocked_hosts() {
       if (sni != "" && sni != "-") host=sni;
       else if (url ~ /^http:\/\//) { h=url; sub(/^http:\/\//,"",h); sub(/\/.*/,"",h); sub(/:.*/,"",h); host=h }
       if (host == "" || host ~ /^[0-9.]+$/) next;
+      if (host !~ /^\.?[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$/) next;   # drop non-hostname chars: a raw SNI/Host carries $(),",ESC -> config-write RCE + terminal-escape injection
       print host
     }' | sort -u
 }
@@ -90,6 +91,7 @@ reached_hosts_raw() {
       if (sni != "" && sni != "-") host=sni;
       else if (url ~ /^http:\/\//) { h=url; sub(/^http:\/\//,"",h); sub(/\/.*/,"",h); sub(/:.*/,"",h); host=h }
       if (host == "" || host ~ /^[0-9.]+$/) next;
+      if (host !~ /^\.?[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$/) next;   # drop non-hostname chars: a raw SNI/Host carries $(),",ESC -> config-write RCE + terminal-escape injection
       print host
     }'
 }
@@ -120,6 +122,7 @@ egress_rows() {
       if (sni != "" && sni != "-") host=sni;
       else if (url ~ /^http:\/\//) { h=url; sub(/^http:\/\//,"",h); sub(/\/.*/,"",h); sub(/:.*/,"",h); host=h }
       if (host == "" || host ~ /^[0-9.]+$/) next;
+      if (host !~ /^\.?[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$/) next;   # drop non-hostname chars: a raw SNI/Host carries $(),",ESC -> config-write RCE + terminal-escape injection
       bytes[host] += tx + rx; seen[host]=1;
       if (status ~ /NONE_NONE/ || status ~ /TCP_DENIED/ || status ~ /\/000/) deny[host]++; else succ[host]++;
     }
