@@ -21,7 +21,7 @@ silently fall back to local-only.
 ## Format
 
 Plain text, one directive per line, `#` comments. A bare host is `allow` (back-compat with the v1
-host-list). Unknown directives warn and are ignored.
+host-list). Unknown directives warn and are ignored (or refuse, under `strict-unknown`).
 
 ```
 # egress
@@ -35,6 +35,10 @@ forbid SLUICE_ALLOW_DOH
 forbid SLUICE_BUMP_DOMAINS
 forbid-laundering                    # refuse any allowlisted host an attacker could also write to
 max-allow-ips 2                      # cap the number of SLUICE_ALLOW_IPS entries
+
+# policy-level
+strict-unknown                       # make an unknown directive a hard refusal, not a warning
+require-signed-base                  # mandate SLUICE_REQUIRE_SIGNED=1 for every box under this policy
 ```
 
 ## Enforcement
@@ -50,10 +54,27 @@ config (and any `sluice learn` edits) - so policy wins:
   silently trimmed because the firewall reads the baked list - a host-side trim wouldn't reach a
   running box, so a hard refuse is the honest contract.
 
+## Signing
+
+A `SLUICE_POLICY_URL` body is fetched over the network, so it can be **authenticated** before use
+(the local files are filesystem-trusted; the `/etc` one is root-owned). All env-only:
+
+- `SLUICE_POLICY_SHA256` - pin the policy body's sha256. No cosign needed; a mismatch refuses.
+- `SLUICE_POLICY_SIG` - path/URL to a cosign `sign-blob` bundle for the body; `SLUICE_POLICY_IDENTITY`
+  is the expected signer (a `--certificate-identity-regexp`), `SLUICE_POLICY_ISSUER` the OIDC issuer
+  (default GitHub Actions). Verified with `cosign verify-blob`; a bad signature refuses.
+- `SLUICE_POLICY_REQUIRE=1` - the policy is unusable unless a sig or pin verifies (fails closed even if
+  neither is set). The body hashed is what `curl` returns with trailing newlines stripped - sign/pin
+  the same bytes (`printf '%s' "$(cat policy.conf)" | sha256sum`).
+
+Sign a policy (org side, keyless):
+`cosign sign-blob --yes policy.conf --bundle policy.conf.cosign.bundle`, publish both, and have clients
+set `SLUICE_POLICY_URL` + `SLUICE_POLICY_SIG` + `SLUICE_POLICY_IDENTITY`.
+
 ## Managed mode (the honest boundary)
 
 sluice provides the **enforcement mechanism** (policy beats local config). It does **not** by itself
 stop a developer who controls root on their own machine: the *can't-remove-it* property comes from
 the org deploying `/etc/sluice/policy.conf` **root-owned** (so the dev can't edit it without root) and
-shipping the sluice binary itself. Signed policies (v2.1) will let a non-root-owned source still be
-trusted. See [THREAT_MODEL.md](../THREAT_MODEL.md).
+shipping the sluice binary itself. A signed `SLUICE_POLICY_URL` (above) lets a network-served policy be
+trusted without the root-owned file. See [THREAT_MODEL.md](../THREAT_MODEL.md).

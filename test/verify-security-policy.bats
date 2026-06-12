@@ -66,3 +66,41 @@ _polrun() {
   assert_failure
   assert_output --partial "could not be fetched"
 }
+
+# --- v2.1 signing -----------------------------------------------------------------------------
+
+# `sluice build` with a file:// policy + signing env ($2 = literal KEY=val assignments, no shell
+# expansion). Verification runs before any build, so the die paths are fast.
+_polsign() {
+  local d; d="$(mktemp -d)"; mkdir -p "$d/b"
+  printf '%b' "$1" > "$d/p.conf"
+  printf 'SLUICE_RUN_CMD="true"\n' > "$d/b/sluice.config.sh"
+  local out rc; out="$( cd "$d/b" && env $2 SLUICE_POLICY_URL="file://$d/p.conf" "$SLUICE" build 2>&1 )"; rc=$?
+  rm -rf "$d"; printf '%s\n' "$out"; return $rc
+}
+
+@test "policy-sig: a sha256 pin mismatch refuses" {
+  run _polsign 'allow ok.example.com\n' 'SLUICE_POLICY_SHA256=deadbeef'
+  assert_failure
+  assert_output --partial "sha256"
+}
+@test "policy-sig: SLUICE_POLICY_REQUIRE=1 with no signature/pin refuses" {
+  run _polsign 'allow ok.example.com\n' 'SLUICE_POLICY_REQUIRE=1'
+  assert_failure
+  assert_output --partial "unverifiable"
+}
+@test "policy-sig: strict-unknown turns a typo'd directive into a refusal" {
+  run _polsign 'allow ok.example.com\nfrobnicate x\nstrict-unknown\n' ''
+  assert_failure
+  assert_output --partial "unknown directive"
+}
+@test "policy-sig: a failed cosign signature check refuses" {
+  local d; d="$(mktemp -d)"; mkdir -p "$d/b" "$d/bin"
+  printf 'allow ok.example.com\n' > "$d/p.conf"; printf '{}' > "$d/sig.bundle"
+  printf '#!/bin/sh\nexit 1\n' > "$d/bin/cosign"; chmod +x "$d/bin/cosign"   # stub: verification fails
+  printf 'SLUICE_RUN_CMD="true"\n' > "$d/b/sluice.config.sh"
+  run bash -c "cd '$d/b' && PATH='$d/bin:$PATH' SLUICE_POLICY_URL='file://$d/p.conf' SLUICE_POLICY_SIG='$d/sig.bundle' SLUICE_POLICY_IDENTITY='^https://x' '$SLUICE' build 2>&1"
+  rm -rf "$d"
+  assert_failure
+  assert_output --partial "signature verification failed"
+}
