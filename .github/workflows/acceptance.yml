@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   lint:
-    name: lint (shellcheck + shfmt)
+    name: lint (shellcheck)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -23,11 +23,6 @@ jobs:
         run: make build-check
       - name: shellcheck (gate)
         run: shellcheck -S warning bin/sluice   # shellcheck is preinstalled on ubuntu runners
-      - name: shfmt (advisory)
-        continue-on-error: true   # not yet a hard gate; `shfmt -w bin/sluice` is a separate reviewable change
-        run: |
-          go install mvdan.cc/sh/v3/cmd/shfmt@v3.8.0
-          "$(go env GOPATH)/bin/shfmt" -d -i 2 -ci bin/sluice
 
   structure:
     name: base image invariants (container-structure-test)
