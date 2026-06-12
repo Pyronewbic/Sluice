@@ -23,7 +23,7 @@ cmd_egress() {
     done <<EOF
 $rows
 EOF
-    printf '{"box":"%s","allowed":%s,"blocked":%s,"tx_bytes":%s,"budget":%s,"over_budget":%s,"hosts":[%s]}\n' \
+    printf '{"schema":"sluice.egress/v1","box":"%s","allowed":%s,"blocked":%s,"tx_bytes":%s,"budget":%s,"over_budget":%s,"hosts":[%s]}\n' \
       "$(_json_esc "$container")" \
       "$(printf '%s\n' "$allowed" | _json_arr)" "$(printf '%s\n' "$blocked" | _json_arr)" \
       "$tx" "${cap:-null}" "$over_json" "$hosts_json"
@@ -48,6 +48,37 @@ EOF
     else echo "  ${C_DIM}egress budget: $(_human_bytes "$tx") sent / $(_human_bytes "$cap") cap${C_RST}"; fi
   fi
   return "$over"
+}
+
+# `sluice egress --export`: emit the append-only egress audit log (JSONL, one record per run with
+# egress) for SIEM/CI ingestion. Reads the host-side store, so it works even when the box is down.
+cmd_egress_export() {
+  local log="${XDG_STATE_HOME:-$HOME/.local/state}/sluice/$slug/egress-log.jsonl"
+  [ -f "$log" ] || { echo "[sluice] no egress log yet at $(_tilde "$log") - run the box first." >&2; return 0; }
+  cat "$log"
+}
+
+# `sluice egress --verify`: walk the hash chain of the egress audit log; OK only if every line's
+# self-hash recomputes and its prev links to the previous line's self (genesis = 64 zeros). Exits
+# non-zero on the first break (tamper / reorder / truncation) - a CI integrity gate on the receipts.
+cmd_egress_verify() {
+  local log="${XDG_STATE_HOME:-$HOME/.local/state}/sluice/$slug/egress-log.jsonl"
+  [ -f "$log" ] || { echo "[sluice] no egress log yet at $(_tilde "$log")." >&2; return 0; }
+  local n=0 prev="0000000000000000000000000000000000000000000000000000000000000000" line payload self pfield
+  while IFS= read -r line; do
+    n=$((n+1))
+    self="$(printf '%s' "$line"   | sed -n 's/.*,"self":"\([0-9a-f]*\)"}$/\1/p')"
+    payload="$(printf '%s' "$line" | sed 's/,"self":"[0-9a-f]*"}$/}/')"
+    pfield="$(printf '%s' "$line"  | sed -n 's/.*,"prev":"\([0-9a-f]*\)".*/\1/p')"
+    if [ -z "$self" ] || [ "$(printf '%s' "$payload" | _sha256)" != "$self" ]; then
+      echo "[sluice] ${E_RED}egress log TAMPERED${E_RST}: line $n self-hash mismatch ($(_tilde "$log"))" >&2; return 1
+    fi
+    if [ "$pfield" != "$prev" ]; then
+      echo "[sluice] ${E_RED}egress log TAMPERED${E_RST}: line $n prev-link broken - reordered or dropped ($(_tilde "$log"))" >&2; return 1
+    fi
+    prev="$self"
+  done < "$log"
+  echo "[sluice] ${C_GRN}egress log verified${C_RST}: $n record(s), hash chain intact ($(_tilde "$log"))"
 }
 
 # sluice.lock: a committable inventory of the built image. base ref + every apk

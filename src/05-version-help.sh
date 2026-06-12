@@ -60,7 +60,7 @@ Build & lifecycle:
 Inspect:
   doctor           health check: engine, image, allowlist, blocked egress (--json)
   ls               list all boxes + posture (status, stack, allow/ports/lock, path); --running/--orphans/--stack <name>/--egress/--json
-  egress           show what this box reached vs. was blocked (--json)
+  egress           show what this box reached vs. was blocked (--json | --export | --verify)
   logs             follow firewall + readiness logs
   lock             record installed apk+npm+pip+gem+go+cargo versions to sluice.lock (supply-chain audit)
                    --check fails on drift (CI gate, --json); --enforce is the strict variant; --diff shows it;
@@ -98,7 +98,7 @@ help_for() {
     prune)   echo "sluice prune [--orphans] - remove every sluice container + image (or only orphans); confirms." ;;
     doctor)  echo "sluice doctor [--json]  - health check: engine, image, allowlist, blocked egress." ;;
     ls)      echo "sluice ls [--running|--orphans|--stack <name>|--egress|--json] - list boxes + posture (allow/ports/lock; --egress adds live blocked counts). Posture populates after rebuild." ;;
-    egress)  echo "sluice egress [--json]  - show what this box reached vs. was blocked." ;;
+    egress)  echo "sluice egress [--json | --export | --verify]  - reached vs. blocked; --export the append-only audit log (JSONL), --verify its hash chain." ;;
     logs)    echo "sluice logs             - follow firewall + readiness logs." ;;
     lock)    echo "sluice lock [--check [--json] | --diff [--json] | --enforce [--json] | --sbom [--format cyclonedx|spdx] | --scan [--json] [--fail-on <sev>]] - record/verify/vuln-scan the supply-chain inventory." ;;
     smoke)   echo "sluice smoke            - build (if needed) + run the image smoke test." ;;

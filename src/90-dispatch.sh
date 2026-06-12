@@ -37,7 +37,9 @@ case "${1:-run-default}" in
     shift
     case "${1:-}" in
       ""|--json) cmd_egress "${1:-}"; exit $? ;;
-      *)         die "usage: sluice egress [--json]" ;;
+      --export)  cmd_egress_export; exit $? ;;
+      --verify)  cmd_egress_verify; exit $? ;;
+      *)         die "usage: sluice egress [--json | --export | --verify]" ;;
     esac
     ;;
   lock)
@@ -53,11 +55,19 @@ case "${1:-run-default}" in
     esac
     ;;
   update)  build --no-cache; write_lock; echo "${E_DIM}[sluice]${E_RST} updated - the box is down; run 'sluice' to start it (or 'sluice rebuild' to rebuild + start)." >&2; exit 0 ;;
-  shell)   banner; ensure_up; exec_in bash ;;
+  shell)
+    # run_in (not exec_in) so the EXIT trap fires the receipt after the interactive session - the
+    # "every run ends with a receipt" promise holds for `shell` too, not just run-default.
+    banner; ensure_up; arm_receipt
+    _rc=0; run_in bash || _rc=$?
+    exit "$_rc"
+    ;;
   run)
     shift
     [ "$#" -gt 0 ] || die "usage: sluice run <cmd...>"
-    ensure_up; mark_run_start; exec_in "$@"
+    ensure_up; arm_receipt
+    _rc=0; run_in "$@" || _rc=$?
+    exit "$_rc"
     ;;
   run-default)
     banner
@@ -72,9 +82,7 @@ case "${1:-run-default}" in
     # boot. Then run SLUICE_RUN_CMD; the EXIT trap prints the receipt (reached + blocked). run_in
     # (not exec_in) so the trap fires after the session, even on Ctrl-C - which is why we capture and
     # re-propagate the command's status ourselves (the trailing hints would otherwise leave $? = 0).
-    _RCPT_OFFSET="$("$RUNNER" exec "$container" sh -c 'wc -c < /var/log/squid/access.log' 2>/dev/null | tr -dc 0-9)"
-    mark_run_start   # so a later `sluice learn` can scope to this run
-    trap show_egress_receipt EXIT
+    arm_receipt   # scope the receipt to this run, mark the start for `learn`, trap it on EXIT
     # F2: one-line plan so the implicit build/run is legible (the no-op case speaks via the status below).
     case "${SLUICE_RUN_CMD:-}" in
       true|:|/bin/true) ;;
