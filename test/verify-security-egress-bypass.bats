@@ -30,3 +30,23 @@ teardown_file() { destroy_box egbypass egbypass; }
   run egress_reaches "$WORK/egbypass" https://registry.npmjs.org
   assert_success
 }
+
+# The fail-closed boot self-test (init-firewall.sh) asserts -P OUTPUT DROP (v4 + v6) and exits 1 on a
+# non-DROP policy; entrypoint runs it under set -e before "[sluice] ready", so a failed self-test means
+# no box. These assert the guarantee it enforces holds on the live box - a regression that weakened the
+# default-DROP policy (or dropped the assertion) fails here even though legit traffic still flows.
+@test "egress-bypass: the box's default OUTPUT policy is DROP (IPv4 default-DROP holds)" {
+  run "$ENG" exec --user root sluice-sectest-egbypass sh -c 'iptables -S OUTPUT | head -1'
+  assert_output "-P OUTPUT DROP"
+}
+
+@test "egress-bypass: IPv6 egress is closed (disabled v6 stack or -P OUTPUT DROP)" {
+  # init-firewall closes v6 EITHER via the disable_ipv6 sysctl (no v6 stack to filter) OR an ip6tables
+  # OUTPUT DROP when the stack is up - it guards its own assertion the same way. A runner with v6 fully
+  # off returns EMPTY ip6tables output (that's closed, not a regression), so assert the disjunction.
+  run "$ENG" exec --user root sluice-sectest-egbypass sh -c '
+    [ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6 2>/dev/null)" = 1 ] && exit 0
+    [ "$(ip6tables -S OUTPUT 2>/dev/null | head -1)" = "-P OUTPUT DROP" ] && exit 0
+    exit 1'
+  assert_success
+}

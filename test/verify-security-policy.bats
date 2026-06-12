@@ -104,3 +104,35 @@ _polsign() {
   assert_failure
   assert_output --partial "signature verification failed"
 }
+
+# The refusal tests above only prove the die paths. These prove the ACCEPT path runs - a matching pin
+# or a passing signature lets apply_policy proceed (it prints "managed egress policy"). A stub docker
+# exits the build right after, so we never do a real build but we've passed the signature gate.
+@test "policy-sig: a MATCHING sha256 pin is accepted (proceeds past the signature gate)" {
+  local d; d="$(mktemp -d)"; mkdir -p "$d/b" "$d/bin"
+  printf 'allow ok.example.com\n' > "$d/p.conf"
+  printf '#!/bin/sh\nexit 1\n' > "$d/bin/docker"; chmod +x "$d/bin/docker"   # build fails fast, AFTER the gate
+  printf 'SLUICE_RUN_CMD="true"\n' > "$d/b/sluice.config.sh"
+  # hash the body the way _verify_policy_sig sees it: command-substitution strips the trailing newline,
+  # so printf '%s' "$(curl ...)" (no trailing NL) to match - piping curl raw would hash one byte more.
+  local sha; sha="$(printf '%s' "$(curl -fsSL "file://$d/p.conf")" | shasum -a 256 | awk '{print $1}')"
+  run bash -c "cd '$d/b' && PATH='$d/bin:$PATH' SLUICE_ENGINE=docker SLUICE_POLICY_URL='file://$d/p.conf' SLUICE_POLICY_SHA256='$sha' '$SLUICE' build 2>&1"
+  rm -rf "$d"
+  assert_output --partial "managed egress policy"   # apply_policy ran past _verify_policy_sig
+  refute_output --partial "sha256"                   # not the mismatch-refusal
+}
+
+@test "policy-sig: a passing cosign signature is accepted and threads SLUICE_POLICY_IDENTITY/_ISSUER" {
+  local d; d="$(mktemp -d)"; mkdir -p "$d/b" "$d/bin"
+  printf 'allow ok.example.com\n' > "$d/p.conf"; printf '{}' > "$d/sig.bundle"
+  printf '#!/bin/sh\necho "$@" >> "%s/cosign-args"\nexit 0\n' "$d" > "$d/bin/cosign"; chmod +x "$d/bin/cosign"
+  printf '#!/bin/sh\nexit 1\n' > "$d/bin/docker"; chmod +x "$d/bin/docker"
+  printf 'SLUICE_RUN_CMD="true"\n' > "$d/b/sluice.config.sh"
+  run bash -c "cd '$d/b' && PATH='$d/bin:$PATH' SLUICE_ENGINE=docker SLUICE_POLICY_URL='file://$d/p.conf' SLUICE_POLICY_SIG='$d/sig.bundle' SLUICE_POLICY_IDENTITY='^https://acme/' SLUICE_POLICY_ISSUER='https://issuer.example' '$SLUICE' build 2>&1"
+  local args; args="$(cat "$d/cosign-args" 2>/dev/null)"
+  rm -rf "$d"
+  assert_output --partial "managed egress policy"            # signature accepted, policy applied
+  refute_output --partial "signature verification failed"
+  [[ "$args" == *"--certificate-identity-regexp ^https://acme/"* ]]
+  [[ "$args" == *"--certificate-oidc-issuer https://issuer.example"* ]]
+}

@@ -16,7 +16,9 @@ SLUICE_SETUP_CMDS="pip install --user --break-system-packages --quiet six"
 SLUICE_RUN_CMD="bash"
 CFG
   local rc
-  ( cd "$WORK/lock" && "$SLUICE" build ) >/tmp/verify-lock-build.log 2>&1 && echo ok > "$WORK/build.ok" || echo no > "$WORK/build.ok"
+  # SLUICE_BUILD_RETRIES rides over the crates.io/proxy.golang TLS-reset flake at build (a deterministic
+  # build error still fails after the retries, so a real break is still caught).
+  ( cd "$WORK/lock" && SLUICE_BUILD_RETRIES=2 "$SLUICE" build ) >/tmp/verify-lock-build.log 2>&1 && echo ok > "$WORK/build.ok" || echo no > "$WORK/build.ok"
 
   # 1. lock records the inventory
   ( cd "$WORK/lock" && "$SLUICE" lock ) >/dev/null 2>&1 || true

@@ -12,12 +12,7 @@ setup_file() {
   ( cd "$WORK/empty" && "$ROOT/bin/sluice" run true ) >/dev/null 2>&1   # bring the box up
 }
 
-teardown_file() {
-  ( cd "$WORK/empty" 2>/dev/null && "$ROOT/bin/sluice" stop ) >/dev/null 2>&1 || true
-  "$ENG" rm -f -v sluice-empty >/dev/null 2>&1 || true
-  nuke_tree sluice-empty "$WORK"   # rootless-podman-safe (the box chowned the mount to a host subuid)
-  "$ENG" rmi -f sluice-empty >/dev/null 2>&1 || true
-}
+teardown_file() { drop_box sluice-empty "$WORK/empty"; }
 
 @test "empty box builds" {
   run "$ENG" image inspect sluice-empty

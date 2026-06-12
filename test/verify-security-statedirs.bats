@@ -12,14 +12,7 @@ setup_file() {
   ( cd "$WORK/state" && "$SLUICE" run true ) >/dev/null 2>&1 || true   # recreate it cleanly
 }
 
-teardown_file() {
-  chown_back_tree sluice-sectest-state "$WORK"
-  chown_back_tree sluice-sectest-state "$STORE"
-  ( cd "$WORK/state" 2>/dev/null && "$SLUICE" stop ) >/dev/null 2>&1 || true
-  "$ENG" rm -f -v sluice-sectest-state >/dev/null 2>&1 || true
-  "$ENG" rmi -f sluice-sectest-state >/dev/null 2>&1 || true
-  rm -rf "$WORK" "$STORE"
-}
+teardown_file() { drop_box sluice-sectest-state "$WORK/state" "$STORE"; }   # nuke_tree clears the box-chowned $STORE too
 
 @test "state-dirs: the file survived container recreation" {
   run bash -c "cd '$WORK/state' && '$SLUICE' run cat /home/sluice/.cache/marker.txt 2>/dev/null"
