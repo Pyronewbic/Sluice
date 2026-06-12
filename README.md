@@ -63,7 +63,7 @@ your project's sandbox) via your installer:
 ```bash
 brew upgrade sluice                                # stable
 brew upgrade --fetch-HEAD Pyronewbic/tap/sluice    # dev stream (latest main)
-curl -fsSL https://raw.githubusercontent.com/Pyronewbic/Sluice/main/install.sh | sh   # script install: re-run to git-pull
+curl -fsSL https://raw.githubusercontent.com/Pyronewbic/Sluice/main/install.sh | sh   # re-run to repin main's latest; SLUICE_REF=<sha> pins a commit
 # stable -> dev stream needs a reinstall:  brew uninstall sluice && brew install --HEAD Pyronewbic/tap/sluice
 ```
 
