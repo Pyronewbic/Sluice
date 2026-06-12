@@ -40,7 +40,8 @@ _sluice() {
     lock)    COMPREPLY=( $(compgen -W "--check --diff --enforce --sbom --scan --json --fail-on --format --help" -- "$cur") ) ;;
     ls)      COMPREPLY=( $(compgen -W "--running --orphans --stack --egress --json --help" -- "$cur") ) ;;
     prune)   COMPREPLY=( $(compgen -W "--orphans --help" -- "$cur") ) ;;
-    doctor|egress|version) COMPREPLY=( $(compgen -W "--json --help" -- "$cur") ) ;;
+    egress)  COMPREPLY=( $(compgen -W "--json --export --verify --help" -- "$cur") ) ;;
+    doctor|version) COMPREPLY=( $(compgen -W "--json --help" -- "$cur") ) ;;
     init)    COMPREPLY=( $(compgen -W "--force --update --help" -- "$cur") ) ;;
     agent)
       # Agent names from the install's agents/ dir (resolve via the sluice on PATH).

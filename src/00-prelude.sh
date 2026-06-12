@@ -47,4 +47,4 @@ else
 fi
 
 # version + help
-SLUICE_VERSION="0.8.0"   # fallback when not a git checkout
+SLUICE_VERSION="0.9.0"   # fallback when not a git checkout

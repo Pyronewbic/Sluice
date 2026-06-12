@@ -69,7 +69,8 @@ _sluice() {
     lock)    _arguments '--check[fail on drift]' '--diff[show drift]' '--enforce[strict CI gate]' '--sbom[emit an SBOM]' '--format[SBOM format]:format:(cyclonedx spdx)' '--scan[vuln-scan via host grype/trivy]' '--fail-on[gate on severity]:severity:(negligible low medium high critical)' '--json[machine-readable]' '--help[usage]' ;;
     ls)      _arguments '--running[running boxes only]' '--orphans[orphan boxes only]' '--stack[filter by stack]:stack:' '--egress[live blocked-egress counts]' '--json[machine-readable]' '--help[usage]' ;;
     prune)   _arguments '--orphans[remove only orphans]' '--help[usage]' ;;
-    doctor|egress|version) _arguments '--json[machine-readable]' '--help[usage]' ;;
+    egress)  _arguments '--json[machine-readable]' '--export[dump the append-only audit log as JSONL]' '--verify[verify the audit log hash chain]' '--help[usage]' ;;
+    doctor|version) _arguments '--json[machine-readable]' '--help[usage]' ;;
     init)    _arguments '--force[overwrite]' '--update[re-detect, keep your edits]' '--help[usage]' ;;
     agent)
       local d names
