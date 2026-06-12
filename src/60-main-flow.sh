@@ -291,6 +291,19 @@ _policy_denied_host() {
   return 1
 }
 
+# 0 if the leading-dot allow wildcard $1 COVERS any deny token in the space-list $2 - i.e. allowing it
+# would silently re-admit a host the policy denies (deny is host-granular; a .parent allow swallows it).
+# Only meaningful for a leading-dot wildcard; an exact allow host is handled by _policy_denied_host.
+_allow_covers_denied() {
+  local w="$1" d db
+  case "$w" in .*) ;; *) return 1 ;; esac
+  for d in $2; do
+    db="${d#.}"                          # a deny wildcard .x denies x + subs; covering x suffices
+    case ".$db" in *"$w") return 0 ;; esac
+  done
+  return 1
+}
+
 apply_policy() {
   policy_configured || return 0
   local body allow="" deny="" denyip="" forbid="" maxips="" launder=0 strict=0 rsbase=0 unknowns="" line verb arg
@@ -330,10 +343,17 @@ EOF
       *) if [ -n "${!k:-}" ]; then die "policy forbids setting ${k} (your config sets it) - remove it to run under this policy."; fi ;;
     esac
   done
-  # 2) effective allowlist = (local + policy allow) - policy deny.
-  local merged eff="" h
+  # 2) effective allowlist = (local + policy allow) - policy deny. A leading-dot allow wildcard that
+  # COVERS a deny token would silently re-admit the denied host, so refuse the run and name it rather
+  # than let local config quietly defeat managed policy (deny is final).
+  local merged eff="" h conflict=""
   merged="$(printf '%s %s' "${SLUICE_ALLOW_DOMAINS:-}" "$allow" | tr ' ' '\n' | sed '/^$/d' | sort -u)"
-  for h in $merged; do _policy_denied_host "$h" "$deny" || eff="$eff $h"; done
+  for h in $merged; do
+    if _policy_denied_host "$h" "$deny"; then continue
+    elif _allow_covers_denied "$h" "$deny"; then conflict="$conflict $h"
+    else eff="$eff $h"; fi
+  done
+  [ -n "$conflict" ] && die "policy: allowlist wildcard(s)$conflict would re-admit a host the policy denies - narrow them to exact hosts to run under this policy (deny is final)."
   SLUICE_ALLOW_DOMAINS="$(printf '%s' "$eff" | awk '{$1=$1};1')"
   # 3) forbid-laundering: refuse any laundering-capable host left on the effective allowlist.
   if [ "$launder" = 1 ]; then
