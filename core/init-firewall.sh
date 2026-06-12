@@ -121,6 +121,14 @@ else
     echo "[firewall] FAIL: forward-proxy CONNECT (3128) reached a raw IP - egress filter bypassable" >&2
     exit 1
   fi
+  # Deny: a forged Host over plaintext HTTP to a non-allowlisted IP must NOT be forwarded. squid
+  # intercepts :80 and authorizes by the client-supplied Host; host_verify_strict (squid.conf) refuses a
+  # Host that doesn't resolve to the connected IP. -f so squid's 409 denial counts as blocked (non-zero);
+  # only a real 2xx/3xx (squid forwarded to the bogus IP) trips FAIL. Never false-fails a healthy box.
+  if curl -fsS -o /dev/null --max-time 6 --resolve registry.npmjs.org:80:1.1.1.1 http://registry.npmjs.org/ 2>/dev/null; then
+    echo "[firewall] FAIL: forged-Host HTTP reached a non-allowlisted IP - host verification off" >&2
+    exit 1
+  fi
 fi
 # Allow: an always-allowlisted base host must work THROUGH the proxy. Warn-only (transient).
 curl -sS -o /dev/null --max-time 12 https://registry.npmjs.org 2>/dev/null \
