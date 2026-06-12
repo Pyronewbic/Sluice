@@ -46,7 +46,7 @@ jobs:
         run: bash scripts/install-cst.sh
       - name: Assert base invariants
         # Same spec the PR gate runs (acceptance.yml) - no sudo, uid 1000, firewall packages, keyless.
-        run: container-structure-test test --image sluice-base:smoke --config tests/structure.yaml
+        run: container-structure-test test --image sluice-base:smoke --config test/structure.yaml
 
       # --- build + push the multi-arch base, then cosign-sign the pushed digest ---
       - name: Build + push (amd64 + arm64)

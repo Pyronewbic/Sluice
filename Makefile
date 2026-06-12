@@ -42,7 +42,7 @@ structure:
 	docker build --target base -t sluice-base:gate core/
 	@command -v container-structure-test >/dev/null 2>&1 \
 	  || { echo 'INVARIANTS NOT CHECKED: container-structure-test missing (brew install container-structure-test)'; exit 1; }
-	container-structure-test test --image sluice-base:gate --config tests/structure.yaml
+	container-structure-test test --image sluice-base:gate --config test/structure.yaml
 
 lint:
 	shellcheck -S warning bin/sluice

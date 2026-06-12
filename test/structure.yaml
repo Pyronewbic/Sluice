@@ -2,7 +2,7 @@
 # Asserts the BAKED guarantees that don't need a running box - the cheap regression gate for the
 # "shipped setuid sudo / dropped a firewall package / lost the non-root user" class. The behavioral
 # guarantees (egress firewall, caps, seccomp) live in the bats suites; this only checks the image.
-#   container-structure-test test --image sluice-base:gate --config tests/structure.yaml
+#   container-structure-test test --image sluice-base:gate --config test/structure.yaml
 schemaVersion: "2.0.0"
 
 fileExistenceTests:

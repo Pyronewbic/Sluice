@@ -48,7 +48,7 @@ jobs:
       - name: Install container-structure-test (pinned, checksummed)
         run: bash scripts/install-cst.sh
       - name: Assert baked invariants (no sudo, uid 1000, firewall packages)
-        run: container-structure-test test --image sluice-base:gate --config tests/structure.yaml
+        run: container-structure-test test --image sluice-base:gate --config test/structure.yaml
 
   unit:
     name: unit suites (no Docker)

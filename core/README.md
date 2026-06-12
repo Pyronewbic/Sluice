@@ -21,5 +21,5 @@ this file is the implementation map.
 `dns-allow.sh`) -> squid up -> `init-firewall.sh` (iptables) -> drop to uid 1000 -> your
 `SLUICE_RUN_CMD`. All egress is hostname-filtered through squid; nothing reaches the network except
 via the allowlist. The baked `base` invariants (no sudo, no setuid binaries, uid 1000, firewall packages, no key) are
-asserted by `tests/structure.yaml` (container-structure-test) - the publish gate runs it before
+asserted by `test/structure.yaml` (container-structure-test) - the publish gate runs it before
 pushing; locally, `make structure`.
