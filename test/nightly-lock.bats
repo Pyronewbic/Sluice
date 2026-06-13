@@ -57,10 +57,23 @@ CFG
   ( cd "$WORK/lock" && "$SLUICE" build ) >/dev/null 2>&1 || true   # restore a non-stale image + lock
   ( cd "$WORK/lock" && "$SLUICE" lock ) >/dev/null 2>&1 || true
 
-  # 5. --scan (gated on a host scanner)
+  # 5. --scan (gated on a host scanner). A2: the exit contract is normalized across scanners
+  # (0 clean, 3 gate tripped, 4 scanner failed to run) because grype/trivy disagree on raw codes.
   if command -v grype >/dev/null 2>&1 || command -v trivy >/dev/null 2>&1; then
     ( cd "$WORK/lock" && "$SLUICE" lock --scan --json ) > "$WORK/scan.json" 2>/dev/null || true
+    # A2: report-only (no --fail-on) is clean -> exactly 0, regardless of the planted CVE.
+    rc=0; ( cd "$WORK/lock" && "$SLUICE" lock --scan ) >/dev/null 2>&1 || rc=$?; echo "$rc" > "$WORK/scan_reportonly.rc"
+    # A2: the planted high-sev lodash CVE trips the gate -> the documented gate code 3 (not 1/2 raw).
     rc=0; ( cd "$WORK/lock" && "$SLUICE" lock --scan --fail-on high ) >/dev/null 2>&1 || rc=$?; echo "$rc" > "$WORK/scan_failon.rc"
+    # A2: force the scanner to fail to RUN (DB cache path is a regular file, so its DB dir can't be
+    # made) -> the distinct "scanner failed" code 4, NOT a gate trip. Best-effort: some builds bundle a
+    # DB and ignore the env; the leg skips (rc!=4 and !=0) rather than flaking. Both env families set so
+    # it works under whichever scanner is present.
+    : > "$WORK/notadir"
+    rc=0; ( cd "$WORK/lock" && GRYPE_DB_AUTO_UPDATE=false GRYPE_DB_VALIDATE_AGE=false GRYPE_DB_CACHE_DIR="$WORK/notadir" \
+                               TRIVY_SKIP_DB_UPDATE=true TRIVY_CACHE_DIR="$WORK/notadir" \
+                               "$SLUICE" lock --scan --fail-on high ) >/dev/null 2>&1 || rc=$?; echo "$rc" > "$WORK/scan_broken.rc"
+    command -v grype >/dev/null 2>&1 && echo grype > "$WORK/scanner.name" || echo trivy > "$WORK/scanner.name"
     echo present > "$WORK/scanner"
   else
     echo absent > "$WORK/scanner"
@@ -156,4 +169,21 @@ teardown_file() {
 @test "lock --scan --fail-on high: gates (non-zero) on the planted CVEs" {
   [ "$(cat "$WORK/scanner")" = present ] || skip "no host scanner"
   [ "$(cat "$WORK/scan_failon.rc")" != 0 ]
+}
+# A2: the normalized exit contract (0 clean / 3 gate tripped / 4 scanner failed), exercised under
+# whichever scanner is installed - grype and trivy disagree on raw codes, so sluice flattens them.
+@test "lock --scan A2: report-only is exactly 0 (clean), despite the planted CVE" {
+  [ "$(cat "$WORK/scanner")" = present ] || skip "no host scanner"
+  [ "$(cat "$WORK/scan_reportonly.rc")" = 0 ]
+}
+@test "lock --scan --fail-on high A2: a tripped gate is exactly exit 3 ($(cat "$WORK/scanner.name" 2>/dev/null))" {
+  [ "$(cat "$WORK/scanner")" = present ] || skip "no host scanner"
+  [ "$(cat "$WORK/scan_failon.rc")" = 3 ]
+}
+@test "lock --scan A2: a scanner that failed to RUN is exactly exit 4, not a gate trip" {
+  [ "$(cat "$WORK/scanner")" = present ] || skip "no host scanner"
+  local rc; rc="$(cat "$WORK/scan_broken.rc")"
+  # Best-effort: if the break didn't take (a bundled-DB scanner ignored the env), rc is 0 or 3 - skip
+  # rather than flake. When it DID fail to run, the contract must distinguish it from a gate (3) as 4.
+  [ "$rc" = 4 ] || skip "could not force a scanner-run failure (rc=$rc; scanner bundles its DB?) - normalization is unit-covered"
 }

@@ -123,7 +123,7 @@ current_inventory() {
   baseref="${SLUICE_BASE_IMAGE:-cgr.dev/chainguard/wolfi-base}"
   bdig="$("$ENGINE" image inspect "$baseref" --format '{{ if .RepoDigests }}{{ index .RepoDigests 0 }}{{ end }}' 2>/dev/null || true)"
   printf 'base  %s\n' "${bdig:-$baseref}"
-  "$ENGINE" run --rm -i --entrypoint sh "$tag" 2>/dev/null <<'INTROSPECT' | sort -u
+  "$ENGINE" run --rm -i --entrypoint sh "$tag" 2>/dev/null <<'INTROSPECT' | LC_ALL=C sort -u
 awk 'BEGIN{RS="";FS="\n"}{p=v=c="";for(i=1;i<=NF;i++){t=substr($i,1,2);if(t=="P:")p=substr($i,3);else if(t=="V:")v=substr($i,3);else if(t=="C:")c=substr($i,3)}if(p!="")printf "apk  %s %s %s\n",p,v,c}' /lib/apk/db/installed
 npm ls -g --depth=0 --json 2>/dev/null | jq -r '(.dependencies // {})|to_entries[]|"npm  \(.key) \(.value.version)"' 2>/dev/null
 command -v pip3 >/dev/null 2>&1 && su -s /bin/sh sluice -c 'HOME=/home/sluice pip3 list --format=json 2>/dev/null' 2>/dev/null | jq -r '.[]|"pip  \(.key//.name|ascii_downcase) \(.value//.version)"' 2>/dev/null   # as sluice: system + the project's --user site (root pip3 misses it)
@@ -169,6 +169,9 @@ write_lock() {
   if [ "$had_lock" = 1 ] && [ -n "$deltarows" ]; then
     echo "[sluice] supply-chain delta since last lock: +$(printf '%s\n' "$deltarows" | grep -c '^add' || true) -$(printf '%s\n' "$deltarows" | grep -c '^del' || true) ~$(printf '%s\n' "$deltarows" | grep -c '^chg' || true)"
     printf '%s\n' "$deltarows" | render_drift_human
+  elif [ "$had_lock" = 1 ]; then
+    # C4: an unchanged re-lock is silent otherwise - confirm it, mirroring --check's "lock in sync".
+    echo "[sluice] ${C_GRN}no supply-chain change since last lock${C_RST}"
   fi
 }
 
@@ -182,21 +185,24 @@ lock_drift() {
 
 # Classify raw lock_drift ("< old" / "> new") into sorted structured rows:
 # "<op>\t<type>\t<name>\t<old>\t<new>", op = add|del|chg. $1 = pre-computed raw drift (else read fresh).
+# Key = type+name+version so one name at two versions is del+add, not a bogus single chg (A7); apk
+# carries its checksum into the value so a same-version rebuild renders a legible chg, not "1.0 -> 1.0" (A6).
 classify_drift() {
   local raw TAB; TAB="$(printf '\t')"
   if [ $# -ge 1 ]; then raw="$1"; else raw="$(lock_drift)"; fi
   [ -n "$raw" ] || return 0
   printf '%s\n' "$raw" | awk '
     { type=$2;
-      if (type=="base") { key="base"; name="base"; val=$3 }
-      else              { key=type SUBSEP $3; name=$3; val=$4 }
-      if ($1=="<") oldv[key]=val; else newv[key]=val;
+      if (type=="base")    { key="base"; name="base"; val=$3 }
+      else if (type=="apk"){ key=type SUBSEP $3 SUBSEP $4; name=$3; val=$4 ($5==""?"":" " $5) }
+      else                 { key=type SUBSEP $3 SUBSEP $4; name=$3; val=$4 }
+      if ($1=="<") { oldv[key]=val; haveo[key]=1 } else { newv[key]=val; haven[key]=1 }
       t[key]=type; nm[key]=name; seen[key]=1 }
-    END{ for (k in seen) { o=oldv[k]; n=newv[k];
-      if (o!="" && n=="")      printf "del\t%s\t%s\t%s\t\n",  t[k],nm[k],o;
-      else if (o=="" && n!="") printf "add\t%s\t%s\t\t%s\n",  t[k],nm[k],n;
-      else                     printf "chg\t%s\t%s\t%s\t%s\n",t[k],nm[k],o,n } }' \
-  | sort -t"$TAB" -k2,2 -k3,3
+    END{ for (k in seen) {
+      if (haveo[k] && !haven[k])      printf "del\t%s\t%s\t%s\t\n",  t[k],nm[k],oldv[k];
+      else if (!haveo[k] && haven[k]) printf "add\t%s\t%s\t\t%s\n",  t[k],nm[k],newv[k];
+      else                            printf "chg\t%s\t%s\t%s\t%s\n",t[k],nm[k],oldv[k],newv[k] } }' \
+  | LC_ALL=C sort -t"$TAB" -k2,2 -k3,3 -k4,4 -k5,5
 }
 
 # Render structured drift rows (stdin) as aligned, colored +/-/~ lines. $1=err -> stderr-gated colors
@@ -227,9 +233,17 @@ render_drift_json() {
 }
 
 # Shared drift report for --check (exit 1 on drift), --diff (exit 0), and --enforce (strict). $1 =
-# exit-on-drift, $2 = --json|"", $3 = strict|"" (refuse to build/tolerate a stale image - a pure verifier).
+# exit-on-drift, $2 = strict|"" (refuse to build/tolerate a stale image - a pure verifier); the REST are
+# the user's flags (only --json), parsed strictly so a typo'd gate flag can't silently run a plain check.
 _drift_report() {
-  local on_drift="$1" json=0 strict=0; [ "${2:-}" = --json ] && json=1; [ "${3:-}" = strict ] && strict=1
+  local on_drift="$1" strict=0 json=0; [ "${2:-}" = strict ] && strict=1; shift 2
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --json) json=1 ;;
+      *)      die "usage: sluice lock [--check|--diff|--enforce] [--json]" ;;
+    esac
+    shift
+  done
   [ -f "$PROJECT_DIR/sluice.lock" ] || die "no sluice.lock to check against - run 'sluice lock' first"
   # A check verifies the artifact as built: build only if no image exists; if the image predates a
   # config edit, note it (on stderr, so --json stays clean) but still report against what's built -
@@ -246,6 +260,8 @@ _drift_report() {
   if [ "$on_drift" = 1 ]; then
     echo "[sluice] ${E_RED}DRIFT${E_RST}: the built image differs from sluice.lock (+added -removed ~changed):" >&2
     printf '%s\n' "$rows" | render_drift_human err >&2
+    # C2: don't dead-end on the rows - point at the fix (re-record the intended state, or rebuild if the image drifted).
+    echo "[sluice] ${E_DIM}remedy${E_RST}: re-record with 'sluice lock' (accept this image), or 'sluice build' then re-check (rebuild to the locked state)." >&2
   else
     echo "[sluice] drift from sluice.lock (+added -removed ~changed):"
     printf '%s\n' "$rows" | render_drift_human
@@ -254,13 +270,13 @@ _drift_report() {
 }
 
 # `sluice lock --check [--json]`: fail (exit 1) if the built image drifted from the committed sluice.lock.
-cmd_lock_check() { _drift_report 1 "${1:-}"; }
+cmd_lock_check() { _drift_report 1 "" "$@"; }
 # `sluice lock --diff [--json]`: same drift view, read-only (exit 0) - a local review, not a CI gate.
-cmd_lock_diff()  { _drift_report 0 "${1:-}"; }
+cmd_lock_diff()  { _drift_report 0 "" "$@"; }
 # `sluice lock --enforce [--json]`: a strict CI gate - like --check, but refuses to build or to tolerate
 # a stale image (verify the committed lock against the image as-built, no side effects). Gates against
 # the committed lock, not bit-reproducibility (Wolfi apk is a rolling repo).
-cmd_lock_enforce() { _drift_report 1 "${1:-}" strict; }
+cmd_lock_enforce() { _drift_report 1 strict "$@"; }
 
 # `sluice lock --sbom [--format cyclonedx|spdx]`: a deterministic SBOM (apk + npm + pip + gem + go +
 # cargo purls) to stdout. Assembled in-image (jq lives there); apk components carry their SHA-1 integrity
@@ -338,7 +354,11 @@ SBOM
 
 # `sluice lock --scan [--json] [--fail-on <sev>]`: vuln-scan the box's SBOM with a HOST scanner (grype,
 # else trivy - never baked, same as cosign-verify). Report-only by default; --fail-on <severity>
-# (negligible|low|medium|high|critical) makes it a CI gate (non-zero on a finding at/above it).
+# (negligible|low|medium|high|critical) makes it a CI gate.
+# Exit contract (normalized across scanners, since grype/trivy disagree on raw codes - grype exits 2 on
+# a gated finding but 1 on a DB error, trivy exits 1 on a gated finding): 0 = clean, 3 = gate tripped
+# (a finding at/above --fail-on), 4 = scanner failed to run (DB/catalog/parse error). Documented in
+# docs/supply-chain.md.
 cmd_scan() {
   local json=0 failon=""
   while [ "$#" -gt 0 ]; do
@@ -366,7 +386,16 @@ cmd_scan() {
 
   maybe_build
   local tmp rc; tmp="$(mktemp)"
+  # A8: trap the temp NOW so a cmd_sbom failure under pipefail (which aborts before the trailing rm)
+  # can't leak it - the lock arm arms no receipt, so this EXIT trap has nothing to clobber.
+  # shellcheck disable=SC2064  # expand $tmp NOW: the local is gone when the trap fires
+  trap "rm -f '$tmp'" EXIT
   cmd_sbom > "$tmp"   # reuse the CycloneDX SBOM; the inner maybe_build is a no-op now, so $tmp is clean
+  # C3: report-only (no --fail-on) prints the bare scanner table with nothing signalling it did NOT gate;
+  # frame it on stderr (exit 0 regardless; --fail-on <sev> turns it into a gate). --json stays a clean passthrough.
+  if [ -z "$failon" ] && [ "$json" = 0 ]; then
+    echo "[sluice] ${E_DIM}report-only scan (exit 0 regardless) - add --fail-on <negligible|low|medium|high|critical> to gate the build.${E_RST}" >&2
+  fi
   if [ "$scanner" = grype ]; then
     local ga=(sbom:"$tmp")
     if [ "$json" = 1 ]; then ga+=(-o json); else ga+=(-o table); fi
@@ -383,10 +412,20 @@ cmd_scan() {
     esac
     local ta=(sbom)
     if [ "$json" = 1 ]; then ta+=(--format json); else ta+=(--format table); fi
-    if [ -n "$failon" ]; then ta+=(--severity "$sev" --exit-code 1); fi
+    # --exit-code 3 (not 1) so trivy's gate-trip is distinguishable from its generic error exit (1).
+    if [ -n "$failon" ]; then ta+=(--severity "$sev" --exit-code 3); fi
     trivy "${ta[@]}" "$tmp" && rc=0 || rc=$?
   fi
   rm -f "$tmp"
+  # Normalize the raw scanner rc to the sluice contract: 0 clean, 3 gate tripped, 4 scanner failed.
+  # grype: 2 = fail-on matched. trivy: 3 = our --exit-code on a finding. Any OTHER non-zero = the
+  # scanner broke (DB/catalog/parse), which must read differently from "a CVE gate tripped".
+  case "$scanner/$rc" in
+    */0)     rc=0 ;;
+    grype/2) rc=3 ;;
+    trivy/3) rc=3 ;;
+    *)       rc=4 ;;
+  esac
   return "$rc"
 }
 

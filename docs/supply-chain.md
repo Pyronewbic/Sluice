@@ -50,13 +50,26 @@ Grype preferred, Trivy as a fallback. Report-only by default; `--fail-on` makes 
 
 ```bash
 sluice lock --scan
-sluice lock --scan --fail-on high   # non-zero on a finding at high or above
+sluice lock --scan --fail-on high   # gate: exits 3 on a finding at high or above
 ```
 
-Severities: `negligible|low|medium|high|critical`. With no scanner installed it prints a note and
-exits 0 - but dies if `--fail-on` was given. `--scan --json` passes the scanner's own JSON through
-verbatim (Grype's or Trivy's schema), so unlike the other `--json` outputs its shape is the
-scanner's, not sluice's.
+Severities: `negligible|low|medium|high|critical`. Report-only by default (exits 0 regardless and
+says so on stderr); `--fail-on <sev>` turns it into a gate.
+
+**Exit contract.** Grype and Trivy disagree on their raw exit codes (Grype exits 2 on a gated
+finding but 1 on a DB/catalog error; Trivy exits 1 on a gated finding), so "a CVE gate tripped" and
+"the scanner broke" are otherwise indistinguishable and scanner-specific. `sluice lock --scan`
+normalizes them to one contract:
+
+| exit | meaning |
+|------|---------|
+| `0`  | clean (no finding at/above `--fail-on`, or report-only) |
+| `3`  | gate tripped - a finding at or above `--fail-on` |
+| `4`  | the scanner failed to run (DB/catalog/parse error) - the scan did **not** complete |
+
+With no scanner installed it prints a note and exits 0 - but dies if `--fail-on` was given.
+`--scan --json` passes the scanner's own JSON through verbatim (Grype's or Trivy's schema), so unlike
+the other `--json` outputs its shape is the scanner's, not sluice's.
 
 Note: `sluice doctor` reports lock drift but never gates on it (it always exits 0); use `sluice lock
 --check` / `--enforce` for the CI gate.

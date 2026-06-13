@@ -64,7 +64,7 @@ build() {
   # the tail so the error is visible. The full transcript is always one `cat` away at the logged path.
   local _blog="${XDG_STATE_HOME:-$HOME/.local/state}/sluice/$slug/build.log"
   mkdir -p "$(dirname "$_blog")" 2>/dev/null || _blog="$(mktemp)"
-  echo "[sluice] building $tag ... (log: $(_tilde "$_blog"))"
+  echo "[sluice] building $tag ... (log: $(_tilde "$_blog"))" >&2
   # SLUICE_BUILD_RETRIES (default 0): retry the build a few times for a flaky registry/network. Off
   # by default so a deterministic build error still fails fast; set e.g. =2 in CI.
   local _retries="${SLUICE_BUILD_RETRIES:-0}"; case "$_retries" in ''|*[!0-9]*) _retries=0 ;; esac
