@@ -10,6 +10,9 @@ ref (digest when available) plus every package the image carries - apk, global n
 the project's `--user` site, and pipx apps), gem, go binaries, cargo installs - sorted for stable
 diffs. Re-locking prints the supply-chain delta since the last lock.
 
+`sluice lock` fails closed: if the image inventory read fails it refuses to write a base-only (hollow)
+`sluice.lock` rather than emit a misleading audit artifact reported as success.
+
 ```bash
 sluice lock              # write ./sluice.lock, commit it
 sluice lock --diff       # local drift review, always exits 0

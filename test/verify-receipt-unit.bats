@@ -53,6 +53,29 @@ _rec() { local TAB; TAB="$(printf '\t')"; _persist_receipt "$(printf 'reached%s%
   assert_output --partial "prev-link"
 }
 
+# A forged record appended to the tail WITHOUT a trailing newline used to be invisible: bash `read`
+# returns non-zero at EOF on a missing newline, so the old loop dropped the last record and verify
+# reported intact (rc 0) while --export shipped it. The fix processes a non-empty final line too.
+@test "receipt-chain: a forged final record with no trailing newline is caught as TAMPERED" {
+  _rec a.example.com; _rec b.example.com
+  local last_self; last_self="$(sed -n 's/.*,"self":"\([0-9a-f]*\)"}$/\1/p' "$LOG" | tail -1)"
+  # Append attacker JSON (bogus self) with NO trailing newline - the unterminated tail the bug hid.
+  printf '{"schema":"sluice.egress/v1","host":"evil.com","prev":"%s","self":"deadbeef"}' "$last_self" >> "$LOG"
+  run cmd_egress_verify
+  assert_failure
+  assert_output --partial "TAMPERED"
+}
+
+# A trailing (or interspersed) blank line is not a record - it must not be hashed into a false
+# TAMPERED. verify skips empty lines and still reports the real chain intact.
+@test "receipt-chain: a trailing blank line does not trip a false TAMPERED" {
+  _rec a.example.com; _rec b.example.com
+  printf '\n' >> "$LOG"   # blank trailing line; the chain itself is untouched
+  run cmd_egress_verify
+  assert_success
+  assert_output --partial "hash chain intact"
+}
+
 @test "receipt: a box gone before capture records an explicit 'unavailable' (not silent zero-egress)" {
   _persist_receipt "" unavailable
   run bash -c "tail -1 '$LOG' | jq -e '.status==\"unavailable\" and (.totals.reached==0)'"
