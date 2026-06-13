@@ -38,18 +38,21 @@ mask_covers() {
 }
 
 # Secret-looking files in the mount that no SLUICE_MASK pattern covers - doctor warns on these.
-# Bounded so doctor stays fast: depth 3, vendor dirs pruned, first 50 hits. .example/.sample/
-# .template variants are scaffolding, not secrets.
+# Bounded so doctor stays fast: depth 3, vendor dirs pruned, first 50 WARNED (unmasked) hits.
+# .example/.sample/.template variants are scaffolding, not secrets. The mask filter runs BEFORE the
+# cap - capping raw find output (filesystem order) would let masked files eat the slots and hide a
+# genuinely-unmasked secret past the cap (a false pass). The find is depth-limited + vendor-pruned,
+# so the candidate set is small.
 unmasked_secrets() {
   find "$PROJECT_DIR" -maxdepth 3 \
       \( -name .git -o -name node_modules -o -name vendor -o -name .venv -o -name venv \) -prune \
       -o -type f \( -name '.env*' -o -name '*.pem' -o -name '*key*.json' -o -name 'id_rsa*' \
                     -o -name 'id_ed25519*' -o -name '*.p12' -o -name '*.pfx' \) \
       ! -name '*.example' ! -name '*.sample' ! -name '*.template' -print 2>/dev/null \
-    | head -50 | while IFS= read -r f; do
+    | while IFS= read -r f; do
         f="${f#"$PROJECT_DIR"/}"
         mask_covers "$f" || printf '%s\n' "$f"
-      done
+      done | head -50
 }
 
 # Squash //, /./ and resolve .. TEXTUALLY (no symlink deref - the target may not exist). Enough to
@@ -120,10 +123,18 @@ cmd_doctor() {
   if ! PROJECT_CONFIG="$(find_config)"; then
     _doc config "${C_RED}none${C_RST} - run 'sluice init' to scaffold one"; return 0
   fi
-  _doc config "$(_tilde "$PROJECT_CONFIG")"
   PROJECT_DIR="$(cd "$(dirname "$PROJECT_CONFIG")" && pwd)"
+  # Doctor is the command you run BECAUSE the config is broken, so a broken config must not abort it.
+  # bash -n catches syntax errors; relaxing errexit around the source keeps a non-zero top-level line
+  # from killing doctor. A literal top-level `exit` in the config still escapes (it can't be contained
+  # without a subshell that would drop the vars derive_names + the report below need) - known limit.
+  if bash -n "$PROJECT_CONFIG" 2>/dev/null; then
+    _doc config "$(_tilde "$PROJECT_CONFIG")"
+  else
+    _doc config "${C_RED}$(_tilde "$PROJECT_CONFIG") (parse error)${C_RST} - 'bash -n' it; report continues with partial config"
+  fi
   # shellcheck disable=SC1090
-  . "$PROJECT_CONFIG"
+  set +e; . "$PROJECT_CONFIG" 2>/dev/null; set -e
   derive_names
   [ -n "${SLUICE_DESC:-}" ] && _doc desc "$SLUICE_DESC"
   if [ -n "${SLUICE_MOUNTS:-}" ]; then _doc mount "$(_tilde "$PROJECT_DIR") ${C_DIM}(+ extra mounts)${C_RST}"; else _doc mount "$(_tilde "$PROJECT_DIR")"; fi
@@ -251,8 +262,14 @@ cmd_doctor_json() {
     printf '{"engine":"%s","daemon":%s,"config":null}\n' "$(_json_esc "$engine_ver")" "$daemon"; return 0
   fi
   PROJECT_DIR="$(cd "$(dirname "$PROJECT_CONFIG")" && pwd)"
+  # A broken config must not abort doctor: bash -n catches syntax errors; relaxed errexit around the
+  # source keeps a non-zero top-level line from killing it. A literal `exit` in the config still
+  # escapes (can't be contained without a subshell that drops the vars below) - known limit. Either
+  # way this path ALWAYS prints one valid JSON object (config_error carries the signal), never empty.
+  local config_error=false
+  bash -n "$PROJECT_CONFIG" 2>/dev/null || config_error=true
   # shellcheck disable=SC1090
-  . "$PROJECT_CONFIG"
+  set +e; . "$PROJECT_CONFIG" 2>/dev/null; set -e
   derive_names
 
   local img_built=false img_stale=false
@@ -317,8 +334,8 @@ cmd_doctor_json() {
   mounts_json="$(printf '%s\n' "${SLUICE_MOUNTS:-}" | _json_arr)"
 
   # shellcheck disable=SC2086
-  printf '{"engine":"%s","daemon":%s,"config":"%s","project_dir":"%s","name":"%s","desc":"%s","image":{"tag":"%s","built":%s,"stale":%s},"lock":"%s","allowlist":%s,"base":%s,"ports":%s,"allow_ips":%s,"base_image":"%s","policy_url":"%s","state_dirs":%s,"overlay_dirs":%s,"mounts":%s,"auth":%s,"hardening":%s,"mask":{"patterns":%s,"masked":%s,"unmasked_secrets":%s},"risk":%s,"broken_symlinks":%s,"egress":{"running":%s,"blocked":%s}}\n' \
-    "$(_json_esc "$engine_ver")" "$daemon" "$(_json_esc "$PROJECT_CONFIG")" "$(_json_esc "$PROJECT_DIR")" "$(_json_esc "$tag")" "$(_json_esc "${SLUICE_DESC:-}")" \
+  printf '{"engine":"%s","daemon":%s,"config":"%s","config_error":%s,"project_dir":"%s","name":"%s","desc":"%s","image":{"tag":"%s","built":%s,"stale":%s},"lock":"%s","allowlist":%s,"base":%s,"ports":%s,"allow_ips":%s,"base_image":"%s","policy_url":"%s","state_dirs":%s,"overlay_dirs":%s,"mounts":%s,"auth":%s,"hardening":%s,"mask":{"patterns":%s,"masked":%s,"unmasked_secrets":%s},"risk":%s,"broken_symlinks":%s,"egress":{"running":%s,"blocked":%s}}\n' \
+    "$(_json_esc "$engine_ver")" "$daemon" "$(_json_esc "$PROJECT_CONFIG")" "$config_error" "$(_json_esc "$PROJECT_DIR")" "$(_json_esc "$tag")" "$(_json_esc "${SLUICE_DESC:-}")" \
     "$(_json_esc "$tag")" "$img_built" "$img_stale" "$lock" \
     "$(printf '%s\n' ${SLUICE_ALLOW_DOMAINS:-} | _json_arr)" "$(base_domains | tr ' ' '\n' | _json_arr)" \
     "$(printf '%s\n' ${SLUICE_PORTS:-} | _json_arr)" "$(printf '%s\n' ${SLUICE_ALLOW_IPS:-} | _json_arr)" "$(_json_esc "${SLUICE_BASE_IMAGE:-}")" \

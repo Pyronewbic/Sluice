@@ -44,6 +44,28 @@ teardown() { rm -rf "$WORK"; }
   refute_output --partial "secret-looking"
 }
 
+# The candidate cap must bound the WARNED (unmasked) set, not the raw find stream: if masked files eat
+# the cap's slots, an unmasked secret past it is never tested (a false pass). Deterministic guard: stub
+# `find` to emit >50 MASKED entries BEFORE the lone unmasked secret, so the old cap-before-filter code
+# drops it (it never reaches the mask filter) while filter-then-cap keeps it - independent of real find
+# traversal order. (Extract the functions from bin/sluice, the pattern verify-lock/policy-unit use.)
+@test "doctor: unmasked secret past the cap is still reported (mask filters before the cap)" {
+  local t="$BATS_TEST_TMPDIR/unmasked_cap.sh"
+  cat > "$t" <<'STUBS'
+set -euo pipefail
+SLUICE_MASK=".env*"
+PROJECT_DIR=/proj
+# 60 masked .env entries (root-level), THEN the unmasked secret at position 61 - well past the 50 cap.
+find() { local i=0; while [ "$i" -lt 60 ]; do printf '%s/.env.%03d\n' "$PROJECT_DIR" "$i"; i=$((i+1)); done; printf '%s/d1/d2/deep.pem\n' "$PROJECT_DIR"; }
+STUBS
+  sed -n '/^mask_covers()/,/^}/p; /^unmasked_secrets()/,/^}/p' "$ROOT/bin/sluice" >> "$t"
+  echo 'unmasked_secrets' >> "$t"
+  run bash "$t"
+  assert_success
+  assert_output --partial 'd1/d2/deep.pem'   # the unmasked secret survives filter-then-cap
+  refute_output --partial '.env'             # masked files never enter the warned set
+}
+
 @test "doctor: secret scan prunes vendor dirs (node_modules .env ignored)" {
   printf 'SLUICE_RUN_CMD="bash"\n' > "$WORK/sluice.config.sh"
   mkdir -p "$WORK/node_modules/pkg"
@@ -229,6 +251,44 @@ d = json.load(sys.stdin)
 assert d['hardening']['seccomp'] == 'default', d['hardening']
 assert d['risk'] == {'laundering_hosts': [], 'doh_hosts': [], 'allow_doh': False}, d['risk']
 assert d['mounts'] == [], d['mounts']
+"
+}
+
+# A syntax-error config must not abort doctor - it's the command you run BECAUSE the config is broken.
+# The human report flags the parse error and CONTINUES (later lines present).
+@test "doctor: a config with a syntax error is flagged but the report still completes" {
+  printf 'SLUICE_RUN_CMD="bash"\nif [ \n' > "$WORK/sluice.config.sh"   # unterminated 'if' = parse error
+  run bash -c "cd '$WORK' && '$SLUICE' doctor"
+  assert_success
+  assert_output --partial "parse error"
+  assert_output --partial "allowlist"   # a line AFTER the config source: doctor did not abort
+}
+
+# The JSON path must ALWAYS print one valid JSON object (never empty/truncated) and carry the signal.
+@test "doctor --json: a config syntax error -> non-empty valid JSON with config_error true" {
+  printf 'SLUICE_RUN_CMD="bash"\nif [ \n' > "$WORK/sluice.config.sh"
+  run bash -c "cd '$WORK' && '$SLUICE' doctor --json 2>/dev/null"
+  assert_success
+  [ -n "$output" ]   # not empty
+  echo "$output" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)       # parses -> exactly one valid object
+assert isinstance(d, dict), d
+assert d['config_error'] is True, d
+assert d['config'] is not None, d
+"
+}
+
+# A non-zero top-level line in the config (valid syntax, so bash -n passes) must not abort doctor
+# either - relaxed errexit around the source covers it; config_error stays false (it parsed fine).
+@test "doctor --json: a config whose top-level line returns non-zero still reports (no abort)" {
+  printf 'SLUICE_RUN_CMD="bash"\nfalse\n' > "$WORK/sluice.config.sh"
+  run bash -c "cd '$WORK' && '$SLUICE' doctor --json 2>/dev/null"
+  assert_success
+  echo "$output" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+assert d['config_error'] is False, d   # valid syntax: the parse check passed
 "
 }
 

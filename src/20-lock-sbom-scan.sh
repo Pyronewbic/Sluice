@@ -76,7 +76,10 @@ cmd_egress_verify() {
   local log="${XDG_STATE_HOME:-$HOME/.local/state}/sluice/$slug/egress-log.jsonl"
   [ -f "$log" ] || { echo "[sluice] no egress log yet at $(_tilde "$log")." >&2; return 0; }
   local n=0 prev="0000000000000000000000000000000000000000000000000000000000000000" line payload self pfield
-  while IFS= read -r line; do
+  # `|| [ -n "$line" ]` so an UNTERMINATED final record is still verified (read returns non-zero at EOF
+  # on a missing trailing newline) - else a forged tail appended without a leading newline is invisible.
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ -n "$line" ] || continue   # tolerate blank lines (don't hash "" into a bogus TAMPERED); count only real records
     n=$((n+1))
     self="$(printf '%s' "$line"   | sed -n 's/.*,"self":"\([0-9a-f]*\)"}$/\1/p')"
     payload="$(printf '%s' "$line" | sed 's/,"self":"[0-9a-f]*"}$/}/')"
@@ -117,6 +120,11 @@ write_lock() {
   maybe_build
   local lock="$PROJECT_DIR/sluice.lock" inv na nn np ng ngo nc parts deltarows="" had_lock=0
   inv="$(current_inventory)"
+  # Fail CLOSED: current_inventory's in-image read is masked by a `sort -u` pipe and consumed via a
+  # command substitution, so a failed engine read can't trip set -e - it returns base-ref only. A real
+  # Wolfi box always has apks, so a missing apk line means the read failed; refuse to write a hollow lock
+  # (a base-only artifact reported as success, then --check flags every real package as drift).
+  printf '%s\n' "$inv" | grep -q '^apk ' || die "could not read the image inventory - refusing to write a hollow sluice.lock"
   # Capture the supply-chain delta vs the existing lock BEFORE overwriting (reuse $inv; no re-introspect).
   [ -f "$lock" ] && { had_lock=1; deltarows="$(classify_drift "$(lock_drift "$inv")")"; }
   {
