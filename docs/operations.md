@@ -11,7 +11,7 @@ does not), see [THREAT_MODEL.md](../THREAT_MODEL.md#egress-receipts-what-they-at
 `sluice ls` lists every box on the machine with its posture - status, stack, allowlist size, published
 ports, supply-chain lock state, and project path - and marks the box you are in with `*`:
 
-<p align="center"><img src="../assets/operator-demo.gif" width="760" alt="sluice ls --running lists every running box with its posture (stack, allowlist size, ports, lock, path); sluice ls --egress --running adds the per-box count of hosts each was blocked from; sluice -b targets one box from anywhere and egress --export prints its tamper-evident audit log as JSONL; and sluice doctor drills into one box's one-screen health panel"></p>
+<p align="center"><img src="../assets/operator-demo.gif" width="760" alt="sluice ls --running lists every running box with its posture (stack, allowlist size, ports, lock, path); sluice ls --egress --running adds the per-box count of hosts each was blocked from; sluice -b targets one box from anywhere and egress --export prints its tamper-evident audit log as JSONL"></p>
 
 Filters and forms (combinable):
 
