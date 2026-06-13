@@ -112,7 +112,7 @@ Plus `build` / `rebuild` / `update` / `stop` / `rm` / `prune` for lifecycle and 
 `ls` / `egress` / `logs` / `smoke` to inspect - **`sluice help`** lists them all. `ls`,
 `doctor`, and `egress` take `--json` for scripting; `egress --export`/`--verify` dump and
 integrity-check the run's append-only audit log; `sluice -b <name> <cmd>` targets any box
-from anywhere.
+from anywhere. Full fleet view + egress-audit reference: [docs/operations.md](docs/operations.md).
 
 ### What it looks like
 
@@ -128,8 +128,6 @@ sluice doctor
   egress     1 host(s) blocked (last run) - run 'sluice learn' to allow:
              cdn.tracking.example
 ```
-
-<p align="center"><img src="assets/operator-demo.gif" width="720" alt="sluice ls --running lists every running sandbox on the machine with its posture (stack, allowlist size, ports, lock, path); sluice ls --egress --running adds the per-box count of hosts each was blocked from; and sluice doctor drills into one box's one-screen health panel - engine, mount, the in-box hazard warnings, allowlist, auth, and the last run's blocked egress with a learn hint"></p>
 
 `sluice ls` shows every box on this machine, which one you're in (`*`), and its posture:
 

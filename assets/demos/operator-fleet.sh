@@ -52,4 +52,5 @@ echo 'OPENAI_API_KEY=sk-live-do-not-commit' > "$HOME/sf/bot/.env"
 ln -sfn /etc/hosts "$HOME/sf/bot/.claude/CLAUDE.md"
 
 for d in blog api bot; do ( cd "$HOME/sf/$d" && "$SLUICE" >/dev/null 2>&1 ); done
+( cd "$HOME/sf/api" && "$SLUICE" lock >/dev/null 2>&1 )   # one locked box -> LOCK-column variety in the fleet table
 "$SLUICE" ls --running
