@@ -43,17 +43,9 @@ Sleep 800ms
 Enter
 Sleep 3200ms
 
-# 3. rerun: the host is reachable and the receipt is green.
+# 3. rerun: the host is reachable and the receipt is green - learn closed the loop, live, no rebuild.
 Type "sluice"
 Sleep 700ms
 Enter
 Sleep 4500ms
-
-# 4. the durable audit record: the reached ledger now shows the host green with bytes.
-Type "# the durable audit record:"
-Sleep 600ms
-Enter
-Type "sluice egress"
-Sleep 700ms
-Enter
-Sleep 2500ms
+Sleep 1000ms

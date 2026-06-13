@@ -2,9 +2,9 @@
 # `sluice ls --running` lists every running box + posture (stack/allow/ports/lock/path; one box is
 # locked), `sluice ls --egress --running` adds the per-box blocked count, `sluice -b <box> egress
 # --export` ships one box's tamper-evident audit log as JSONL (each record hash-links to the prior -
-# the integrity half NOT shown by the firewall demo's --verify), and `sluice doctor` drills into one
-# box's health. A 3-box fleet (node blog, python api [locked], claude bot) at shallow ~/sf paths so the
-# wide table reads on camera; `--running` scopes the view to the fleet.
+# the integrity half NOT shown by the firewall demo's --verify). A 3-box fleet (node blog, python api
+# [locked], claude bot) at shallow ~/sf paths so the wide table reads on camera; `--running` scopes
+# the view to the fleet.
 #
 # Reproduce (from the repo root; .demos/ is gitignored recording scratch):
 #   bash assets/demos/operator-fleet.sh          # stops other demo boxes, builds + runs ~/sf/{blog,api,bot}
@@ -40,15 +40,10 @@ Sleep 700ms
 Enter
 Sleep 4500ms
 
-# 3. ship one box's tamper-evident audit log (each record hash-links to the previous).
+# 3. ship one box's tamper-evident audit log off-box (each record hash-links to the previous) - the
+#    non-repudiation half the firewall demo's --verify doesn't show.
 Type "sluice -b sluice-api egress --export | tail -1 | jq '{box, totals, prev, self}'"
 Sleep 700ms
 Enter
 Sleep 5500ms
-
-# 4. drill into one box's health: the posture panel + in-box hazard warnings.
-Type "sluice doctor"
-Sleep 700ms
-Enter
-Sleep 6500ms
 Sleep 1500ms

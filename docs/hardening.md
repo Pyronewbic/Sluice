@@ -79,9 +79,8 @@ SLUICE_MASK=".env* secrets packages/*/.env"   # space-separated project-relative
 At launch each current match is shadowed - an empty read-only bind for a file, a tmpfs for a
 directory. The box sees the path exists but cannot read the contents. `sluice doctor` shows what
 is masked now and warns about secret-looking files (`.env*`, `*.pem`, key JSON, SSH keys,
-`*.p12`/`*.pfx`) that no pattern covers.
-
-<p align="center"><img src="../assets/mask-demo.gif" width="680" alt="the host reads .env and sees the API key; inside the box the same cat prints nothing, and wc -c .env shows 0 bytes - the path exists, the contents are shadowed"></p>
+`*.p12`/`*.pfx`) that no pattern covers. The README's [agent demo](../README.md) shows this in
+motion - inside the box `cat .env` prints nothing and `wc -c .env` is 0 bytes.
 
 Limits: matches are evaluated at launch, so a secret created mid-run is not masked; a slash-less
 pattern matches root-level entries only (use `packages/*/.env` to reach deeper); symlink matches

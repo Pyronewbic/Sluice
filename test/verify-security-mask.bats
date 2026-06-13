@@ -54,11 +54,14 @@ teardown_file() {
   assert_success
 }
 
-@test "mask: launch output lists the active masks" {
+@test "mask: launch shows a count; doctor lists the masks" {
   ( cd "$WORK/mask" && "$SLUICE" stop ) >/dev/null 2>&1 || true
   run bash -c "cd '$WORK/mask' && '$SLUICE' run true 2>&1"
   assert_output --partial "masking"
-  assert_output --partial ".env"
+  assert_output --partial "in-repo path(s)"     # a count, not the verbatim match list
+  assert_output --partial "see 'sluice doctor'"
+  run bash -c "cd '$WORK/mask' && '$SLUICE' doctor 2>&1"
+  assert_output --partial ".env"                # doctor still surfaces the masks
   assert_output --partial "secrets"
 }
 
