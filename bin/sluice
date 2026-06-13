@@ -473,30 +473,39 @@ cmd_egress() {
     done <<EOF
 $rows
 EOF
-    printf '{"schema":"sluice.egress/v1","box":"%s","allowed":%s,"blocked":%s,"tx_bytes":%s,"budget":%s,"over_budget":%s,"hosts":[%s]}\n' \
+    # window=boot: unlike the at-exit receipt (run-scoped), this command reads the whole-boot egress
+    # window - so does its SLUICE_EGRESS_MAX_BYTES gate. Surfaced for the control plane (see docs/operations.md).
+    printf '{"schema":"sluice.egress/v1","box":"%s","window":"boot","allowed":%s,"blocked":%s,"tx_bytes":%s,"budget":%s,"over_budget":%s,"hosts":[%s]}\n' \
       "$(_json_esc "$container")" \
       "$(printf '%s\n' "$allowed" | _json_arr)" "$(printf '%s\n' "$blocked" | _json_arr)" \
       "$tx" "${cap:-null}" "$over_json" "$hosts_json"
     return "$over"
   fi
-  echo "${C_BLD}$container egress${C_RST}"
   if [ -n "$rows" ]; then
-    # host | verdict | requests | bytes (reached): reached first (by bytes desc), then blocked.
+    # Summary header (reached/blocked tally + total bytes) then host | verdict | requests | bytes
+    # (reached): reached first (by bytes desc), then blocked. Counts/total computed in the same awk pass.
+    local nblocked; nblocked="$(printf '%s\n' "$rows" | awk -F"$TAB" '$1=="blocked"' | grep -c . || true)"
     printf '%s\n' "$rows" | sort -t"$TAB" -k1,1r -k4,4nr -k2,2 \
-      | awk -F"$TAB" -v grn="$C_GRN" -v red="$C_RED" -v rst="$C_RST" '
+      | awk -F"$TAB" -v box="$container" -v grn="$C_GRN" -v red="$C_RED" -v dim="$C_DIM" -v bld="$C_BLD" -v rst="$C_RST" '
           function human(b){ if(b<1024) return b" B"; else if(b<1048576) return sprintf("%.1f KB",b/1024); else return sprintf("%.1f MB",b/1048576) }
-          { c[NR]=$1; h[NR]=$2; n[NR]=$3; b[NR]=$4; if(length($2)>w) w=length($2) }
-          END { for(i=1;i<=NR;i++){
+          { c[NR]=$1; h[NR]=$2; n[NR]=$3; b[NR]=$4; total+=$4; if($1=="reached") nr++; else nb++; if(length($2)>w) w=length($2) }
+          END { printf "%s%s egress%s   %d reached, %d blocked, %s\n", bld, box, rst, nr, nb, human(total);
+                for(i=1;i<=NR;i++){
                   if(c[i]=="reached") printf "  %-*s  %s[reached]%s  %3d req   %s\n", w, h[i], grn, rst, n[i], human(b[i]);
                   else                printf "  %-*s  %s[blocked]%s  %3d req\n",        w, h[i], red, rst, n[i];
                 } }'
+    # C1: blocked rows carry no next step here (unlike the receipt's per-row annotation) - one trailing nudge.
+    [ "${nblocked:-0}" -gt 0 ] && echo "  ${C_DIM}${nblocked} host(s) blocked - allow with 'sluice learn'${C_RST}"
   else
+    echo "${C_BLD}$container egress${C_RST}"
     echo "  ${C_DIM}(nothing yet - exercise the app, then re-run)${C_RST}"
   fi
   if [ -n "$cap" ]; then
     if [ "$over" = 1 ]; then echo "  ${C_RED}egress budget EXCEEDED${C_RST}: $(_human_bytes "$tx") sent > $(_human_bytes "$cap") cap (SLUICE_EGRESS_MAX_BYTES)"
     else echo "  ${C_DIM}egress budget: $(_human_bytes "$tx") sent / $(_human_bytes "$cap") cap${C_RST}"; fi
   fi
+  # C2: make the tamper-evident audit log discoverable (has-rows human path only; the empty case stays quiet).
+  [ -n "$rows" ] && echo "  ${C_DIM}audit log: sluice egress --export | --verify${C_RST}"
   return "$over"
 }
 
@@ -512,8 +521,14 @@ cmd_egress_export() {
 # self-hash recomputes and its prev links to the previous line's self (genesis = 64 zeros). Exits
 # non-zero on the first break (tamper / reorder / truncation) - a CI integrity gate on the receipts.
 cmd_egress_verify() {
+  local json=0; [ "${1:-}" = --json ] && json=1
   local log="${XDG_STATE_HOME:-$HOME/.local/state}/sluice/$slug/egress-log.jsonl"
-  [ -f "$log" ] || { echo "[sluice] no egress log yet at $(_tilde "$log")." >&2; return 0; }
+  # No log = an empty chain: trivially intact (0 records), exit 0 - unchanged.
+  if [ ! -f "$log" ]; then
+    if [ "$json" = 1 ]; then echo '{"schema":"sluice.egress-verify/v1","verified":true,"records":0,"broken_line":null,"reason":null}'
+    else echo "[sluice] no egress log yet at $(_tilde "$log")." >&2; fi
+    return 0
+  fi
   local n=0 prev="0000000000000000000000000000000000000000000000000000000000000000" line payload self pfield
   # `|| [ -n "$line" ]` so an UNTERMINATED final record is still verified (read returns non-zero at EOF
   # on a missing trailing newline) - else a forged tail appended without a leading newline is invisible.
@@ -524,14 +539,19 @@ cmd_egress_verify() {
     payload="$(printf '%s' "$line" | sed 's/,"self":"[0-9a-f]*"}$/}/')"
     pfield="$(printf '%s' "$line"  | sed -n 's/.*,"prev":"\([0-9a-f]*\)".*/\1/p')"
     if [ -z "$self" ] || [ "$(printf '%s' "$payload" | _sha256)" != "$self" ]; then
-      echo "[sluice] ${E_RED}egress log TAMPERED${E_RST}: line $n self-hash mismatch ($(_tilde "$log"))" >&2; return 1
+      if [ "$json" = 1 ]; then printf '{"schema":"sluice.egress-verify/v1","verified":false,"records":%d,"broken_line":%d,"reason":"self-hash"}\n' "$n" "$n"
+      else echo "[sluice] ${E_RED}egress log TAMPERED${E_RST}: line $n self-hash mismatch ($(_tilde "$log"))" >&2; fi
+      return 1
     fi
     if [ "$pfield" != "$prev" ]; then
-      echo "[sluice] ${E_RED}egress log TAMPERED${E_RST}: line $n prev-link broken - reordered or dropped ($(_tilde "$log"))" >&2; return 1
+      if [ "$json" = 1 ]; then printf '{"schema":"sluice.egress-verify/v1","verified":false,"records":%d,"broken_line":%d,"reason":"prev-link"}\n' "$n" "$n"
+      else echo "[sluice] ${E_RED}egress log TAMPERED${E_RST}: line $n prev-link broken - reordered or dropped ($(_tilde "$log"))" >&2; fi
+      return 1
     fi
     prev="$self"
   done < "$log"
-  echo "[sluice] ${C_GRN}egress log verified${C_RST}: $n record(s), hash chain intact ($(_tilde "$log"))"
+  if [ "$json" = 1 ]; then printf '{"schema":"sluice.egress-verify/v1","verified":true,"records":%d,"broken_line":null,"reason":null}\n' "$n"
+  else echo "[sluice] ${C_GRN}egress log verified${C_RST}: $n record(s), hash chain intact ($(_tilde "$log"))"; fi
 }
 
 # sluice.lock: a committable inventory of the built image. base ref + every apk
@@ -3113,8 +3133,8 @@ case "${1:-run-default}" in
     case "${1:-}" in
       ""|--json) cmd_egress "${1:-}"; exit $? ;;
       --export)  cmd_egress_export; exit $? ;;
-      --verify)  cmd_egress_verify; exit $? ;;
-      *)         die "usage: sluice egress [--json | --export | --verify]" ;;
+      --verify)  cmd_egress_verify "${2:-}"; exit $? ;;   # accepts a trailing --json (one verify object)
+      *)         die "usage: sluice egress [--json | --export | --verify [--json]]" ;;
     esac
     ;;
   lock)

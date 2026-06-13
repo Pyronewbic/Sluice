@@ -97,3 +97,28 @@ _rec() { local TAB; TAB="$(printf '\t')"; _persist_receipt "$(printf 'reached%s%
   run cmd_egress
   assert_failure
 }
+
+# cmd_egress_verify is a sourced function (no box), so capture its --json stdout via `run` and pipe
+# $output to jq - bash -c can't see the sourced function.
+@test "egress --verify --json: an intact chain reports verified:true records:N, exit 0" {
+  _rec a.example.com; _rec b.example.com; _rec c.example.com
+  run cmd_egress_verify --json
+  assert_success
+  jq -e '.verified==true and .records==3 and .broken_line==null and .reason==null' <<<"$output"
+}
+
+@test "egress --verify --json: a body byte-flip reports verified:false self-hash + broken_line, non-zero" {
+  _rec a.example.com; _rec b.example.com
+  sed -i.bak '1s/a\.example\.com/a.evil.com/' "$LOG"
+  run cmd_egress_verify --json
+  assert_failure
+  jq -e '.verified==false and .reason=="self-hash" and .broken_line==1' <<<"$output"
+}
+
+@test "egress --verify --json: a dropped middle record reports verified:false prev-link, non-zero" {
+  _rec a.example.com; _rec b.example.com; _rec c.example.com
+  sed -i.bak '2d' "$LOG"   # record 3's prev no longer matches record 1's self
+  run cmd_egress_verify --json
+  assert_failure
+  jq -e '.verified==false and .reason=="prev-link" and (.broken_line|type=="number")' <<<"$output"
+}

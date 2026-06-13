@@ -45,6 +45,9 @@ is what turns tamper-*evident* into non-repudiation.
 
 ### Gating egress volume in CI
 
+`sluice egress` (and its `SLUICE_EGRESS_MAX_BYTES` gate) is **boot-scoped** - it reports the whole life
+of the box, not just the last run; the at-exit receipt is **run-scoped**, so the two can differ.
+
 `SLUICE_EGRESS_MAX_BYTES` caps how much a run may send to the hosts it reached (the exfil-relevant
 upload volume). Over the cap, `sluice egress` **exits non-zero**, so it gates a pipeline:
 

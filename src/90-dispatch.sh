@@ -38,8 +38,8 @@ case "${1:-run-default}" in
     case "${1:-}" in
       ""|--json) cmd_egress "${1:-}"; exit $? ;;
       --export)  cmd_egress_export; exit $? ;;
-      --verify)  cmd_egress_verify; exit $? ;;
-      *)         die "usage: sluice egress [--json | --export | --verify]" ;;
+      --verify)  cmd_egress_verify "${2:-}"; exit $? ;;   # accepts a trailing --json (one verify object)
+      *)         die "usage: sluice egress [--json | --export | --verify [--json]]" ;;
     esac
     ;;
   lock)
