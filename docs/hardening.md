@@ -65,6 +65,8 @@ After a session sluice prints the changeset counts as a nudge. Cost: the git com
 mounted (an rw mount would bypass the protection), so a git worktree can't resolve refs in the
 box; seeding a large repo costs startup time.
 
+<p align="center"><img src="../assets/overlay-demo.gif" width="720" alt="with SLUICE_WORKSPACE=overlay the box edits a throwaway copy: on the host notes.txt still reads 'original' and created.txt does not exist; sluice diff shows the box's changes (notes.txt modified, created.txt added); sluice apply prompts [y/N] and on 'y' writes them back - applied 1 added, 1 modified, 0 deleted"></p>
+
 ## `SLUICE_MASK`: in-repo secret masking
 
 Protects against: the agent reading secrets that live inside the repo - the project mount is

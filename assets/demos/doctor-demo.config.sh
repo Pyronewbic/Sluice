@@ -1,5 +1,0 @@
-SLUICE_NAME="doctor-demo"
-SLUICE_DESC="api server"
-SLUICE_PORTS="5173"
-SLUICE_ENV="OPENAI_API_KEY"
-SLUICE_RUN_CMD="sh -c 'curl -s -m6 -o /dev/null https://api.openai.com; true'"
