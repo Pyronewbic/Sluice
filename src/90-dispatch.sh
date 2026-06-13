@@ -45,9 +45,9 @@ case "${1:-run-default}" in
   lock)
     shift
     case "${1:-}" in
-      --check)   cmd_lock_check   "${2:-}"; exit $? ;;
-      --diff)    cmd_lock_diff    "${2:-}"; exit $? ;;
-      --enforce) cmd_lock_enforce "${2:-}"; exit $? ;;
+      --check)   shift; cmd_lock_check   "$@"; exit $? ;;
+      --diff)    shift; cmd_lock_diff    "$@"; exit $? ;;
+      --enforce) shift; cmd_lock_enforce "$@"; exit $? ;;
       --sbom)    shift; cmd_sbom "$@"; exit $? ;;
       --scan)    shift; cmd_scan "$@"; exit $? ;;
       "")        write_lock; exit 0 ;;
