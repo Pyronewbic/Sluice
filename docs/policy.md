@@ -15,7 +15,8 @@ Read from up to three places, lowest trust first. A `deny`/`forbid` from **any**
 | `~/.config/sluice/policy.conf` | the developer | advisory-to-self |
 | `/etc/sluice/policy.conf` (**root-owned**) | the org (pushed via MDM) | enforced |
 
-A configured `SLUICE_POLICY_URL` that cannot be fetched is **fatal** - a managed policy must never
+A configured `SLUICE_POLICY_URL` that cannot be fetched is **fatal** on any command that consults the
+policy - `run`/`shell`/`build`/`rebuild`/`update` and `sluice learn` - a managed policy must never
 silently fall back to local-only.
 
 ## Format
@@ -47,7 +48,8 @@ Applied host-side on every `run`/`shell`/`build`/`rebuild`/`update`, as the fina
 config (and any `sluice learn` edits) - so policy wins:
 
 - **Allowlist** (`allow`/`deny`): effective = (local + `allow`) - `deny`. The box receives the
-  narrowed list at start, and `sluice learn` will not re-add a denied host. `deny` is non-fatal -
+  narrowed list at start, and `sluice learn` will not re-add a denied host (it fails closed, like `run`,
+  if the policy URL is unreachable). `deny` is non-fatal -
   the host is simply unreachable. One exception is fatal: a local `allow` **wildcard** that would
   cover a denied host (e.g. `.githubusercontent.com` against `deny gist.githubusercontent.com`)
   **refuses to run** rather than let the wildcard silently re-admit it - narrow it to exact hosts.
