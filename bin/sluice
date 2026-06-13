@@ -3125,7 +3125,11 @@ case "${1:-run-default}" in
     # F2: one-line plan so the implicit build/run is legible (the no-op case speaks via the status below).
     case "${SLUICE_RUN_CMD:-}" in
       true|:|/bin/true) ;;
-      *) echo "${E_DIM}[sluice]${E_RST} box ${_state} (${_nhosts} allowed hosts) - running: ${SLUICE_RUN_CMD:-bash}" >&2 ;;
+      *)
+        # A multi-line run_cmd would dump its whole body here, doubling the output; summarize it.
+        _runlbl="${SLUICE_RUN_CMD:-bash}"; _runln="$(printf '%s\n' "$_runlbl" | grep -c .)"
+        if [ "${_runln:-1}" -gt 1 ]; then _runlbl="a ${_runln}-line command"; fi
+        echo "${E_DIM}[sluice]${E_RST} box ${_state} (${_nhosts} allowed hosts) - running: ${_runlbl}" >&2 ;;
     esac
     _rc=0
     if [ "${#AGENT_EXTRA_ARGS[@]}" -gt 0 ]; then
