@@ -57,6 +57,8 @@ $ sluice learn
 [sluice] reloaded the running box (squid reconfigure) - live now, no rebuild.
 ```
 
+<p align="center"><img src="../assets/learn-demo.gif" width="680" alt="a real run is blocked by the firewall: curl fails and the egress receipt shows the host in red as 'blocked, not allowlisted'; sluice learn then reviews it with an allow/skip/domain/quit prompt, 'a' allows it and the running box is reloaded live with no rebuild; the rerun returns HTTP 200 and the receipt flips to green, and a closing sluice egress shows the durable audit record"></p>
+
 Picks are written to the config **and** hot-loaded into the running box - no rebuild.
 `[d]omain` allows the whole `.parent` wildcard, and when 2+ blocked hosts share a parent,
 learn offers the collapse up front. Flags:

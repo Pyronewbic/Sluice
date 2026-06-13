@@ -14,6 +14,8 @@ Run `sluice agent` with no name to list the presets, each with its auth var and 
 your host. Each preset is a normal `sluice.config.sh` (knob reference: [configuration.md](configuration.md));
 the contract a preset must follow lives in [`agents/README.md`](../agents/README.md).
 
+<p align="center"><img src="../assets/agent-demo.gif" width="680" alt="sluice agent lists nine sandboxed coding-agent presets with auth status read live from the host env (the claude row green, key set); inside the box 'cat .env' prints nothing because SLUICE_MASK shadows the secret; and the egress receipt shows api.anthropic.com reached in green and pypi.org blocked in red - one command, the agent caged"></p>
+
 ## The presets
 
 | preset | auth env var (forwarded) | runs |
