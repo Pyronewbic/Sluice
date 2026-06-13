@@ -35,3 +35,15 @@ teardown_file() { drop_box sluice-rundefault "$WORK/p"; drop_box sluice-runmulti
   [[ "$output" == *"running: a 3-line command"* ]]   # the body is summarized, not dumped verbatim
   [[ "$output" == *one* && "$output" == *three* ]]    # ...and the body still actually ran
 }
+
+@test "build: the engine transcript is quieted to a log, not dumped to the terminal" {
+  mkdir -p "$WORK/q"
+  printf 'SLUICE_NAME="runquiet"\nSLUICE_RUN_CMD="true"\n' > "$WORK/q/sluice.config.sh"
+  cd "$WORK/q"
+  run env SLUICE_NO_BANNER=1 "$SLUICE" build
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"building sluice-runquiet"* && "$output" == *"(log:"* ]]   # build line points at the log
+  [[ "$output" != *"[internal]"* ]]                                          # BuildKit chatter is NOT on the terminal
+  [ -s "${XDG_STATE_HOME:-$HOME/.local/state}/sluice/runquiet/build.log" ]    # ...it landed in the log
+  drop_box sluice-runquiet "$WORK/q"
+}

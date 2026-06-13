@@ -313,7 +313,8 @@ EOF
   mask_build_args
   if [ "${#MASK_ARGS[@]}" -gt 0 ]; then
     run_args+=("${MASK_ARGS[@]}")
-    echo "[sluice] masking (unreadable in the box): $MASKED_PATHS" >&2
+    _nmask="$(printf '%s' "$MASKED_PATHS" | wc -w | tr -d ' ')"
+    echo "[sluice] masking $_nmask in-repo path(s) (unreadable in the box) - see 'sluice doctor'" >&2
   fi
 
   echo "[sluice] starting ephemeral audit container $audit_container ..."

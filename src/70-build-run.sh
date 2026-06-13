@@ -60,18 +60,26 @@ build() {
     verify_base "$SLUICE_BASE_IMAGE"
     args+=(--build-arg "BASE_IMAGE=$SLUICE_BASE_IMAGE")     # project layer FROM the signed base
   fi
-  echo "[sluice] building $tag ..."
+  # Quiet the engine's build transcript (layer/apk/npm chatter) to a per-box log; on failure replay
+  # the tail so the error is visible. The full transcript is always one `cat` away at the logged path.
+  local _blog="${XDG_STATE_HOME:-$HOME/.local/state}/sluice/$slug/build.log"
+  mkdir -p "$(dirname "$_blog")" 2>/dev/null || _blog="$(mktemp)"
+  echo "[sluice] building $tag ... (log: $(_tilde "$_blog"))"
   # SLUICE_BUILD_RETRIES (default 0): retry the build a few times for a flaky registry/network. Off
   # by default so a deterministic build error still fails fast; set e.g. =2 in CI.
   local _retries="${SLUICE_BUILD_RETRIES:-0}"; case "$_retries" in ''|*[!0-9]*) _retries=0 ;; esac
   local _try=0 _ok=""
   while :; do
-    if "$ENGINE" build "${args[@]}" -t "$tag" "$tmp"; then _ok=1; break; fi
+    if "$ENGINE" build "${args[@]}" -t "$tag" "$tmp" >"$_blog" 2>&1; then _ok=1; break; fi
     [ "$_try" -lt "$_retries" ] || break
     _try=$((_try+1)); echo "[sluice] ${E_YEL}build failed${E_RST} - retry $_try/$_retries ..." >&2; sleep 2
   done
   rm -rf "$tmp"
-  [ -n "$_ok" ] || die "image build failed (transient registry/network error? re-run, or set SLUICE_BUILD_RETRIES=N to auto-retry)"
+  if [ -z "$_ok" ]; then
+    echo "[sluice] ${E_YEL}build failed${E_RST} - last lines of $(_tilde "$_blog"):" >&2
+    tail -n 40 "$_blog" >&2 2>/dev/null || true
+    die "image build failed (transient registry/network error? re-run, or set SLUICE_BUILD_RETRIES=N to auto-retry; full log: $_blog)"
+  fi
   "$RUNNER" rm -f -v "$container" >/dev/null 2>&1 || true   # rebuilt image -> fresh container
   runtime_sync_image force
 }
@@ -321,7 +329,8 @@ EOF
   mask_build_args
   if [ "${#MASK_ARGS[@]}" -gt 0 ]; then
     run_args+=("${MASK_ARGS[@]}")
-    echo "[sluice] masking (unreadable in the box): $MASKED_PATHS" >&2
+    _nmask="$(printf '%s' "$MASKED_PATHS" | wc -w | tr -d ' ')"
+    echo "[sluice] masking $_nmask in-repo path(s) (unreadable in the box) - see 'sluice doctor'" >&2
   fi
 
   # Publish declared ports on host loopback only; init-firewall.sh opens the inbound ACCEPT.
