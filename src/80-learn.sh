@@ -135,11 +135,12 @@ reload_allowlist() {
 # running box would silently diverge from its own config. Laundering hosts are allowed (boot allows
 # them too) but warned, matching the session-start gate.
 learn_apply() {   # $1 = newline-separated entries (hosts and/or .domains)
-  local entries="$1" keep="" doh="" launder="" pden="" pdeny="" e h
-  # A central policy can DENY a host; learn must not re-add it via the live reload (which appends
-  # straight to the running box's allowlist, bypassing the run-time policy gate). Fail-open on an
-  # unfetchable policy here - the run-time gate (apply_policy) is the fail-closed enforcement.
-  policy_configured && pdeny="$(_policy_raw 2>/dev/null | awk '$1=="deny"{print $2}' || true)"
+  local entries="$1" keep="" doh="" launder="" pden="" pdeny="" ptxt="" e h
+  # A central policy can DENY a host; the live reload appends straight to the running box's allowlist,
+  # so learn enforces the deny here too. Fetch the policy the same way apply_policy does (fail CLOSED):
+  # if SLUICE_POLICY_URL is unreachable, _policy_raw dies and this aborts before we add/write/reload,
+  # rather than apply without the deny list.
+  if policy_configured; then ptxt="$(_policy_raw)"; pdeny="$(printf '%s\n' "$ptxt" | awk '$1=="deny"{print $2}')"; fi
   while IFS= read -r e; do
     [ -n "$e" ] || continue
     h="${e#.}"   # a .domain wildcard matches by its bare host
