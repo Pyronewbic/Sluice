@@ -101,6 +101,26 @@ symlinks_outside_scope() {
 }
 
 _doc() { printf '  %-10s %s\n' "$1" "$2"; }
+
+# Run a command with a wall-clock bound so doctor never hangs on a black-hole engine (a wedged
+# DOCKER_HOST makes `info`/`image inspect` block for 20s+). Uses timeout/gtimeout when present;
+# stock macOS has neither, so fall back to a background pid + a killer that SIGKILLs it past the
+# bound. Returns the command's status, or 124 on timeout (matching coreutils `timeout`). The killer
+# is itself reaped so the fallback can't hang. bash-3.2 safe (no associative arrays, no `wait -n`).
+_with_timeout() {
+  local secs="$1"; shift
+  if command -v timeout  >/dev/null 2>&1; then timeout  "$secs" "$@"; return $?; fi
+  if command -v gtimeout >/dev/null 2>&1; then gtimeout "$secs" "$@"; return $?; fi
+  local pid kpid rc
+  "$@" & pid=$!
+  ( sleep "$secs"; kill -KILL "$pid" 2>/dev/null ) & kpid=$!
+  if wait "$pid" 2>/dev/null; then rc=$?; else rc=$?; fi
+  kill -KILL "$kpid" 2>/dev/null; wait "$kpid" 2>/dev/null || true
+  # 137 = 128+SIGKILL: the killer fired (timed out) -> normalize to coreutils' 124.
+  [ "$rc" -eq 137 ] && rc=124
+  return "$rc"
+}
+
 cmd_doctor() {
   [ "${1:-}" = --json ] && { cmd_doctor_json; return $?; }
   local eng="" v blocked
@@ -110,12 +130,15 @@ cmd_doctor() {
   elif command -v podman >/dev/null 2>&1; then eng=podman; fi
   if [ -n "$eng" ] && command -v "$eng" >/dev/null 2>&1; then
     ENGINE="$eng"; resolve_runner lenient
-    if "$eng" info >/dev/null 2>&1; then
+    if _with_timeout 5 "$eng" info >/dev/null 2>&1; then   # bound the probe: a black-hole DOCKER_HOST blocks 20s+
       _doc engine "$("$eng" --version 2>/dev/null | head -1)"
     else
       _doc engine "${C_RED}$("$eng" --version 2>/dev/null | head -1) - daemon not responding${C_RST} (is $eng running?)"
-      eng=""   # daemon down: skip the engine-dependent checks below
+      eng=""   # daemon down (or wedged/timed out): skip the engine-dependent checks below
     fi
+  elif [ -n "${SLUICE_ENGINE:-}" ]; then
+    # Explicitly named but absent: "install docker or podman" is the wrong remedy. Mirror resolve_engine's die.
+    eng=""; _doc engine "${C_RED}none${C_RST} - SLUICE_ENGINE='$SLUICE_ENGINE' not found on PATH"
   else
     eng=""; _doc engine "${C_RED}none${C_RST} - install docker or podman"
   fi
@@ -137,7 +160,23 @@ cmd_doctor() {
   set +e; . "$PROJECT_CONFIG" 2>/dev/null; set -e
   derive_names
   [ -n "${SLUICE_DESC:-}" ] && _doc desc "$SLUICE_DESC"
-  if [ -n "${SLUICE_MOUNTS:-}" ]; then _doc mount "$(_tilde "$PROJECT_DIR") ${C_DIM}(+ extra mounts)${C_RST}"; else _doc mount "$(_tilde "$PROJECT_DIR")"; fi
+  if [ -n "${SLUICE_MOUNTS:-}" ]; then
+    _doc mount "$(_tilde "$PROJECT_DIR") ${C_DIM}(+ extra mounts)${C_RST}"
+    # List each extra bind + warn on a missing absolute host source (the engine errors on it at run).
+    local _m _src
+    set -f   # keep mount specs literal while splitting - no pathname expansion against $PWD
+    for _m in ${SLUICE_MOUNTS}; do
+      set +f
+      _src="${_m%%:*}"
+      case "$_src" in
+        /*) if [ ! -e "$_src" ]; then _doc "" "${C_DIM}$(_term_esc "$_m")${C_RST} ${C_YEL}host path not found - run will fail${C_RST}"
+            else _doc "" "${C_DIM}$(_term_esc "$_m")${C_RST}"; fi ;;
+        *)  _doc "" "${C_DIM}$(_term_esc "$_m")${C_RST}" ;;
+      esac
+      set -f
+    done
+    set +f
+  else _doc mount "$(_tilde "$PROJECT_DIR")"; fi
 
   # SLUICE_MASK posture: what's shadowed now, and secret-looking files the box CAN still read.
   if [ -n "${SLUICE_MASK:-}" ]; then
@@ -161,8 +200,8 @@ cmd_doctor() {
   fi
 
   if [ -n "$eng" ]; then
-    if "$eng" image inspect "$tag" >/dev/null 2>&1; then
-      if [ "$("$eng" image inspect -f '{{ index .Config.Labels "sluice.confighash" }}' "$tag" 2>/dev/null || true)" = "$(config_hash)" ]; then
+    if _with_timeout 5 "$eng" image inspect "$tag" >/dev/null 2>&1; then
+      if [ "$(_with_timeout 5 "$eng" image inspect -f '{{ index .Config.Labels "sluice.confighash" }}' "$tag" 2>/dev/null || true)" = "$(config_hash)" ]; then
         _doc image "$tag built (${C_GRN}config current${C_RST})"
       else
         _doc image "$tag built (${C_YEL}config stale${C_RST} - run 'sluice rebuild')"
@@ -173,7 +212,7 @@ cmd_doctor() {
   fi
 
   if [ -f "$PROJECT_DIR/sluice.lock" ]; then
-    if [ -n "$eng" ] && "$eng" image inspect "$tag" >/dev/null 2>&1; then
+    if [ -n "$eng" ] && _with_timeout 5 "$eng" image inspect "$tag" >/dev/null 2>&1; then
       local curinv drift npkgs
       curinv="$(current_inventory 2>/dev/null || true)"
       drift="$(lock_drift "$curinv")"
@@ -213,10 +252,12 @@ cmd_doctor() {
   _doc allowlist "${SLUICE_ALLOW_DOMAINS:-(none beyond base)}"
   _doc "" "base: $(base_domains)"
   local _risky="" _doh="" _h
+  set -f   # the allowlist entries are not globs - keep a wildcard (e.g. *.s3.amazonaws.com) literal
   for _h in ${SLUICE_ALLOW_DOMAINS:-}; do
     laundering_host "$_h" && _risky="$_risky $_h"
     doh_listed "$_h" && _doh="$_doh $_h"
   done
+  set +f
   [ -n "$_risky" ] && _doc "" "${C_YEL}note${C_RST}: shared host(s) an attacker can also write to -${_risky} - data can be laundered out (splice, not decrypt); keep the allowlist tight"
   if [ -n "$_doh" ]; then
     if [ "${SLUICE_ALLOW_DOH:-}" = 1 ]; then _doc "" "${C_YEL}note${C_RST}: DoH resolver(s) allowed AND SLUICE_ALLOW_DOH=1 -${_doh} - DNS-over-HTTPS exfil is possible"
@@ -249,17 +290,18 @@ cmd_doctor() {
 # `sluice doctor --json`: the machine-readable posture (kept separate so the human path above is
 # untouched; only one branch runs per invocation, so the shared gathering isn't double-work).
 cmd_doctor_json() {
-  local eng="" engine_ver="" daemon=false
+  local eng="" engine_ver="" daemon=false engine_found=true
   if   [ -n "${SLUICE_ENGINE:-}" ]; then eng="$SLUICE_ENGINE"
   elif command -v docker >/dev/null 2>&1; then eng=docker
   elif command -v podman >/dev/null 2>&1; then eng=podman; fi
   if [ -n "$eng" ] && command -v "$eng" >/dev/null 2>&1; then
     ENGINE="$eng"; resolve_runner lenient; engine_ver="$("$eng" --version 2>/dev/null | head -1)"
-    "$eng" info >/dev/null 2>&1 && daemon=true || eng=""
-  else eng=""; fi
+    # Bound the probe (A3): a wedged DOCKER_HOST otherwise blocks doctor 20s+. timeout -> daemon:false.
+    _with_timeout 5 "$eng" info >/dev/null 2>&1 && daemon=true || eng=""
+  else eng=""; [ -z "${SLUICE_ENGINE:-}" ] || engine_found=false; fi   # explicit-but-missing engine: A9
 
   if ! PROJECT_CONFIG="$(find_config)"; then
-    printf '{"engine":"%s","daemon":%s,"config":null}\n' "$(_json_esc "$engine_ver")" "$daemon"; return 0
+    printf '{"engine":"%s","engine_found":%s,"daemon":%s,"config":null}\n' "$(_json_esc "$engine_ver")" "$engine_found" "$daemon"; return 0
   fi
   PROJECT_DIR="$(cd "$(dirname "$PROJECT_CONFIG")" && pwd)"
   # A broken config must not abort doctor: bash -n catches syntax errors; relaxed errexit around the
@@ -273,14 +315,14 @@ cmd_doctor_json() {
   derive_names
 
   local img_built=false img_stale=false
-  if [ -n "$eng" ] && "$eng" image inspect "$tag" >/dev/null 2>&1; then
+  if [ -n "$eng" ] && _with_timeout 5 "$eng" image inspect "$tag" >/dev/null 2>&1; then
     img_built=true
-    [ "$("$eng" image inspect -f '{{ index .Config.Labels "sluice.confighash" }}' "$tag" 2>/dev/null || true)" = "$(config_hash)" ] || img_stale=true
+    [ "$(_with_timeout 5 "$eng" image inspect -f '{{ index .Config.Labels "sluice.confighash" }}' "$tag" 2>/dev/null || true)" = "$(config_hash)" ] || img_stale=true
   fi
 
   local lock="none"
   if [ -f "$PROJECT_DIR/sluice.lock" ]; then
-    if [ -n "$eng" ] && "$eng" image inspect "$tag" >/dev/null 2>&1; then
+    if [ -n "$eng" ] && _with_timeout 5 "$eng" image inspect "$tag" >/dev/null 2>&1; then
       [ -z "$(lock_drift 2>/dev/null || true)" ] && lock="in-sync" || lock="drifted"
     else lock="present-unbuilt"; fi
   fi
@@ -319,29 +361,50 @@ cmd_doctor_json() {
 
   # Exfil-surface risk: allowlisted hosts that are writable laundering channels or DoH resolvers.
   local _risky="" _doh="" _h _allowdoh=false
+  set -f   # entries are not globs - keep a wildcard (e.g. *.s3.amazonaws.com) literal, no expansion
   for _h in ${SLUICE_ALLOW_DOMAINS:-}; do
     laundering_host "$_h" && _risky="$_risky$_h
 "
     doh_listed "$_h" && _doh="$_doh$_h
 "
   done
+  set +f
   [ "${SLUICE_ALLOW_DOH:-}" = 1 ] && _allowdoh=true
   local risk_json
   risk_json="$(printf '{"laundering_hosts":%s,"doh_hosts":%s,"allow_doh":%s}' \
     "$(printf '%s' "$_risky" | _json_arr)" "$(printf '%s' "$_doh" | _json_arr)" "$_allowdoh")"
 
-  local mounts_json
-  mounts_json="$(printf '%s\n' "${SLUICE_MOUNTS:-}" | _json_arr)"
+  # Extra binds as objects, each carrying whether its host source exists (a missing absolute source
+  # passes doctor today but errors the engine at run - A7). set -f keeps a glob-y spec literal (A5).
+  local mounts_json="[" _mf=1 _m _src _ex
+  set -f
+  for _m in ${SLUICE_MOUNTS:-}; do
+    set +f
+    _src="${_m%%:*}"; _ex=true
+    case "$_src" in /*) [ -e "$_src" ] || _ex=false ;; esac
+    [ "$_mf" = 1 ] && _mf=0 || mounts_json="$mounts_json,"
+    mounts_json="$mounts_json{\"spec\":\"$(_json_esc "$_m")\",\"exists\":$_ex}"
+    set -f
+  done
+  set +f
+  mounts_json="$mounts_json]"
 
-  # shellcheck disable=SC2086
-  printf '{"engine":"%s","daemon":%s,"config":"%s","config_error":%s,"project_dir":"%s","name":"%s","desc":"%s","image":{"tag":"%s","built":%s,"stale":%s},"lock":"%s","allowlist":%s,"base":%s,"ports":%s,"allow_ips":%s,"base_image":"%s","policy_url":"%s","state_dirs":%s,"overlay_dirs":%s,"mounts":%s,"auth":%s,"hardening":%s,"mask":{"patterns":%s,"masked":%s,"unmasked_secrets":%s},"risk":%s,"broken_symlinks":%s,"egress":{"running":%s,"blocked":%s}}\n' \
-    "$(_json_esc "$engine_ver")" "$daemon" "$(_json_esc "$PROJECT_CONFIG")" "$config_error" "$(_json_esc "$PROJECT_DIR")" "$(_json_esc "$tag")" "$(_json_esc "${SLUICE_DESC:-}")" \
+  # A5: build these arrays via the tr-split idiom (mask/overlay use it) - NOT `printf '%s\n' $unquoted`,
+  # which pathname-expands a glob metachar in config (e.g. SLUICE_ALLOW_IPS="1.2.3.4 *") against $PWD.
+  local allow_json ports_json ips_json blocked_json
+  allow_json="$(printf '%s'   "${SLUICE_ALLOW_DOMAINS:-}" | tr ' \t' '\n\n' | _json_arr)"
+  ports_json="$(printf '%s'   "${SLUICE_PORTS:-}"         | tr ' \t' '\n\n' | _json_arr)"
+  ips_json="$(printf '%s'     "${SLUICE_ALLOW_IPS:-}"     | tr ' \t' '\n\n' | _json_arr)"
+  blocked_json="$(printf '%s' "$blocked"                  | tr ' \t' '\n\n' | _json_arr)"
+
+  printf '{"engine":"%s","engine_found":%s,"daemon":%s,"config":"%s","config_error":%s,"project_dir":"%s","name":"%s","desc":"%s","image":{"tag":"%s","built":%s,"stale":%s},"lock":"%s","allowlist":%s,"base":%s,"ports":%s,"allow_ips":%s,"base_image":"%s","policy_url":"%s","state_dirs":%s,"overlay_dirs":%s,"mounts":%s,"auth":%s,"hardening":%s,"mask":{"patterns":%s,"masked":%s,"unmasked_secrets":%s},"risk":%s,"broken_symlinks":%s,"egress":{"running":%s,"blocked":%s}}\n' \
+    "$(_json_esc "$engine_ver")" "$engine_found" "$daemon" "$(_json_esc "$PROJECT_CONFIG")" "$config_error" "$(_json_esc "$PROJECT_DIR")" "$(_json_esc "$tag")" "$(_json_esc "${SLUICE_DESC:-}")" \
     "$(_json_esc "$tag")" "$img_built" "$img_stale" "$lock" \
-    "$(printf '%s\n' ${SLUICE_ALLOW_DOMAINS:-} | _json_arr)" "$(base_domains | tr ' ' '\n' | _json_arr)" \
-    "$(printf '%s\n' ${SLUICE_PORTS:-} | _json_arr)" "$(printf '%s\n' ${SLUICE_ALLOW_IPS:-} | _json_arr)" "$(_json_esc "${SLUICE_BASE_IMAGE:-}")" \
+    "$allow_json" "$(base_domains | tr ' ' '\n' | _json_arr)" \
+    "$ports_json" "$ips_json" "$(_json_esc "${SLUICE_BASE_IMAGE:-}")" \
     "$(_json_esc "${SLUICE_POLICY_URL:-}")" "$nsd" "$overlays_json" "$mounts_json" "$auth_json" "$hardening_json" \
     "$mask_pats" "$mask_hits" "$mask_unm" "$risk_json" "$links_json" \
-    "$running_b" "$(printf '%s\n' $blocked | _json_arr)"
+    "$running_b" "$blocked_json"
 }
 
 # `sluice ls`: a derived, read-only table of every built sluice box on this machine

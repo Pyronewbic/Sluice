@@ -230,15 +230,37 @@ assert r['allow_doh'] is False, r
 "
 }
 
-@test "doctor --json: mounts array surfaces extra binds" {
-  printf 'SLUICE_MOUNTS="/tmp/x:/home/sluice/x:ro"\nSLUICE_RUN_CMD="bash"\n' > "$WORK/sluice.config.sh"
+@test "doctor --json: mounts array surfaces extra binds (spec + exists)" {
+  # An existing host source -> exists:true. (/tmp exists on every CI runner + macOS.)
+  printf 'SLUICE_MOUNTS="/tmp:/home/sluice/x:ro"\nSLUICE_RUN_CMD="bash"\n' > "$WORK/sluice.config.sh"
   run bash -c "cd '$WORK' && '$SLUICE' doctor --json 2>/dev/null"
   assert_success
   echo "$output" | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
-assert d['mounts'] == ['/tmp/x:/home/sluice/x:ro'], d['mounts']
+assert d['mounts'] == [{'spec': '/tmp:/home/sluice/x:ro', 'exists': True}], d['mounts']
 "
+}
+
+# A7: a missing host source passes doctor today but errors the engine at run - warn (human) +
+# carry exists:false (json), so the misconfig is caught before the box is even built.
+@test "doctor --json: a missing host mount source carries exists:false" {
+  printf 'SLUICE_MOUNTS="/no/such/host/path:/home/sluice/x:ro"\nSLUICE_RUN_CMD="bash"\n' > "$WORK/sluice.config.sh"
+  run bash -c "cd '$WORK' && '$SLUICE' doctor --json 2>/dev/null"
+  assert_success
+  echo "$output" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+assert d['mounts'] == [{'spec': '/no/such/host/path:/home/sluice/x:ro', 'exists': False}], d['mounts']
+"
+}
+
+@test "doctor: a missing host mount source lists the spec and warns it will fail" {
+  printf 'SLUICE_MOUNTS="/no/such/host/path:/home/sluice/x:ro"\nSLUICE_RUN_CMD="bash"\n' > "$WORK/sluice.config.sh"
+  run bash -c "cd '$WORK' && '$SLUICE' doctor"
+  assert_success
+  assert_output --partial "/no/such/host/path:/home/sluice/x:ro"   # the spec is on the human side now
+  assert_output --partial "host path not found"                    # ... with the run-will-fail warning
 }
 
 @test "doctor --json: no hardening configured -> defaults, still valid" {
@@ -252,6 +274,98 @@ assert d['hardening']['seccomp'] == 'default', d['hardening']
 assert d['risk'] == {'laundering_hosts': [], 'doh_hosts': [], 'allow_doh': False}, d['risk']
 assert d['mounts'] == [], d['mounts']
 "
+}
+
+# --- A5/A6: config arrays must never pathname-expand against the cwd -----------------------------
+# A glob metachar in the allowlist/ips (e.g. SLUICE_ALLOW_IPS="1.2.3.4 *") must stay a literal, not
+# expand to whatever files happen to sit in the project dir. We seed decoy filenames in the cwd; if
+# the unquoted expansion globbed, those names would leak into the JSON arrays (A5) or be classified
+# by the risk loops (A6). Human and --json must also AGREE on the literal.
+@test "doctor --json: a glob metachar in the allowlist/ips does NOT expand to filenames" {
+  printf 'SLUICE_ALLOW_DOMAINS="github.com *"\nSLUICE_ALLOW_IPS="1.2.3.4 *"\nSLUICE_RUN_CMD="bash"\n' > "$WORK/sluice.config.sh"
+  : > "$WORK/DECOY_A" ; : > "$WORK/DECOY_B"   # files a buggy glob would expand '*' into
+  run bash -c "cd '$WORK' && '$SLUICE' doctor --json 2>/dev/null"
+  assert_success
+  echo "$output" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+flat = json.dumps(d)
+assert 'DECOY_A' not in flat and 'DECOY_B' not in flat, 'glob expanded into the cwd: ' + flat
+assert d['allowlist'] == ['github.com', '*'], d['allowlist']
+assert d['allow_ips'] == ['1.2.3.4', '*'], d['allow_ips']
+"
+}
+
+@test "doctor: a wildcard laundering host shows literally in the human note, not globbed" {
+  # The risk loop is the only UNQUOTED human-side allowlist surface; the decoy MATCHES the wildcard so
+  # the old (un-set -f) loop globs it into the laundering note. The quoted allowlist/ips _doc lines
+  # never globbed, so they can't tell fixed from broken - this case can.
+  printf 'SLUICE_ALLOW_DOMAINS="*.s3.amazonaws.com github.com"\nSLUICE_RUN_CMD="bash"\n' > "$WORK/sluice.config.sh"
+  : > "$WORK/evil.s3.amazonaws.com"   # matches *.s3.amazonaws.com
+  run bash -c "cd '$WORK' && '$SLUICE' doctor"
+  assert_success
+  assert_output --partial "*.s3.amazonaws.com"     # the literal wildcard, classified as a laundering host
+  refute_output --partial "evil.s3.amazonaws.com"  # the decoy filename never leaks into the note
+}
+
+# A6: the laundering/DoH risk loops iterate the allowlist - a wildcard entry (e.g. *.s3.amazonaws.com)
+# must classify the LITERAL host, never a globbed filename, even with decoys in the cwd.
+@test "doctor --json: a wildcard laundering host is classified literally, not globbed" {
+  printf 'SLUICE_ALLOW_DOMAINS="*.s3.amazonaws.com github.com"\nSLUICE_RUN_CMD="bash"\n' > "$WORK/sluice.config.sh"
+  : > "$WORK/evil.s3.amazonaws.com"   # MATCHES *.s3.amazonaws.com: old unguarded loop globs this filename in
+  run bash -c "cd '$WORK' && '$SLUICE' doctor --json 2>/dev/null"
+  assert_success
+  echo "$output" | python3 -c "
+import sys, json
+r = json.load(sys.stdin)['risk']
+assert r['laundering_hosts'] == ['*.s3.amazonaws.com'], r   # literal wildcard, not the globbed decoy filename
+"
+}
+
+# --- A9: explicit-but-missing SLUICE_ENGINE gets the right remedy -------------------------------
+# SLUICE_ENGINE naming a binary not on PATH must NOT suggest 'install docker or podman' (it IS
+# installed-intent; the name is just wrong) - mirror resolve_engine's "not found on PATH".
+@test "doctor: SLUICE_ENGINE set but not on PATH reports 'not found on PATH', not 'install'" {
+  printf 'SLUICE_RUN_CMD="bash"\n' > "$WORK/sluice.config.sh"
+  run bash -c "cd '$WORK' && SLUICE_ENGINE=__nope__ '$SLUICE' doctor"
+  assert_success
+  assert_output --partial "SLUICE_ENGINE='__nope__' not found on PATH"
+  refute_output --partial "install docker or podman"
+}
+
+@test "doctor --json: SLUICE_ENGINE set but not on PATH -> engine_found false" {
+  printf 'SLUICE_RUN_CMD="bash"\n' > "$WORK/sluice.config.sh"
+  run bash -c "cd '$WORK' && SLUICE_ENGINE=__nope__ '$SLUICE' doctor --json 2>/dev/null"
+  assert_success
+  echo "$output" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+assert d['engine_found'] is False, d
+"
+}
+
+# --- A3: the daemon/image probes are bounded so doctor can't hang on a black-hole engine --------
+# A truly wedged daemon isn't reproducible no-Docker, so test the _with_timeout primitive directly:
+# a slow command is KILLED within ~the bound and reports non-zero (124, coreutils' timeout code),
+# while a fast command passes its real status through. (Extract the fn from bin/sluice, the pattern
+# the unmasked-cap test above uses.)
+@test "doctor: _with_timeout kills a slow command within the bound (non-zero)" {
+  local t="$BATS_TEST_TMPDIR/with_timeout.sh"
+  echo 'set -euo pipefail' > "$t"
+  sed -n '/^_with_timeout()/,/^}/p' "$ROOT/bin/sluice" >> "$t"
+  {
+    echo '_with_timeout 5 true && echo FAST_OK'                         # fast success -> rc 0
+    echo 'if _with_timeout 5 false; then echo BUG; else echo FAST_FAIL_OK; fi'  # fast non-zero passes through
+    echo 's=$(date +%s); if _with_timeout 1 sleep 10; then echo SLOW_BUG; else echo "SLOW_KILLED rc=$?"; fi; e=$(date +%s); echo "ELAPSED=$((e-s))"'
+  } >> "$t"
+  run bash "$t"
+  assert_success
+  assert_output --partial "FAST_OK"
+  assert_output --partial "FAST_FAIL_OK"
+  assert_output --partial "SLOW_KILLED"        # the slow command was terminated, not awaited to completion
+  # killed well under the command's own 10s sleep (bound is 1s; allow generous slack for CI)
+  local elapsed; elapsed="$(printf '%s\n' "$output" | sed -n 's/^ELAPSED=//p')"
+  [ -n "$elapsed" ] && [ "$elapsed" -lt 8 ]
 }
 
 # A syntax-error config must not abort doctor - it's the command you run BECAUSE the config is broken.
