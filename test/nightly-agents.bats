@@ -31,7 +31,7 @@ _agent_teardown() {
 }
 
 _verify_agent() {
-  local name="$1" preset="$ROOT/agents/$1.config.sh" work c bin hosts envvars firstvar h code got
+  local name="$1" preset="$ROOT/agents/$1.config.sh" work c bin hosts envvars firstvar h nc got
   [ -f "$preset" ] || { echo "no preset for $name"; return 1; }
   bin="$(. "$preset"; printf '%s' "${SLUICE_RUN_CMD%% *}")"
   hosts="$(. "$preset"; printf '%s' "${SLUICE_ALLOW_DOMAINS:-}")"
@@ -48,13 +48,24 @@ _verify_agent() {
   ( cd "$work" && "$SLUICE" run sh -lc "command -v $bin >/dev/null" ) >/dev/null 2>&1 \
     || { echo "$bin NOT on PATH after installing the preset's npm package"; _agent_teardown "$c" "$work"; return 1; }
 
-  # 2. every declared API host is reachable through the proxy
+  # 2. every declared API host is reachable through the proxy.
+  #    Reachable == a connection was established (num_connects>=1): DNS resolved AND the TCP/TLS
+  #    handshake completed at least once. We key off %{num_connects}, NOT the HTTP code: telemetry /
+  #    worker / statsig backends complete TLS but answer a bare unauthenticated GET with no body (curl
+  #    exit 52, http 000) - that host IS reachable. NXDOMAIN / refused / timeout leave num_connects=0
+  #    (curl exit 6/7/28) and MUST still fail - that drift is exactly what this test exists to catch.
+  #    A leading-dot wildcard entry (.x.y) names a zone, not a host: its apex is usually NXDOMAIN (only
+  #    *.x.y resolves), so there is no well-defined apex to GET - we strip the dot then skip the literal
+  #    probe. The wildcard's egress is still covered by squid dstdomain (egress-helpers units) + the
+  #    cred-gated live probe in step 5 (which greps the proxy log for ssl_sni over a real subdomain).
   for h in $hosts; do
-    # `|| true`: the harness runs under errexit, so a non-zero curl/run here must NOT abort the test -
-    # let it fall through to the UNREACHABLE handler below so the failing host is named (was a bare
-    # "failed with status 6" that hid which host drifted).
-    code="$( cd "$work" && "$SLUICE" run sh -lc "curl -sS -o /dev/null -w '%{http_code}' --max-time 12 https://$h" 2>/dev/null || true )"
-    { [ -n "$code" ] && [ "$code" != 000 ]; } || { echo "allow $h UNREACHABLE (got '$code')"; _agent_teardown "$c" "$work"; return 1; }
+    case "$h" in .*) continue ;; esac   # wildcard: strip leaves no probeable apex host
+    h="${h#.}"                          # (defensive) drop a leading dot before interpolating into the URL
+    # `|| true`: the harness runs under errexit, so a connect failure (curl exit 6/7/28) or a no-body
+    # TLS connect (52) must NOT abort the test - let it fall through to the UNREACHABLE handler below
+    # so the drifted host is named (was a bare "failed with status 6" that hid which host drifted).
+    nc="$( cd "$work" && "$SLUICE" run sh -lc "curl -sS -o /dev/null -w '%{num_connects}' --max-time 12 https://$h" 2>/dev/null || true )"
+    { [ -n "$nc" ] && [ "$nc" != 0 ]; } || { echo "allow $h UNREACHABLE (num_connects='$nc')"; _agent_teardown "$c" "$work"; return 1; }
   done
 
   # 3. a non-allowlisted host is blocked

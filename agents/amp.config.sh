@@ -7,8 +7,10 @@
 # Auth: export AMP_API_KEY (from ampcode.com/settings) on the HOST (forwarded, never baked).
 SLUICE_EXTRA_NPM="@ampcode/cli"
 # ampcode.com = service + installer; static.ampcode.com = binary/version updates; auth.ampcode.com =
-# auth handshake; production.ampworkers.com = the Amp client's WebSocket (all per ampcode.com/security).
-SLUICE_ALLOW_DOMAINS="ampcode.com static.ampcode.com auth.ampcode.com production.ampworkers.com"
+# auth handshake (all per ampcode.com/security). production.ampworkers.com (the Amp client's WebSocket)
+# is also listed there but currently has no public DNS record (A/AAAA empty), so it resolves nowhere and
+# an allow entry would be inert; re-add it if Amp publishes an address for it.
+SLUICE_ALLOW_DOMAINS="ampcode.com static.ampcode.com auth.ampcode.com"
 SLUICE_DESC="Amp (Sourcegraph)"
 # In-repo secrets: .env* files are shadowed (unreadable in the box); SLUICE_MASK="" to disable.
 SLUICE_MASK=".env*"
