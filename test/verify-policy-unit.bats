@@ -186,6 +186,30 @@ printf "EFF=[%s] ALLOW=[%s] EXPORT=[%s]\n" "$_PEVAL_EFFECTIVE" "$SLUICE_ALLOW_DO
   assert_output --partial "EXPORT=[<unset>]"                             # and nothing exported
 }
 
+# A glob-leading allowlist wildcard (`*.s3.amazonaws.com`, a documented form) must reach the EFFECTIVE
+# list LITERALLY - policy_evaluate must not pathname-expand it against the invocation $PWD. apply_policy
+# assigns SLUICE_ALLOW_DOMAINS from _PEVAL_EFFECTIVE, so an expansion would corrupt the ENFORCED egress
+# allowlist on the run path. DETERMINISTIC: a planted file named exactly `evil.s3.amazonaws.com` in the
+# CWD makes the old (no set -f) behavior reliably wrong - the glob expands to that one filename - so this
+# does not depend on find/glob order. With the fix (set -f over the merge loop) the entry stays literal.
+@test "policy: a glob-leading allow wildcard stays literal - no \$PWD pathname expansion (the major)" {
+  local plant="$BATS_TEST_TMPDIR/plant-cwd"; mkdir -p "$plant"
+  : > "$plant/evil.s3.amazonaws.com"          # the file the bare glob WOULD expand to
+  : > "$plant/also.s3.amazonaws.com"          # a second match, so an expansion is unmistakably wrong
+  export PLANTDIR="$plant"
+  export POLICY_BODY=$'allow other.example.com'   # minimal policy so policy_evaluate runs (policy_configured stubbed true)
+  export SLUICE_ALLOW_DOMAINS="*.s3.amazonaws.com"
+  local t="$BATS_TEST_TMPDIR/eval_noglob.sh"
+  _poleval_script "$t" 'cd "$PLANTDIR" || exit 99
+policy_evaluate
+printf "EFF=[%s]\n" "$_PEVAL_EFFECTIVE"'
+  run bash "$t"
+  assert_success
+  assert_output --partial "EFF=[*.s3.amazonaws.com other.example.com]"   # the wildcard is LITERAL, not the planted filename(s)
+  refute_output --partial "evil.s3.amazonaws.com"                        # the bug would substitute the planted file
+  refute_output --partial "also.s3.amazonaws.com"
+}
+
 # doctor report-only (no engine, no Docker): a config the policy would REFUSE must make `sluice doctor`
 # surface "policy would refuse: <reason>" + the EFFECTIVE (post-deny) allowlist, and still exit 0 (doctor
 # never dies). This is the doctor-A1 fix - doctor used to green-light a config run/build would die on.
