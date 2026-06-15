@@ -136,3 +136,43 @@ _polsign() {
   [[ "$args" == *"--certificate-identity-regexp ^https://acme/"* ]]
   [[ "$args" == *"--certificate-oidc-issuer https://issuer.example"* ]]
 }
+
+# --- doctor report-only (doctor-A1) -----------------------------------------------------------
+# `sluice doctor` evaluates the policy REPORT-ONLY: it must show what run/build WOULD refuse + the
+# effective (post-deny) allowlist, while never dying itself. The run-path die tests above prove the
+# refusal still aborts a build; these prove doctor SURFACES the same verdict without aborting - the
+# gap doctor-A1 closed (doctor used to green-light a config the run path dies on).
+@test "policy: doctor surfaces 'policy would refuse' + the effective allowlist, never dies" {
+  local d; d="$(mktemp -d)"; mkdir -p "$d/b"
+  printf 'SLUICE_RUN_CMD="true"\nSLUICE_ALLOW_DOMAINS="keep.example.com drop.example.com gist.github.com"\n' > "$d/b/sluice.config.sh"
+  printf 'allow added.example.com\ndeny drop.example.com\nforbid-laundering\n' > "$d/p.conf"
+  run bash -c "cd '$d/b' && SLUICE_POLICY_URL='file://$d/p.conf' NO_COLOR=1 '$SLUICE' doctor"
+  rm -rf "$d"
+  assert_success                                             # doctor stays non-dying (exit 0)
+  assert_output --partial "policy would refuse:"
+  assert_output --partial "laundering-capable allowlisted host(s): gist.github.com"
+  assert_output --partial "added.example.com"               # policy-added host shows on the effective list
+  assert_output --partial "effective, post-policy"
+}
+
+@test "policy: doctor --json carries policy.effective_allowlist + policy.refusals[]" {
+  local d; d="$(mktemp -d)"; mkdir -p "$d/b"
+  printf 'SLUICE_RUN_CMD="true"\nSLUICE_ALLOW_DOMAINS="keep.example.com drop.example.com"\n' > "$d/b/sluice.config.sh"
+  printf 'allow added.example.com\ndeny drop.example.com\nforbid-laundering\n' > "$d/p.conf"
+  run bash -c "cd '$d/b' && SLUICE_POLICY_URL='file://$d/p.conf' '$SLUICE' doctor --json"
+  rm -rf "$d"
+  assert_success
+  assert_output --partial '"policy":{'
+  assert_output --partial '"effective_allowlist":["added.example.com","keep.example.com"]'
+  assert_output --partial '"refusals":['
+  assert_output --partial '"reachable":true'
+}
+
+@test "policy: doctor completes on an unreachable policy URL (surfaces 'unreachable', exit 0)" {
+  local d; d="$(mktemp -d)"; mkdir -p "$d/b"
+  printf 'SLUICE_RUN_CMD="true"\nSLUICE_ALLOW_DOMAINS="keep.example.com"\n' > "$d/b/sluice.config.sh"
+  run bash -c "cd '$d/b' && SLUICE_POLICY_URL='file://$d/nope.conf' NO_COLOR=1 '$SLUICE' doctor"
+  rm -rf "$d"
+  assert_success
+  assert_output --partial "unreachable"
+}
