@@ -8,6 +8,30 @@ echo "[firewall] configuring hostname-filtered egress..."
 
 # Per-project config (SLUICE_PORTS, SLUICE_ALLOW_IPS) - baked at /usr/local/share/sluice.config.sh.
 [ -f /usr/local/share/sluice.config.sh ] && . /usr/local/share/sluice.config.sh
+# Disable globbing so the unquoted SLUICE_PORTS / SLUICE_ALLOW_IPS splits below can't glob a '*' in a
+# value into filenames. Nothing here needs pathname expansion. (No re-enable; we never glob.)
+set -f
+
+# Defense-in-depth floor (must match the launcher's validate_allow_ips): a SLUICE_ALLOW_IPS CIDR
+# shorter than this is too broad for a raw direct-egress ACCEPT, so the firewall refuses it even if the
+# launcher gate was bypassed (e.g. a hand-baked config). /32 (single host) is always fine.
+ALLOW_IPS_MIN_PREFIX=8
+
+# rc 0 (=refuse) if $1 (an ip/cidr, port already stripped) is too broad for a direct-egress ACCEPT:
+# any 0.0.0.0/N, a malformed prefix, or a CIDR below the /8 floor. Called from BOTH SLUICE_ALLOW_IPS
+# arms (bare + ip:port) so they can't drift. Warns on the refused entry; rc 1 = let it through.
+_ip_entry_too_broad() {
+  case "$1" in
+    0.0.0.0|0.0.0.0/*)  echo "[firewall] WARN: refusing SLUICE_ALLOW_IPS entry covering 0.0.0.0 (all direct egress): $1" >&2; return 0 ;;
+    */*)
+      _plen="${1##*/}"
+      case "$_plen" in
+        ''|*[!0-9]*)  echo "[firewall] WARN: skipping malformed SLUICE_ALLOW_IPS entry: $1" >&2; return 0 ;;
+        *) [ "$_plen" -lt "$ALLOW_IPS_MIN_PREFIX" ] && { echo "[firewall] WARN: refusing too-broad SLUICE_ALLOW_IPS /$_plen (floor /$ALLOW_IPS_MIN_PREFIX): $1" >&2; return 0; } ;;
+      esac ;;
+  esac
+  return 1
+}
 
 SQUID_UID="$(id -u squid)"
 HTTP_PORT=3129
@@ -56,12 +80,24 @@ iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
 # entry is ip[:port[/proto]] - a bare ip/cidr opens EVERY port (legacy), ip:5432 scopes to one tcp
 # port, ip:5432/udp picks the proto. We are IPv4-only, so the single ':' splits host from port cleanly.
 for entry in ${SLUICE_ALLOW_IPS:-}; do
+  # Skip+warn an IPv6 literal (the single-colon split below is IPv4-only) - feeding iptables a broken
+  # -d would abort the whole firewall under set -e, fail-closing the box on one malformed entry.
+  case "$entry" in
+    *::*)         echo "[firewall] WARN: skipping IPv6 SLUICE_ALLOW_IPS entry (IPv4-only): $entry" >&2; continue ;;
+  esac
   case "$entry" in
     *:*)
+      case "${entry#*:}" in *:*) echo "[firewall] WARN: skipping IPv6 SLUICE_ALLOW_IPS entry (IPv4-only): $entry" >&2; continue ;; esac
       ippart="${entry%%:*}"; portspec="${entry#*:}"; proto="tcp"; port="$portspec"
       case "$portspec" in */*) port="${portspec%%/*}"; proto="${portspec#*/}" ;; esac
+      # The floor/0.0.0.0 refusal applies to the HOST part too - a port scopes the egress but doesn't
+      # narrow the dst, so 0.0.0.0/1:443 would still open port 443 to half the internet, direct.
+      _ip_entry_too_broad "$ippart" && continue
       iptables -A OUTPUT -d "$ippart" -p "$proto" --dport "$port" -j ACCEPT ;;
     *)
+      # Bare entry = ACCEPT every port to that dst. Refuse a too-broad CIDR (below the floor, or any
+      # 0.0.0.0/N) so a bypassed launcher check can't open all direct egress; a /32 or a single IP is fine.
+      _ip_entry_too_broad "$entry" && continue
       iptables -A OUTPUT -d "$entry" -j ACCEPT ;;
   esac
 done

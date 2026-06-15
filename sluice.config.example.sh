@@ -57,9 +57,9 @@ SLUICE_BASE_IMAGE=""
 # The one no-rebuild knob - `sluice learn` edits it live. e.g. "api.example.com .cdn.example.net"
 SLUICE_ALLOW_DOMAINS=""
 
-# Fixed IPs/CIDRs for NON-HTTP services - direct egress, bypassing the hostname proxy.
-# Scope each to one port with ip:port[/proto]; a colon-less entry opens EVERY port (warns), and a
-# catch-all (0.0.0.0/0, any /0) is refused. e.g. "10.0.0.5:5432" (Postgres) "10.0.0.6:6379/tcp"
+# Fixed IPs/CIDRs for NON-HTTP services - direct egress, bypassing the hostname proxy. IPv4-only.
+# Scope each to one port with ip:port[/proto]; a colon-less entry opens EVERY port (warns). Refused:
+# any /0 or 0.0.0.0/N, a CIDR broader than the /8 floor, and IPv6. e.g. "10.0.0.5:5432" (Postgres)
 SLUICE_ALLOW_IPS=""
 
 # Central egress policy: a URL (http/https/file) to an org policy, applied host-side as the final
