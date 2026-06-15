@@ -7,9 +7,10 @@
 # Auth: export ANTHROPIC_API_KEY (or CLAUDE_CODE_OAUTH_TOKEN) on the HOST before running -
 # it's forwarded into the box, never baked. Browser OAuth can't complete headless, use a key.
 SLUICE_EXTRA_NPM="@anthropic-ai/claude-code"
-# statsig.{com,anthropic.com} are Claude Code's feature-flag/metrics hosts (flags can affect behavior,
-# so both are allowed, matching upstream init-firewall). sentry.io error reporting is left blocked.
-SLUICE_ALLOW_DOMAINS="api.anthropic.com platform.claude.com claude.ai statsig.com statsig.anthropic.com"
+# statsig.com is Claude Code's feature-flag/metrics host (flags can affect behavior). Upstream's
+# init-firewall also lists statsig.anthropic.com, but that name has no public DNS (anthropics/claude-code#55623);
+# dropped - statsig.com covers the real backend. sentry.io error reporting is left blocked.
+SLUICE_ALLOW_DOMAINS="api.anthropic.com platform.claude.com claude.ai statsig.com"
 SLUICE_DESC="Claude Code (Anthropic)"
 # In-repo secrets: .env* files are shadowed (unreadable in the box); SLUICE_MASK="" to disable.
 SLUICE_MASK=".env*"
