@@ -973,6 +973,204 @@ symlinks_outside_scope() {
 
 _doc() { printf '  %-10s %s\n' "$1" "$2"; }
 
+# --- central egress policy (v2): deny-capable, ceiling-setting ------------------------------------
+# Defined HERE (not next to apply_policy in the run-path slice) so the machinery exists before the
+# early `doctor` dispatch can call policy_evaluate report-only. Sources, lowest trust first (a
+# deny/forbid from ANY source is final): $SLUICE_POLICY_URL (env, per user/CI),
+# ~/.config/sluice/policy.conf (user), /etc/sluice/policy.conf (root-owned - the org's MANAGED policy;
+# tamper-resistant ONLY because a dev can't edit it without root, and the org pushes it). OSS ships the
+# enforcement; the can't-remove-it property is the org's root-owned-file deployment. Line directives (a
+# bare host = allow, back-compat): allow H | deny H | deny-ip CIDR | forbid SLUICE_X | forbid-laundering
+# | max-allow-ips N. Host-side final gate BEFORE build/run (apply_policy): effective allowlist = (local
+# + allow) - deny; a forbidden loosening knob / laundering host / denied or over-cap ALLOW_IPS makes us
+# DIE. Inert when no policy is configured. A URL-fetched policy can be authenticated
+# (SLUICE_POLICY_SIG/_IDENTITY cosign, or SLUICE_POLICY_SHA256 pin; _REQUIRE fails closed).
+policy_configured() { [ -n "${SLUICE_POLICY_URL:-}" ] || [ -f "$HOME/.config/sluice/policy.conf" ] || [ -f /etc/sluice/policy.conf ]; }
+
+# Authenticate the URL-fetched policy body (the untrusted source; the root-owned /etc file is
+# filesystem-trusted). Fails CLOSED. SLUICE_POLICY_SHA256 pins the body hash (no cosign needed);
+# SLUICE_POLICY_SIG (a cosign sign-blob bundle, path or URL) + SLUICE_POLICY_IDENTITY (expected signer
+# regexp, + SLUICE_POLICY_ISSUER) verifies the signature; SLUICE_POLICY_REQUIRE=1 makes an unverifiable
+# policy fatal even if neither is set.
+_verify_policy_sig() {
+  local body="$1" tmp sig sf got issuer="${SLUICE_POLICY_ISSUER:-https://token.actions.githubusercontent.com}"
+  if [ -n "${SLUICE_POLICY_SHA256:-}" ]; then
+    got="$(printf '%s' "$body" | _sha256)"
+    [ "$got" = "$SLUICE_POLICY_SHA256" ] || die "policy body sha256 ($got) != pinned SLUICE_POLICY_SHA256 - refusing."
+  fi
+  if [ -n "${SLUICE_POLICY_SIG:-}" ]; then
+    command -v cosign >/dev/null 2>&1 || die "SLUICE_POLICY_SIG is set but cosign is not installed - can't verify the policy signature."
+    [ -n "${SLUICE_POLICY_IDENTITY:-}" ] || die "SLUICE_POLICY_SIG is set but SLUICE_POLICY_IDENTITY (expected signer) is not - refusing to verify against any identity."
+    tmp="$(mktemp)"; printf '%s' "$body" > "$tmp"; sig="$SLUICE_POLICY_SIG"
+    case "$sig" in http://*|https://*|file://*)
+      sf="$(mktemp)"; curl -fsSL --max-time 10 "$SLUICE_POLICY_SIG" > "$sf" 2>/dev/null || { rm -f "$tmp" "$sf"; die "could not fetch SLUICE_POLICY_SIG=$SLUICE_POLICY_SIG"; }; sig="$sf" ;;
+    esac
+    if cosign verify-blob "$tmp" --bundle "$sig" \
+         --certificate-identity-regexp "$SLUICE_POLICY_IDENTITY" --certificate-oidc-issuer "$issuer" >/dev/null 2>&1; then
+      rm -f "$tmp"; [ -n "${sf:-}" ] && rm -f "$sf"
+    else
+      rm -f "$tmp"; [ -n "${sf:-}" ] && rm -f "$sf"
+      die "policy signature verification failed (expected signer $SLUICE_POLICY_IDENTITY) - refusing."
+    fi
+  fi
+  if [ "${SLUICE_POLICY_REQUIRE:-}" = 1 ] && [ -z "${SLUICE_POLICY_SIG:-}" ] && [ -z "${SLUICE_POLICY_SHA256:-}" ]; then
+    die "SLUICE_POLICY_REQUIRE=1 but no SLUICE_POLICY_SIG / SLUICE_POLICY_SHA256 is configured - the policy is unverifiable."
+  fi
+  return 0
+}
+
+# Merged policy text from all sources (low->high precedence). A configured-but-unfetchable URL is fatal
+# (a managed policy must never silently fall back to local-only); a URL body is authenticated before use.
+_policy_raw() {
+  local url="${SLUICE_POLICY_URL:-}" uf="$HOME/.config/sluice/policy.conf" sf="/etc/sluice/policy.conf" chunk
+  if [ -n "$url" ]; then
+    chunk="$(curl -fsSL --max-time 10 "$url" 2>/dev/null)" \
+      || die "SLUICE_POLICY_URL=$url could not be fetched - refusing to run without the configured policy (make it reachable, or unset it)."
+    _verify_policy_sig "$chunk"
+    printf '%s\n' "$chunk"
+  fi
+  [ -f "$uf" ] && { cat "$uf"; echo; }
+  [ -f "$sf" ] && { cat "$sf"; echo; }
+  return 0   # a false final [ -f ] test would otherwise abort body=$(_policy_raw) under set -e
+}
+
+_ip2int() {
+  local a b c d; IFS=. read -r a b c d <<<"${1:-0.0.0.0}"
+  printf '%s' "$(( ((a&255)<<24)|((b&255)<<16)|((c&255)<<8)|(d&255) ))"
+}
+# 0 if IPv4 $1 is within $2 (ip or ip/bits).
+_ip_in_cidr() {
+  local ip="$1" base bits a b mask
+  case "$2" in */*) base="${2%/*}"; bits="${2#*/}" ;; *) base="$2"; bits=32 ;; esac
+  case "$bits" in ''|*[!0-9]*) bits=32 ;; esac
+  a="$(_ip2int "$ip")"; b="$(_ip2int "$base")"
+  [ "$bits" -le 0 ] && return 0
+  [ "$bits" -ge 32 ] && { [ "$a" = "$b" ]; return; }
+  mask=$(( 0xFFFFFFFF ^ ((1 << (32 - bits)) - 1) ))
+  [ "$(( a & mask ))" -eq "$(( b & mask ))" ]
+}
+# 0 if host $1 is denied by the space-list $2 (exact, or a leading-dot wildcard matching subdomains).
+_policy_denied_host() {
+  local h="$1" d
+  for d in $2; do
+    [ "$h" = "$d" ] && return 0
+    case "$d" in .*) case ".$h" in *"$d") return 0 ;; esac ;; esac
+  done
+  return 1
+}
+
+# 0 if the leading-dot allow wildcard $1 COVERS any deny token in the space-list $2 - i.e. allowing it
+# would silently re-admit a host the policy denies (deny is host-granular; a .parent allow swallows it).
+# Only meaningful for a leading-dot wildcard; an exact allow host is handled by _policy_denied_host.
+_allow_covers_denied() {
+  local w="$1" d db
+  case "$w" in .*) ;; *) return 1 ;; esac
+  for d in $2; do
+    db="${d#.}"                          # a deny wildcard .x denies x + subs; covering x suffices
+    case ".$db" in *"$w") return 0 ;; esac
+  done
+  return 1
+}
+
+# PURE policy evaluator: parse the merged policy, compute the effective allowlist + wildcard conflicts,
+# and COLLECT every violation (with the exact human reason apply_policy dies with) into output globals -
+# in the same order apply_policy refuses. It does NOT die (except via _policy_raw, whose fail-closed die
+# on an UNREACHABLE policy URL is correct + shared), NOT mutate SLUICE_ALLOW_DOMAINS, NOT export, NOT
+# echo. Both the run path (apply_policy, die-mode) and doctor (report-only) call it. Outputs:
+#   _PEVAL_EFFECTIVE  effective allowlist = (local + allow) - deny  (the value apply_policy assigns)
+#   _PEVAL_REFUSALS   newline-separated refusal reasons, in run-path die order (empty = clean)
+#   _PEVAL_RSBASE     1 if require-signed-base (apply_policy exports SLUICE_REQUIRE_SIGNED)
+#   _PEVAL_SRC        policy source label;  _PEVAL_SUMMARY  "N allow, N deny, N forbid"
+#   _PEVAL_UNKNOWNS   unknown directive tokens;  _PEVAL_STRICT  1 if strict-unknown
+policy_evaluate() {
+  local body allow="" deny="" denyip="" forbid="" maxips="" launder=0 strict=0 rsbase=0 unknowns="" line verb arg
+  body="$(_policy_raw)"
+  while IFS= read -r line; do
+    line="${line%%#*}"; line="$(printf '%s' "$line" | awk '{$1=$1};1')"; [ -n "$line" ] || continue
+    verb="${line%% *}"; arg="${line#"$verb"}"; arg="$(printf '%s' "$arg" | awk '{$1=$1};1')"
+    case "$verb" in
+      allow)               allow="$allow $arg" ;;
+      deny)                deny="$deny $arg" ;;
+      deny-ip)             denyip="$denyip $arg" ;;
+      forbid)              forbid="$forbid $arg" ;;
+      forbid-laundering)   launder=1 ;;
+      max-allow-ips)       maxips="$arg" ;;
+      strict-unknown)      strict=1 ;;
+      require-signed-base) rsbase=1 ;;
+      *) if [ -z "$arg" ] && printf '%s' "$verb" | grep -qE '^\.?[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$'; then allow="$allow $verb"
+         else unknowns="$unknowns $verb"; fi ;;
+    esac
+  done <<EOF
+$body
+EOF
+  _PEVAL_UNKNOWNS="$unknowns"; _PEVAL_STRICT="$strict"; _PEVAL_RSBASE="$rsbase"
+  local refusals=""
+  # Refusals are collected in the SAME order apply_policy dies on them, so dying on the first non-empty
+  # line reproduces the run-path verdict exactly. (1) unknown directive(s) under strict-unknown.
+  if [ -n "$unknowns" ] && [ "$strict" = 1 ]; then
+    refusals="$refusals""policy: unknown directive(s):$unknowns - refusing (strict-unknown)."$'\n'
+  fi
+  # (2) forbidden loosening knobs: the org said no - the local config must not set one. Same per-knob
+  # reason + same order as the run-path loop.
+  local k
+  for k in $forbid; do
+    case "$k" in
+      SLUICE_DNS_OPEN|SLUICE_ALLOW_DOH) if [ "${!k:-}" = 1 ]; then refusals="$refusals""policy forbids ${k}=1 (your config sets it) - remove it to run under this policy."$'\n'; fi ;;
+      *) if [ -n "${!k:-}" ]; then refusals="$refusals""policy forbids setting ${k} (your config sets it) - remove it to run under this policy."$'\n'; fi ;;
+    esac
+  done
+  # effective allowlist = (local + policy allow) - policy deny. (3) a leading-dot allow wildcard that
+  # COVERS a deny token would silently re-admit a denied host - a conflict refusal.
+  local merged eff="" h conflict=""
+  merged="$(printf '%s %s' "${SLUICE_ALLOW_DOMAINS:-}" "$allow" | tr ' ' '\n' | sed '/^$/d' | sort -u)"
+  for h in $merged; do
+    if _policy_denied_host "$h" "$deny"; then continue
+    elif _allow_covers_denied "$h" "$deny"; then conflict="$conflict $h"
+    else eff="$eff $h"; fi
+  done
+  if [ -n "$conflict" ]; then refusals="$refusals""policy: allowlist wildcard(s)$conflict would re-admit a host the policy denies - narrow them to exact hosts to run under this policy (deny is final)."$'\n'; fi
+  _PEVAL_EFFECTIVE="$(printf '%s' "$eff" | awk '{$1=$1};1')"
+  # (4) forbid-laundering: any laundering-capable host left on the EFFECTIVE allowlist (matches the
+  # run path, which checks the post-deny list).
+  if [ "$launder" = 1 ]; then
+    local risky=""; for h in $_PEVAL_EFFECTIVE; do if laundering_host "$h"; then risky="$risky $h"; fi; done
+    if [ -n "$risky" ]; then refusals="$refusals""policy forbids laundering-capable allowlisted host(s):$risky"$'\n'; fi
+  fi
+  # (5) SLUICE_ALLOW_IPS matching a deny-ip, then (6) over the max-allow-ips cap. Same order, same count.
+  local ipn=0 e ipp d
+  for e in ${SLUICE_ALLOW_IPS:-}; do
+    ipn=$((ipn+1)); ipp="${e%%:*}"; ipp="${ipp%%/*}"
+    for d in $denyip; do if _ip_in_cidr "$ipp" "$d"; then refusals="$refusals""policy denies SLUICE_ALLOW_IPS '$e' (matches deny-ip $d)"$'\n'; fi; done
+  done
+  case "$maxips" in ''|*[!0-9]*) ;; *) if [ "$ipn" -gt "$maxips" ]; then refusals="$refusals""policy caps SLUICE_ALLOW_IPS at $maxips (your config has $ipn)"$'\n'; fi ;; esac
+  _PEVAL_REFUSALS="$refusals"
+  # source + counts for visibility (banner/run line / doctor).
+  _PEVAL_SRC="$([ -f /etc/sluice/policy.conf ] && echo /etc/sluice/policy.conf || { [ -f "$HOME/.config/sluice/policy.conf" ] && echo "$HOME/.config/sluice/policy.conf" || echo "${SLUICE_POLICY_URL:-}"; })"
+  _PEVAL_SUMMARY="$(printf '%s allow, %s deny, %s forbid' "$(printf '%s' "$allow" | wc -w | tr -d ' ')" "$(printf '%s' "$deny" | wc -w | tr -d ' ')" "$(printf '%s' "$forbid" | wc -w | tr -d ' ')")"
+}
+
+# Doctor-only, REPORT-ONLY policy evaluation: run policy_evaluate WITHOUT dying or mutating anything,
+# so doctor can show the post-deny effective allowlist + the refusals a run/build would hit. It runs in
+# a child subshell so policy_evaluate's global writes don't leak into the rest of doctor's report. The
+# subshell FIRST probes the policy source with a plain _policy_raw call: a `|| exit` makes an unreachable
+# URL an honest non-zero subshell exit (relying on the body=$(_policy_raw) assignment inside
+# policy_evaluate to propagate the die is unsafe - set -e is suppressed for a command whose status is
+# being captured, which would silently yield an empty body). On success it prints the effective
+# allowlist (line 1) then the refusal reasons (one per line); on an unreachable source it exits non-zero
+# and we surface "unreachable" so doctor still COMPLETES. (The probe + policy_evaluate's own fetch means
+# a URL policy is fetched twice on the doctor path - benign for a one-shot diagnostic.) Caller guards
+# with policy_configured. Sets doctor-local: _DPE_STATUS (ok|unreachable), _DPE_EFF, _DPE_REFUSALS.
+_doctor_policy_eval() {
+  local blob rc
+  blob="$( _policy_raw >/dev/null 2>&1 || exit 1
+           policy_evaluate
+           printf '%s\n' "$_PEVAL_EFFECTIVE"; printf '%s' "$_PEVAL_REFUSALS" )" && rc=0 || rc=$?
+  if [ "${rc:-0}" -ne 0 ]; then _DPE_STATUS=unreachable; _DPE_EFF=""; _DPE_REFUSALS=""; return 0; fi
+  _DPE_STATUS=ok
+  _DPE_EFF="$(printf '%s' "$blob" | sed -n '1p')"
+  _DPE_REFUSALS="$(printf '%s' "$blob" | sed '1d')"
+}
+
 # Run a command with a wall-clock bound so doctor never hangs on a black-hole engine (a wedged
 # DOCKER_HOST makes `info`/`image inspect` block for 20s+). Uses timeout/gtimeout when present;
 # stock macOS has neither, so fall back to a background pid + a killer that SIGKILLs it past the
@@ -1120,11 +1318,30 @@ cmd_doctor() {
   [ -n "$_hard" ] && _doc harden "${_hard# }"
 
   [ -n "${SLUICE_PORTS:-}" ] && _doc ports "$SLUICE_PORTS ${C_DIM}(published on 127.0.0.1)${C_RST}"
-  _doc allowlist "${SLUICE_ALLOW_DOMAINS:-(none beyond base)}"
+  # Under a managed policy, the live allowlist is (local + allow) - deny: show what would ACTUALLY be
+  # allowed, plus any refusal a run/build would die on - report-only, doctor never dies or mutates.
+  local _eff_allow="${SLUICE_ALLOW_DOMAINS:-}" _pol_unreachable=""
+  if policy_configured; then
+    _doctor_policy_eval
+    if [ "$_DPE_STATUS" = unreachable ]; then
+      _pol_unreachable=1
+      _doc allowlist "${SLUICE_ALLOW_DOMAINS:-(none beyond base)} ${C_DIM}(pre-policy; policy unreachable)${C_RST}"
+    else
+      _eff_allow="$_DPE_EFF"
+      _doc allowlist "${_eff_allow:-(none beyond base)} ${C_DIM}(effective, post-policy deny/wildcard)${C_RST}"
+      if [ -n "$_DPE_REFUSALS" ]; then
+        printf '%s\n' "$_DPE_REFUSALS" | while IFS= read -r _r; do
+          [ -n "$_r" ] && _doc "" "${C_RED}policy would refuse:${C_RST} $_r"
+        done
+      fi
+    fi
+  else
+    _doc allowlist "${SLUICE_ALLOW_DOMAINS:-(none beyond base)}"
+  fi
   _doc "" "base: $(base_domains)"
   local _risky="" _doh="" _h
   set -f   # the allowlist entries are not globs - keep a wildcard (e.g. *.s3.amazonaws.com) literal
-  for _h in ${SLUICE_ALLOW_DOMAINS:-}; do
+  for _h in ${_eff_allow:-}; do
     laundering_host "$_h" && _risky="$_risky $_h"
     doh_listed "$_h" && _doh="$_doh $_h"
   done
@@ -1135,7 +1352,10 @@ cmd_doctor() {
     else _doc "" "${C_DIM}note: DoH resolver(s) on the allowlist -${_doh} - still BLOCKED (DoH exfil channel); SLUICE_ALLOW_DOH=1 to permit${C_RST}"; fi
   fi
   [ -n "${SLUICE_ALLOW_IPS:-}" ] && _doc "" "ips:  $SLUICE_ALLOW_IPS ${C_DIM}(direct egress, bypasses the hostname filter; bare ip = any port, ip:port scopes it)${C_RST}"
-  [ -n "${SLUICE_POLICY_URL:-}" ] && _doc policy "$SLUICE_POLICY_URL"
+  if [ -n "${SLUICE_POLICY_URL:-}" ]; then
+    if [ -n "$_pol_unreachable" ]; then _doc policy "${C_RED}$SLUICE_POLICY_URL - unreachable${C_RST} (run/build would refuse to start)"
+    else _doc policy "$SLUICE_POLICY_URL"; fi
+  fi
 
   if [ -n "${SLUICE_ENV:-}" ]; then
     for v in $SLUICE_ENV; do
@@ -1245,6 +1465,21 @@ cmd_doctor_json() {
   risk_json="$(printf '{"laundering_hosts":%s,"doh_hosts":%s,"allow_doh":%s}' \
     "$(printf '%s' "$_risky" | _json_arr)" "$(printf '%s' "$_doh" | _json_arr)" "$_allowdoh")"
 
+  # Managed-policy posture: the post-deny effective allowlist + the refusals a run/build would die on
+  # (report-only - _doctor_policy_eval never dies/mutates). null when no policy is configured; a
+  # configured-but-unfetchable URL surfaces as reachable:false (doctor still completes).
+  local policy_json=null
+  if policy_configured; then
+    _doctor_policy_eval
+    if [ "$_DPE_STATUS" = unreachable ]; then
+      policy_json='{"reachable":false,"effective_allowlist":[],"refusals":[]}'
+    else
+      policy_json="$(printf '{"reachable":true,"effective_allowlist":%s,"refusals":%s}' \
+        "$(printf '%s' "$_DPE_EFF" | tr ' ' '\n' | _json_arr)" \
+        "$(printf '%s' "$_DPE_REFUSALS" | _json_arr)")"
+    fi
+  fi
+
   # Extra binds as objects, each carrying whether its host source exists (a missing absolute source
   # passes doctor today but errors the engine at run - A7). set -f keeps a glob-y spec literal (A5).
   local mounts_json="[" _mf=1 _m _src _ex
@@ -1268,12 +1503,12 @@ cmd_doctor_json() {
   ips_json="$(printf '%s'     "${SLUICE_ALLOW_IPS:-}"     | tr ' \t' '\n\n' | _json_arr)"
   blocked_json="$(printf '%s' "$blocked"                  | tr ' \t' '\n\n' | _json_arr)"
 
-  printf '{"engine":"%s","engine_found":%s,"daemon":%s,"config":"%s","config_error":%s,"project_dir":"%s","name":"%s","desc":"%s","image":{"tag":"%s","built":%s,"stale":%s},"lock":"%s","allowlist":%s,"base":%s,"ports":%s,"allow_ips":%s,"base_image":"%s","policy_url":"%s","state_dirs":%s,"overlay_dirs":%s,"mounts":%s,"auth":%s,"hardening":%s,"mask":{"patterns":%s,"masked":%s,"unmasked_secrets":%s},"risk":%s,"broken_symlinks":%s,"egress":{"running":%s,"blocked":%s}}\n' \
+  printf '{"engine":"%s","engine_found":%s,"daemon":%s,"config":"%s","config_error":%s,"project_dir":"%s","name":"%s","desc":"%s","image":{"tag":"%s","built":%s,"stale":%s},"lock":"%s","allowlist":%s,"base":%s,"ports":%s,"allow_ips":%s,"base_image":"%s","policy_url":"%s","policy":%s,"state_dirs":%s,"overlay_dirs":%s,"mounts":%s,"auth":%s,"hardening":%s,"mask":{"patterns":%s,"masked":%s,"unmasked_secrets":%s},"risk":%s,"broken_symlinks":%s,"egress":{"running":%s,"blocked":%s}}\n' \
     "$(_json_esc "$engine_ver")" "$engine_found" "$daemon" "$(_json_esc "$PROJECT_CONFIG")" "$config_error" "$(_json_esc "$PROJECT_DIR")" "$(_json_esc "$tag")" "$(_json_esc "${SLUICE_DESC:-}")" \
     "$(_json_esc "$tag")" "$img_built" "$img_stale" "$lock" \
     "$allow_json" "$(base_domains | tr ' ' '\n' | _json_arr)" \
     "$ports_json" "$ips_json" "$(_json_esc "${SLUICE_BASE_IMAGE:-}")" \
-    "$(_json_esc "${SLUICE_POLICY_URL:-}")" "$nsd" "$overlays_json" "$mounts_json" "$auth_json" "$hardening_json" \
+    "$(_json_esc "${SLUICE_POLICY_URL:-}")" "$policy_json" "$nsd" "$overlays_json" "$mounts_json" "$auth_json" "$hardening_json" \
     "$mask_pats" "$mask_hits" "$mask_unm" "$risk_json" "$links_json" \
     "$running_b" "$blocked_json"
 }
@@ -2172,170 +2407,37 @@ PROJECT_DIR="$(cd "$(dirname "$PROJECT_CONFIG")" && pwd)"
 # per-project image + container names (SLUICE_NAME overrides the dir-name default)
 derive_names
 
-# --- central egress policy (v2): deny-capable, ceiling-setting ------------------------------------
-# Sources, lowest trust first (a deny/forbid from ANY source is final): $SLUICE_POLICY_URL (env, per
-# user/CI), ~/.config/sluice/policy.conf (user), /etc/sluice/policy.conf (root-owned - the org's MANAGED
-# policy; tamper-resistant ONLY because a dev can't edit it without root, and the org pushes it). OSS
-# ships the enforcement; the can't-remove-it property is the org's root-owned-file deployment.
-# Line directives (a bare host = allow, back-compat): allow H | deny H | deny-ip CIDR |
-#   forbid SLUICE_X | forbid-laundering | max-allow-ips N. Host-side final gate BEFORE build/run:
-# effective allowlist = (local + allow) - deny; a forbidden loosening knob / laundering host / denied
-# or over-cap ALLOW_IPS makes us DIE. Inert when no policy is configured. A URL-fetched policy can be
-# authenticated (SLUICE_POLICY_SIG/_IDENTITY cosign, or SLUICE_POLICY_SHA256 pin; _REQUIRE fails closed).
-policy_configured() { [ -n "${SLUICE_POLICY_URL:-}" ] || [ -f "$HOME/.config/sluice/policy.conf" ] || [ -f /etc/sluice/policy.conf ]; }
+# Central egress policy v2 evaluation machinery (policy_configured / _policy_raw / _verify_policy_sig /
+# the IP+host matchers / policy_evaluate) is defined up in src/30-doctor-ls.sh - it must exist BEFORE
+# the early `doctor` dispatch (top of this slice) so `sluice doctor` can evaluate the policy report-only.
+# Only apply_policy (the run-path die-mode gate) lives here, next to the dispatch that invokes it.
 
-# Authenticate the URL-fetched policy body (the untrusted source; the root-owned /etc file is
-# filesystem-trusted). Fails CLOSED. SLUICE_POLICY_SHA256 pins the body hash (no cosign needed);
-# SLUICE_POLICY_SIG (a cosign sign-blob bundle, path or URL) + SLUICE_POLICY_IDENTITY (expected signer
-# regexp, + SLUICE_POLICY_ISSUER) verifies the signature; SLUICE_POLICY_REQUIRE=1 makes an unverifiable
-# policy fatal even if neither is set.
-_verify_policy_sig() {
-  local body="$1" tmp sig sf got issuer="${SLUICE_POLICY_ISSUER:-https://token.actions.githubusercontent.com}"
-  if [ -n "${SLUICE_POLICY_SHA256:-}" ]; then
-    got="$(printf '%s' "$body" | _sha256)"
-    [ "$got" = "$SLUICE_POLICY_SHA256" ] || die "policy body sha256 ($got) != pinned SLUICE_POLICY_SHA256 - refusing."
-  fi
-  if [ -n "${SLUICE_POLICY_SIG:-}" ]; then
-    command -v cosign >/dev/null 2>&1 || die "SLUICE_POLICY_SIG is set but cosign is not installed - can't verify the policy signature."
-    [ -n "${SLUICE_POLICY_IDENTITY:-}" ] || die "SLUICE_POLICY_SIG is set but SLUICE_POLICY_IDENTITY (expected signer) is not - refusing to verify against any identity."
-    tmp="$(mktemp)"; printf '%s' "$body" > "$tmp"; sig="$SLUICE_POLICY_SIG"
-    case "$sig" in http://*|https://*|file://*)
-      sf="$(mktemp)"; curl -fsSL --max-time 10 "$SLUICE_POLICY_SIG" > "$sf" 2>/dev/null || { rm -f "$tmp" "$sf"; die "could not fetch SLUICE_POLICY_SIG=$SLUICE_POLICY_SIG"; }; sig="$sf" ;;
-    esac
-    if cosign verify-blob "$tmp" --bundle "$sig" \
-         --certificate-identity-regexp "$SLUICE_POLICY_IDENTITY" --certificate-oidc-issuer "$issuer" >/dev/null 2>&1; then
-      rm -f "$tmp"; [ -n "${sf:-}" ] && rm -f "$sf"
-    else
-      rm -f "$tmp"; [ -n "${sf:-}" ] && rm -f "$sf"
-      die "policy signature verification failed (expected signer $SLUICE_POLICY_IDENTITY) - refusing."
-    fi
-  fi
-  if [ "${SLUICE_POLICY_REQUIRE:-}" = 1 ] && [ -z "${SLUICE_POLICY_SIG:-}" ] && [ -z "${SLUICE_POLICY_SHA256:-}" ]; then
-    die "SLUICE_POLICY_REQUIRE=1 but no SLUICE_POLICY_SIG / SLUICE_POLICY_SHA256 is configured - the policy is unverifiable."
-  fi
-  return 0
-}
-
-# Merged policy text from all sources (low->high precedence). A configured-but-unfetchable URL is fatal
-# (a managed policy must never silently fall back to local-only); a URL body is authenticated before use.
-_policy_raw() {
-  local url="${SLUICE_POLICY_URL:-}" uf="$HOME/.config/sluice/policy.conf" sf="/etc/sluice/policy.conf" chunk
-  if [ -n "$url" ]; then
-    chunk="$(curl -fsSL --max-time 10 "$url" 2>/dev/null)" \
-      || die "SLUICE_POLICY_URL=$url could not be fetched - refusing to run without the configured policy (make it reachable, or unset it)."
-    _verify_policy_sig "$chunk"
-    printf '%s\n' "$chunk"
-  fi
-  [ -f "$uf" ] && { cat "$uf"; echo; }
-  [ -f "$sf" ] && { cat "$sf"; echo; }
-  return 0   # a false final [ -f ] test would otherwise abort body=$(_policy_raw) under set -e
-}
-
-_ip2int() {
-  local a b c d; IFS=. read -r a b c d <<<"${1:-0.0.0.0}"
-  printf '%s' "$(( ((a&255)<<24)|((b&255)<<16)|((c&255)<<8)|(d&255) ))"
-}
-# 0 if IPv4 $1 is within $2 (ip or ip/bits).
-_ip_in_cidr() {
-  local ip="$1" base bits a b mask
-  case "$2" in */*) base="${2%/*}"; bits="${2#*/}" ;; *) base="$2"; bits=32 ;; esac
-  case "$bits" in ''|*[!0-9]*) bits=32 ;; esac
-  a="$(_ip2int "$ip")"; b="$(_ip2int "$base")"
-  [ "$bits" -le 0 ] && return 0
-  [ "$bits" -ge 32 ] && { [ "$a" = "$b" ]; return; }
-  mask=$(( 0xFFFFFFFF ^ ((1 << (32 - bits)) - 1) ))
-  [ "$(( a & mask ))" -eq "$(( b & mask ))" ]
-}
-# 0 if host $1 is denied by the space-list $2 (exact, or a leading-dot wildcard matching subdomains).
-_policy_denied_host() {
-  local h="$1" d
-  for d in $2; do
-    [ "$h" = "$d" ] && return 0
-    case "$d" in .*) case ".$h" in *"$d") return 0 ;; esac ;; esac
-  done
-  return 1
-}
-
-# 0 if the leading-dot allow wildcard $1 COVERS any deny token in the space-list $2 - i.e. allowing it
-# would silently re-admit a host the policy denies (deny is host-granular; a .parent allow swallows it).
-# Only meaningful for a leading-dot wildcard; an exact allow host is handled by _policy_denied_host.
-_allow_covers_denied() {
-  local w="$1" d db
-  case "$w" in .*) ;; *) return 1 ;; esac
-  for d in $2; do
-    db="${d#.}"                          # a deny wildcard .x denies x + subs; covering x suffices
-    case ".$db" in *"$w") return 0 ;; esac
-  done
-  return 1
-}
-
+# Security-critical managed-egress gate ("deny is final"). Run path only (run-default/run/shell/build/
+# rebuild/update). Evaluates the policy purely, then reproduces the original refuse/side-effect sequence:
+# warn-or-die on unknowns, export require-signed-base, die on the FIRST refusal in run-path order, else
+# mutate SLUICE_ALLOW_DOMAINS to the effective list and echo the policy line. Behavior is byte-identical
+# to the pre-refactor inline version.
 apply_policy() {
   policy_configured || return 0
-  local body allow="" deny="" denyip="" forbid="" maxips="" launder=0 strict=0 rsbase=0 unknowns="" line verb arg
-  body="$(_policy_raw)"
-  while IFS= read -r line; do
-    line="${line%%#*}"; line="$(printf '%s' "$line" | awk '{$1=$1};1')"; [ -n "$line" ] || continue
-    verb="${line%% *}"; arg="${line#"$verb"}"; arg="$(printf '%s' "$arg" | awk '{$1=$1};1')"
-    case "$verb" in
-      allow)               allow="$allow $arg" ;;
-      deny)                deny="$deny $arg" ;;
-      deny-ip)             denyip="$denyip $arg" ;;
-      forbid)              forbid="$forbid $arg" ;;
-      forbid-laundering)   launder=1 ;;
-      max-allow-ips)       maxips="$arg" ;;
-      strict-unknown)      strict=1 ;;
-      require-signed-base) rsbase=1 ;;
-      *) if [ -z "$arg" ] && printf '%s' "$verb" | grep -qE '^\.?[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$'; then allow="$allow $verb"
-         else unknowns="$unknowns $verb"; fi ;;
-    esac
-  done <<EOF
-$body
+  policy_evaluate
+  # Unknown directives: warn + ignore (forward-compat) UNLESS strict-unknown (then it's a refusal below).
+  if [ -n "$_PEVAL_UNKNOWNS" ] && [ "$_PEVAL_STRICT" != 1 ]; then
+    echo "${E_YEL}[sluice] policy: ignoring unknown directive(s):$_PEVAL_UNKNOWNS${E_RST}" >&2
+  fi
+  # require-signed-base lets the policy mandate a signed base for every box under it. (Exported before
+  # the die loop, as in the original; an immediate die exits anyway, so the order is not observable.)
+  if [ "$_PEVAL_RSBASE" = 1 ]; then export SLUICE_REQUIRE_SIGNED=1; fi
+  # Die on the first refusal in run-path order (the list is ordered to match the original die sequence).
+  if [ -n "$_PEVAL_REFUSALS" ]; then
+    local _r
+    while IFS= read -r _r; do [ -n "$_r" ] && die "$_r"; done <<EOF
+$_PEVAL_REFUSALS
 EOF
-  # Unknown directives: warn + ignore (forward-compat), or die under `strict-unknown` (a typo should
-  # fail a high-security policy, not silently drop a rule). require-signed-base lets the policy mandate
-  # a signed base for every box under it, instead of each dev setting SLUICE_REQUIRE_SIGNED.
-  if [ -n "$unknowns" ]; then
-    if [ "$strict" = 1 ]; then die "policy: unknown directive(s):$unknowns - refusing (strict-unknown)."; fi
-    echo "${E_YEL}[sluice] policy: ignoring unknown directive(s):$unknowns${E_RST}" >&2
   fi
-  if [ "$rsbase" = 1 ]; then export SLUICE_REQUIRE_SIGNED=1; fi
-  # 1) forbidden loosening knobs: the org said no - die if the local config set one. (if/fi, not
-  # `&& die`, so a not-set knob doesn't return non-zero and trip set -e.)
-  local k
-  for k in $forbid; do
-    case "$k" in
-      SLUICE_DNS_OPEN|SLUICE_ALLOW_DOH) if [ "${!k:-}" = 1 ]; then die "policy forbids ${k}=1 (your config sets it) - remove it to run under this policy."; fi ;;
-      *) if [ -n "${!k:-}" ]; then die "policy forbids setting ${k} (your config sets it) - remove it to run under this policy."; fi ;;
-    esac
-  done
-  # 2) effective allowlist = (local + policy allow) - policy deny. A leading-dot allow wildcard that
-  # COVERS a deny token would silently re-admit the denied host, so refuse the run and name it rather
-  # than let local config quietly defeat managed policy (deny is final).
-  local merged eff="" h conflict=""
-  merged="$(printf '%s %s' "${SLUICE_ALLOW_DOMAINS:-}" "$allow" | tr ' ' '\n' | sed '/^$/d' | sort -u)"
-  for h in $merged; do
-    if _policy_denied_host "$h" "$deny"; then continue
-    elif _allow_covers_denied "$h" "$deny"; then conflict="$conflict $h"
-    else eff="$eff $h"; fi
-  done
-  [ -n "$conflict" ] && die "policy: allowlist wildcard(s)$conflict would re-admit a host the policy denies - narrow them to exact hosts to run under this policy (deny is final)."
-  SLUICE_ALLOW_DOMAINS="$(printf '%s' "$eff" | awk '{$1=$1};1')"
-  # 3) forbid-laundering: refuse any laundering-capable host left on the effective allowlist.
-  if [ "$launder" = 1 ]; then
-    local risky=""; for h in $SLUICE_ALLOW_DOMAINS; do if laundering_host "$h"; then risky="$risky $h"; fi; done
-    if [ -n "$risky" ]; then die "policy forbids laundering-capable allowlisted host(s):$risky"; fi
-  fi
-  # 4) ALLOW_IPS ceilings: REFUSE (don't mutate - the firewall reads the BAKED list, so a host-side drop
-  # wouldn't reach a running box; a hard refuse is honest and matches the policy contract).
-  local ipn=0 e ipp d
-  for e in ${SLUICE_ALLOW_IPS:-}; do
-    ipn=$((ipn+1)); ipp="${e%%:*}"; ipp="${ipp%%/*}"
-    for d in $denyip; do if _ip_in_cidr "$ipp" "$d"; then die "policy denies SLUICE_ALLOW_IPS '$e' (matches deny-ip $d)"; fi; done
-  done
-  case "$maxips" in ''|*[!0-9]*) ;; *) if [ "$ipn" -gt "$maxips" ]; then die "policy caps SLUICE_ALLOW_IPS at $maxips (your config has $ipn)"; fi ;; esac
-  # remember source + counts for visibility (banner/run line).
-  _POLICY_SRC="$([ -f /etc/sluice/policy.conf ] && echo /etc/sluice/policy.conf || { [ -f "$HOME/.config/sluice/policy.conf" ] && echo "$HOME/.config/sluice/policy.conf" || echo "${SLUICE_POLICY_URL:-}"; })"
-  _POLICY_SUMMARY="$(printf '%s allow, %s deny, %s forbid' "$(printf '%s' "$allow" | wc -w | tr -d ' ')" "$(printf '%s' "$deny" | wc -w | tr -d ' ')" "$(printf '%s' "$forbid" | wc -w | tr -d ' ')")"
+  # Clean: apply the effective allowlist (ALLOW_IPS is NOT mutated - the firewall reads the BAKED list,
+  # so a host-side drop wouldn't reach a running box; the cap/deny-ip refuse instead, above).
+  SLUICE_ALLOW_DOMAINS="$_PEVAL_EFFECTIVE"
+  _POLICY_SRC="$_PEVAL_SRC"; _POLICY_SUMMARY="$_PEVAL_SUMMARY"
   echo "${E_DIM}[sluice]${E_RST} managed egress policy: $(_tilde "$_POLICY_SRC") ($_POLICY_SUMMARY)" >&2
 }
 case "${1:-run-default}" in run-default|run|shell|build|rebuild|update) apply_policy ;; esac
