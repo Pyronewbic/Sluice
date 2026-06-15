@@ -50,7 +50,10 @@ _verify_agent() {
 
   # 2. every declared API host is reachable through the proxy
   for h in $hosts; do
-    code="$( cd "$work" && "$SLUICE" run sh -lc "curl -sS -o /dev/null -w '%{http_code}' --max-time 12 https://$h" 2>/dev/null )"
+    # `|| true`: the harness runs under errexit, so a non-zero curl/run here must NOT abort the test -
+    # let it fall through to the UNREACHABLE handler below so the failing host is named (was a bare
+    # "failed with status 6" that hid which host drifted).
+    code="$( cd "$work" && "$SLUICE" run sh -lc "curl -sS -o /dev/null -w '%{http_code}' --max-time 12 https://$h" 2>/dev/null || true )"
     { [ -n "$code" ] && [ "$code" != 000 ]; } || { echo "allow $h UNREACHABLE (got '$code')"; _agent_teardown "$c" "$work"; return 1; }
   done
 
@@ -61,7 +64,7 @@ _verify_agent() {
 
   # 4. the auth env var is forwarded into the box
   if [ -n "$firstvar" ]; then
-    got="$( cd "$work" && env "$firstvar=__sluice_sentinel__" "$SLUICE" run printenv "$firstvar" 2>/dev/null | tr -d '[:space:]' )"
+    got="$( cd "$work" && env "$firstvar=__sluice_sentinel__" "$SLUICE" run printenv "$firstvar" 2>/dev/null | tr -d '[:space:]' || true )"   # || true: errexit-safe so the handler below names a forwarding failure
     [ "$got" = "__sluice_sentinel__" ] || { echo "\$$firstvar NOT forwarded (got '$got')"; _agent_teardown "$c" "$work"; return 1; }
   fi
 
