@@ -102,6 +102,24 @@ symlinks_outside_scope() {
 
 _doc() { printf '  %-10s %s\n' "$1" "$2"; }
 
+# Render a newline-separated list (stdin) as indented doctor bullets, capped at the first 10 with a
+# "(+ N more)" tail - the shape the secret/symlink/blocked-host lists share. $1 = the SGR color for
+# each item (e.g. $C_RED), default none. Items are run through _term_esc (control chars stripped) so a
+# crafted hostname can't smuggle escapes into the readout. PURE: reads stdin, writes stdout, touches no
+# globals/engine - so it's unit-testable in the no-Docker gate. Blank lines drop from the count + output.
+_doctor_bullets() {
+  local col="${1:-}" rst="" list n line
+  [ -n "$col" ] && rst="$C_RST"
+  list="$(cat)"                                   # slurp stdin once, then count + iterate from it
+  n="$(printf '%s\n' "$list" | grep -c . || true)"
+  [ "${n:-0}" -gt 0 ] || return 0
+  printf '%s\n' "$list" | grep . | head -10 | while IFS= read -r line; do
+    printf '             %s%s%s\n' "$col" "$(_term_esc "$line")" "$rst"
+  done
+  [ "$n" -gt 10 ] && printf '             %s(+ %s more)%s\n' "$C_DIM" "$((n - 10))" "$C_RST"
+  return 0
+}
+
 # --- central egress policy (v2): deny-capable, ceiling-setting ------------------------------------
 # Defined HERE (not next to apply_policy in the run-path slice) so the machinery exists before the
 # early `doctor` dispatch can call policy_evaluate report-only. Sources, lowest trust first (a
@@ -321,7 +339,7 @@ _with_timeout() {
 
 cmd_doctor() {
   [ "${1:-}" = --json ] && { cmd_doctor_json; return $?; }
-  local eng="" v blocked
+  local eng="" v blocked _attn=0   # _attn: count of attention/warning sites, for the trailing verdict
   printf '%ssluice doctor%s\n' "$C_BLD" "$C_RST"
   if   [ -n "${SLUICE_ENGINE:-}" ]; then eng="$SLUICE_ENGINE"
   elif command -v docker >/dev/null 2>&1; then eng=docker
@@ -332,17 +350,18 @@ cmd_doctor() {
       _doc engine "$("$eng" --version 2>/dev/null | head -1)"
     else
       _doc engine "${C_RED}$("$eng" --version 2>/dev/null | head -1) - daemon not responding${C_RST} (is $eng running?)"
-      eng=""   # daemon down (or wedged/timed out): skip the engine-dependent checks below
+      eng=""; _attn=$((_attn+1))   # daemon down (or wedged/timed out): skip the engine-dependent checks below
     fi
   elif [ -n "${SLUICE_ENGINE:-}" ]; then
     # Explicitly named but absent: "install docker or podman" is the wrong remedy. Mirror resolve_engine's die.
-    eng=""; _doc engine "${C_RED}none${C_RST} - SLUICE_ENGINE='$SLUICE_ENGINE' not found on PATH"
+    eng=""; _attn=$((_attn+1)); _doc engine "${C_RED}none${C_RST} - SLUICE_ENGINE='$SLUICE_ENGINE' not found on PATH"
   else
-    eng=""; _doc engine "${C_RED}none${C_RST} - install docker or podman"
+    eng=""; _attn=$((_attn+1)); _doc engine "${C_RED}none${C_RST} - install docker or podman"
   fi
 
   if ! PROJECT_CONFIG="$(find_config)"; then
-    _doc config "${C_RED}none${C_RST} - run 'sluice init' to scaffold one"; return 0
+    _attn=$((_attn+1)); _doc config "${C_RED}none${C_RST} - run 'sluice init' to scaffold one"
+    _doctor_verdict "$_attn"; return 0
   fi
   PROJECT_DIR="$(cd "$(dirname "$PROJECT_CONFIG")" && pwd)"
   # Doctor is the command you run BECAUSE the config is broken, so a broken config must not abort it.
@@ -352,6 +371,7 @@ cmd_doctor() {
   if bash -n "$PROJECT_CONFIG" 2>/dev/null; then
     _doc config "$(_tilde "$PROJECT_CONFIG")"
   else
+    _attn=$((_attn+1))
     _doc config "${C_RED}$(_tilde "$PROJECT_CONFIG") (parse error)${C_RST} - 'bash -n' it; report continues with partial config"
   fi
   # shellcheck disable=SC1090
@@ -367,7 +387,7 @@ cmd_doctor() {
       set +f
       _src="${_m%%:*}"
       case "$_src" in
-        /*) if [ ! -e "$_src" ]; then _doc "" "${C_DIM}$(_term_esc "$_m")${C_RST} ${C_YEL}host path not found - run will fail${C_RST}"
+        /*) if [ ! -e "$_src" ]; then _attn=$((_attn+1)); _doc "" "${C_DIM}$(_term_esc "$_m")${C_RST} ${C_YEL}host path not found - run will fail${C_RST}"
             else _doc "" "${C_DIM}$(_term_esc "$_m")${C_RST}"; fi ;;
         *)  _doc "" "${C_DIM}$(_term_esc "$_m")${C_RST}" ;;
       esac
@@ -381,14 +401,23 @@ cmd_doctor() {
     local _nm; _nm="$(mask_matches 2>/dev/null | grep -c . || true)"
     _doc mask "$SLUICE_MASK ${C_DIM}($_nm path(s) masked at launch)${C_RST}"
   fi
-  local _unm
-  _unm="$(unmasked_secrets 2>/dev/null | head -6 | tr '\n' ' ' | sed 's/ *$//' || true)"
-  [ -n "$_unm" ] && _doc "" "${C_YEL}note${C_RST}: secret-looking file(s) readable in the box - $(_term_esc "$_unm") - shadow them: SLUICE_MASK=\".env*\" (sluice.config.example.sh)"
+  local _unm _nu _uf
+  _unm="$(unmasked_secrets 2>/dev/null || true)"
+  if [ -n "$_unm" ]; then
+    _attn=$((_attn+1))
+    _nu="$(printf '%s\n' "$_unm" | grep -c . || true)"
+    _doc "" "${C_YEL}note${C_RST}: $_nu secret-looking file(s) readable in the box - shadow them: SLUICE_MASK=\".env*\" (sluice.config.example.sh)"
+    printf '%s\n' "$_unm" | head -10 | while IFS= read -r _uf; do
+      printf '             %s\n' "$(_term_esc "$_uf")"
+    done
+    [ "$_nu" -gt 10 ] && _doc "" "${C_DIM}(+ $((_nu - 10)) more)${C_RST}"
+  fi
 
   # Symlinks that leave the mounted scope work on the host but dangle inside the box - warn.
   local _links _nl _lp _lt _TAB; _TAB="$(printf '\t')"
   _links="$(symlinks_outside_scope 2>/dev/null || true)"
   if [ -n "$_links" ]; then
+    _attn=$((_attn+1))
     _nl="$(printf '%s\n' "$_links" | grep -c . || true)"
     _doc symlinks "${C_YEL}$_nl link(s) point outside the box mount${C_RST} - will be broken inside the box:"
     printf '%s\n' "$_links" | head -10 | while IFS="$_TAB" read -r _lp _lt; do
@@ -402,6 +431,7 @@ cmd_doctor() {
       if [ "$(_with_timeout 5 "$eng" image inspect -f '{{ index .Config.Labels "sluice.confighash" }}' "$tag" 2>/dev/null || true)" = "$(config_hash)" ]; then
         _doc image "$tag built (${C_GRN}config current${C_RST})"
       else
+        _attn=$((_attn+1))
         _doc image "$tag built (${C_YEL}config stale${C_RST} - run 'sluice rebuild')"
       fi
     else
@@ -418,6 +448,7 @@ cmd_doctor() {
       if [ -z "$drift" ]; then
         _doc lock "${C_GRN}in sync${C_RST} ($npkgs pkgs)"
       else
+        _attn=$((_attn+1))
         _doc lock "${C_YEL}drifted${C_RST} - $(printf '%s\n' "$drift" | grep -c .) line(s) changed since sluice.lock (run 'sluice update')"
       fi
     else
@@ -444,7 +475,9 @@ cmd_doctor() {
   [ -n "${SLUICE_RUNTIME:-}" ]          && _hard="$_hard runtime=$SLUICE_RUNTIME"
   [ -n "${SLUICE_MEMORY:-}" ]           && _hard="$_hard memory=$SLUICE_MEMORY"
   [ -n "${SLUICE_BUMP_DOMAINS:-}" ]     && _hard="$_hard tls-bump"
-  [ -n "$_hard" ] && _doc harden "${_hard# }"
+  # Always show a harden row: opt-ins when on, else the effective default posture the run path applies.
+  if [ -n "$_hard" ]; then _doc harden "${_hard# }"
+  else _doc harden "${C_DIM}defaults (seccomp=default, root rw, workspace=bind)${C_RST}"; fi
 
   [ -n "${SLUICE_PORTS:-}" ] && _doc ports "$SLUICE_PORTS ${C_DIM}(published on 127.0.0.1)${C_RST}"
   # Under a managed policy, the live allowlist is (local + allow) - deny: show what would ACTUALLY be
@@ -453,12 +486,14 @@ cmd_doctor() {
   if policy_configured; then
     _doctor_policy_eval
     if [ "$_DPE_STATUS" = unreachable ]; then
-      _pol_unreachable=1
+      _pol_unreachable=1; _attn=$((_attn+1))
       _doc allowlist "${SLUICE_ALLOW_DOMAINS:-(none beyond base)} ${C_DIM}(pre-policy; policy unreachable)${C_RST}"
     else
       _eff_allow="$_DPE_EFF"
       _doc allowlist "${_eff_allow:-(none beyond base)} ${C_DIM}(effective, post-policy deny/wildcard)${C_RST}"
       if [ -n "$_DPE_REFUSALS" ]; then
+        local _nr; _nr="$(printf '%s\n' "$_DPE_REFUSALS" | grep -c . || true)"
+        _attn=$((_attn+_nr))   # each refusal line is an attention site
         printf '%s\n' "$_DPE_REFUSALS" | while IFS= read -r _r; do
           [ -n "$_r" ] && _doc "" "${C_RED}policy would refuse:${C_RST} $_r"
         done
@@ -467,7 +502,6 @@ cmd_doctor() {
   else
     _doc allowlist "${SLUICE_ALLOW_DOMAINS:-(none beyond base)}"
   fi
-  _doc "" "base: $(base_domains)"
   local _risky="" _doh="" _h
   set -f   # the allowlist entries are not globs - keep a wildcard (e.g. *.s3.amazonaws.com) literal
   for _h in ${_eff_allow:-}; do
@@ -475,12 +509,19 @@ cmd_doctor() {
     doh_listed "$_h" && _doh="$_doh $_h"
   done
   set +f
-  [ -n "$_risky" ] && _doc "" "${C_YEL}note${C_RST}: shared host(s) an attacker can also write to -${_risky} - data can be laundered out (splice, not decrypt); keep the allowlist tight"
-  if [ -n "$_doh" ]; then
-    if [ "${SLUICE_ALLOW_DOH:-}" = 1 ]; then _doc "" "${C_YEL}note${C_RST}: DoH resolver(s) allowed AND SLUICE_ALLOW_DOH=1 -${_doh} - DNS-over-HTTPS exfil is possible"
-    else _doc "" "${C_DIM}note: DoH resolver(s) on the allowlist -${_doh} - still BLOCKED (DoH exfil channel); SLUICE_ALLOW_DOH=1 to permit${C_RST}"; fi
+  # Hazard notes by severity: the genuinely exfil-capable ones lead (DoH-allowed, then laundering);
+  # the informational lines (base:, benign still-blocked DoH, ips:, policy) come after.
+  if [ -n "$_doh" ] && [ "${SLUICE_ALLOW_DOH:-}" = 1 ]; then
+    _attn=$((_attn+1)); _doc "" "${C_YEL}note${C_RST}: DoH resolver(s) allowed AND SLUICE_ALLOW_DOH=1 -${_doh} - DNS-over-HTTPS exfil is possible"
   fi
-  [ -n "${SLUICE_ALLOW_IPS:-}" ] && _doc "" "ips:  $SLUICE_ALLOW_IPS ${C_DIM}(direct egress, bypasses the hostname filter; bare ip = any port, ip:port scopes it)${C_RST}"
+  if [ -n "$_risky" ]; then
+    _attn=$((_attn+1)); _doc "" "${C_YEL}note${C_RST}: shared host(s) an attacker can also write to -${_risky} - data can be laundered out (splice, not decrypt); keep the allowlist tight"
+  fi
+  _doc "" "base: $(base_domains)"
+  if [ -n "$_doh" ] && [ "${SLUICE_ALLOW_DOH:-}" != 1 ]; then
+    _doc "" "${C_DIM}note: DoH resolver(s) on the allowlist -${_doh} - still BLOCKED (DoH exfil channel); SLUICE_ALLOW_DOH=1 to permit${C_RST}"
+  fi
+  [ -n "${SLUICE_ALLOW_IPS:-}" ] && _doc ips "$SLUICE_ALLOW_IPS ${C_DIM}(direct egress, bypasses the hostname filter; bare ip = any port, ip:port scopes it)${C_RST}"
   if [ -n "${SLUICE_POLICY_URL:-}" ]; then
     if [ -n "$_pol_unreachable" ]; then _doc policy "${C_RED}$SLUICE_POLICY_URL - unreachable${C_RST} (run/build would refuse to start)"
     else _doc policy "$SLUICE_POLICY_URL"; fi
@@ -496,14 +537,30 @@ cmd_doctor() {
     local _RCPT_OFFSET; _RCPT_OFFSET="$(last_run_offset)"   # scope to last run (matches 'sluice learn'); empty -> full log
     blocked="$(blocked_new 2>/dev/null || true)"
     if [ -n "$blocked" ]; then
+      _attn=$((_attn+1))
       _doc egress "${C_RED}$(printf '%s\n' "$blocked" | grep -c .) host(s) blocked${C_RST} (last run) - run 'sluice learn' to allow:"
-      # shellcheck disable=SC2086
-      printf "             ${C_RED}%s${C_RST}\n" $blocked
+      printf '%s\n' "$blocked" | _doctor_bullets "$C_RED"
     else
       _doc egress "${C_GRN}no blocked egress needs allowing${C_RST}"
     fi
   else
     _doc egress "${C_DIM}sandbox not running${C_RST} - start it, exercise the app, re-run 'sluice doctor'"
+  fi
+
+  _doctor_verdict "$_attn"
+}
+
+# Trailing one-line verdict for the human readout: $1 = the attention/warning count accumulated by
+# cmd_doctor. Zero -> a green all-clear; otherwise a yellow "N item(s) need attention" (singular/plural
+# correct). PURE (reads its arg, writes one line) so the verdict copy is unit-testable without an engine.
+_doctor_verdict() {
+  local n="${1:-0}"
+  if [ "$n" -eq 0 ]; then
+    printf '  %sok%s: ready - no action needed\n' "$C_GRN" "$C_RST"
+  elif [ "$n" -eq 1 ]; then
+    printf '  %s1 item needs attention%s\n' "$C_YEL" "$C_RST"
+  else
+    printf '  %s%s items need attention%s\n' "$C_YEL" "$n" "$C_RST"
   fi
 }
 

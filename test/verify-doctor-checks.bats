@@ -413,3 +413,128 @@ assert d['config_error'] is False, d   # valid syntax: the parse check passed
   assert_success
   assert_output --partial "not supported"
 }
+
+# --- readout polish: trailing verdict / lead-then-list / always-on rows / severity order ----------
+
+# ITEM 1: doctor ends with a trailing verdict line. A clean config (no warnings reachable without an
+# engine) gets the green all-clear; the old code printed NO verdict at all, so this fails against it.
+@test "doctor: a clean config ends with the green all-clear verdict" {
+  printf 'SLUICE_RUN_CMD="bash"\n' > "$WORK/sluice.config.sh"
+  run bash -c "cd '$WORK' && '$SLUICE' doctor"
+  assert_success
+  assert_output --partial "ready - no action needed"
+}
+
+# ITEM 1: a single warning (a lone unmasked .env) yields the SINGULAR "1 item needs attention". The old
+# code printed no verdict line, so both the count and the wording are absent from it.
+@test "doctor: a single warning yields the singular '1 item needs attention' verdict" {
+  printf 'SLUICE_RUN_CMD="bash"\n' > "$WORK/sluice.config.sh"
+  echo "SECRET=1" > "$WORK/.env"
+  run bash -c "cd '$WORK' && '$SLUICE' doctor"
+  assert_success
+  assert_output --partial "1 item needs attention"
+}
+
+# ITEM 1: two distinct warnings (unmasked secret + broken symlink) pluralize to "2 items need
+# attention". Guards the singular/plural branch + that independent sites both increment the counter.
+@test "doctor: two warnings pluralize to '2 items need attention'" {
+  printf 'SLUICE_RUN_CMD="bash"\n' > "$WORK/sluice.config.sh"
+  echo "SECRET=1" > "$WORK/.env"
+  ln -s /nonexistent/elsewhere "$WORK/dangler"
+  run bash -c "cd '$WORK' && '$SLUICE' doctor"
+  assert_success
+  assert_output --partial "2 items need attention"
+}
+
+# ITEM 2: the unmasked-secret warning is a LEAD line carrying a COUNT, then one file per line - not a
+# single space-joined line. The old code emitted "secret-looking file(s) readable in the box - <files>"
+# with no count, so the "N secret-looking file(s)" lead is the discriminator (also asserts the per-file
+# lines render). Two secrets so the count is unambiguous.
+@test "doctor: secret warning leads with a count, then one file per line" {
+  printf 'SLUICE_RUN_CMD="bash"\n' > "$WORK/sluice.config.sh"
+  echo "SECRET=1" > "$WORK/.env"
+  echo "k" > "$WORK/server.pem"
+  run bash -c "cd '$WORK' && '$SLUICE' doctor"
+  assert_success
+  assert_output --partial "2 secret-looking file(s) readable in the box"   # the new counted lead line
+  assert_output --partial ".env"                                           # ... then each file on its own line
+  assert_output --partial "server.pem"
+}
+
+# ITEM 3: the harden row is ALWAYS shown. With no opt-in hardening, the old code printed no harden row
+# at all; the new code shows the effective default posture.
+@test "doctor: harden row shows the default posture when nothing is opted in" {
+  printf 'SLUICE_RUN_CMD="bash"\n' > "$WORK/sluice.config.sh"
+  run bash -c "cd '$WORK' && '$SLUICE' doctor"
+  assert_success
+  assert_output --partial "defaults (seccomp=default, root rw, workspace=bind)"
+}
+
+# ITEM 4: SLUICE_ALLOW_IPS renders under a real left-column "ips" label, NOT a hand-typed "ips:" prefix
+# in the value. The old line was `<pad>ips:  <value>`; refuting "ips:" fails against it (it contains the
+# colon) and passes against the new label form, while the value itself is still present.
+@test "doctor: allow-ips uses a real label, not a hand-typed 'ips:' prefix" {
+  printf 'SLUICE_ALLOW_IPS="1.2.3.4 5.6.7.8:443"\nSLUICE_RUN_CMD="bash"\n' > "$WORK/sluice.config.sh"
+  run bash -c "cd '$WORK' && '$SLUICE' doctor"
+  assert_success
+  assert_output --partial "1.2.3.4"     # the value still shows
+  refute_output --partial "ips:"        # ... but no hand-typed "ips:" prefix (old code had it)
+}
+
+# ITEM 5: hazard notes print by severity - the DoH-allowed-exfil note (highest) leads, BEFORE the
+# informational "base:" line. The old order printed "base:" first. We assert on line ORDER: the index
+# of the exfil note must be smaller than the index of the base line.
+@test "doctor: the DoH-exfil hazard note prints before the informational base line" {
+  printf 'SLUICE_ALLOW_DOMAINS="cloudflare-dns.com"\nSLUICE_ALLOW_DOH=1\nSLUICE_RUN_CMD="bash"\n' > "$WORK/sluice.config.sh"
+  run bash -c "cd '$WORK' && '$SLUICE' doctor"
+  assert_success
+  assert_output --partial "DNS-over-HTTPS exfil is possible"
+  local doh_ln base_ln
+  doh_ln="$(printf '%s\n' "$output" | grep -n "DNS-over-HTTPS exfil is possible" | head -1 | cut -d: -f1)"
+  base_ln="$(printf '%s\n' "$output" | grep -n "^ *base: "                       | head -1 | cut -d: -f1)"
+  [ -n "$doh_ln" ] && [ -n "$base_ln" ]
+  [ "$doh_ln" -lt "$base_ln" ]   # the dangerous note leads the informational base line
+}
+
+# ITEM 6: the blocked-host list renders via the PURE _doctor_bullets helper (capped at 10 + "(+ N more)").
+# blocked_new needs a running box (not no-Docker testable), so we unit-test the helper directly via the
+# sed-extract pattern. The old bin/sluice has no such function, so the extract is empty and the call
+# fails to the shell - this @test cannot pass against pre-change code.
+@test "doctor: _doctor_bullets caps the list at 10 with a '(+ N more)' tail" {
+  local t="$BATS_TEST_TMPDIR/bullets.sh"
+  {
+    echo 'set -euo pipefail'
+    echo 'C_RED=""; C_RST=""; C_DIM=""'   # NO_COLOR-equivalent so assertions match plain text
+  } > "$t"
+  sed -n '/^_term_esc()/,/^}/p'      "$ROOT/bin/sluice" >> "$t"
+  sed -n '/^_doctor_bullets()/,/^}/p' "$ROOT/bin/sluice" >> "$t"
+  echo 'seq 1 13 | _doctor_bullets "$C_RED"' >> "$t"
+  run bash "$t"
+  assert_success
+  assert_output --partial "1"
+  assert_output --partial "10"
+  assert_output --partial "(+ 3 more)"   # 13 items - first 10 shown = 3 more
+  refute_output --partial "11"            # capped: the 11th item is not listed
+}
+
+# ITEM 6 (cont): the helper drops blank lines and strips control chars (a crafted hostname can't smuggle
+# terminal escapes into the readout). Also covers the empty-input -> nothing, rc 0 contract.
+@test "doctor: _doctor_bullets drops blanks, strips control chars, and is empty-safe" {
+  local t="$BATS_TEST_TMPDIR/bullets_esc.sh"
+  {
+    echo 'set -euo pipefail'
+    echo 'C_RED=""; C_RST=""; C_DIM=""'
+  } > "$t"
+  sed -n '/^_term_esc()/,/^}/p'      "$ROOT/bin/sluice" >> "$t"
+  sed -n '/^_doctor_bullets()/,/^}/p' "$ROOT/bin/sluice" >> "$t"
+  {
+    echo 'printf "" | _doctor_bullets; echo "EMPTY_RC=$?"'                 # empty input: nothing, rc 0
+    echo 'printf "a\n\n\nb\n" | _doctor_bullets'                          # blank lines dropped
+    echo 'printf "ev\033[31mil\n" | _doctor_bullets | cat -v'             # ESC stripped
+  } >> "$t"
+  run bash "$t"
+  assert_success
+  assert_output --partial "EMPTY_RC=0"
+  refute_output --partial "^["            # the raw ESC byte is stripped (cat -v renders a survivor as ^[)
+  assert_output --partial "ev[31mil"      # only the control byte goes; the printable residue stays inert
+}
