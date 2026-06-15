@@ -53,6 +53,9 @@ config (and any `sluice learn` edits) - so policy wins:
   the host is simply unreachable. One exception is fatal: a local `allow` **wildcard** that would
   cover a denied host (e.g. `.githubusercontent.com` against `deny gist.githubusercontent.com`)
   **refuses to run** rather than let the wildcard silently re-admit it - narrow it to exact hosts.
+  Wildcard entries (e.g. `*.s3.amazonaws.com`) are matched **literally**: the effective list is
+  computed independently of the invocation directory, so a glob-shaped host is never expanded against
+  the working directory's filenames.
 - **Ceilings** (`forbid`/`deny-ip`/`max-allow-ips`/`forbid-laundering`): a violation **refuses to
   run** (exit non-zero), naming the offending knob/host. `SLUICE_ALLOW_IPS` is refused rather than
   silently trimmed because the firewall reads the baked list - a host-side trim wouldn't reach a
