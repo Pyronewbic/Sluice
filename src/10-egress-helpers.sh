@@ -193,6 +193,7 @@ allowed_domains() { printf '%s %s' "${SLUICE_ALLOW_DOMAINS:-}" "$(base_domains)"
 # laundered out through it even though it's allowlisted (THREAT_MODEL "allowed-host laundering"; we
 # splice, never decrypt). Heuristic + non-exhaustive; doctor nudges, never blocks.
 laundering_host() {
+  set -- "${1#.}"   # a leading-dot wildcard (.host, what `sluice learn` writes) covers the bare host
   case "$1" in
     *s3.amazonaws.com|*.s3.*.amazonaws.com|storage.googleapis.com|*.blob.core.windows.net|*.r2.cloudflarestorage.com|*.digitaloceanspaces.com) return 0 ;;
     gist.github.com|gist.githubusercontent.com|raw.githubusercontent.com|*pastebin.com|paste.*|transfer.sh|0x0.st|file.io|*.tmpfiles.org) return 0 ;;

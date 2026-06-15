@@ -66,8 +66,10 @@ What the filter guarantees - and does not - is in
   leading dot matches subdomains (`.example.com`). The one **no rebuild** knob - `sluice
   learn` edits it live.
 - `SLUICE_ALLOW_IPS` - fixed IPs/CIDRs for non-HTTP services, direct egress bypassing the
-  proxy. Scope each entry: `ip:port[/proto]`. A catch-all (`0.0.0.0/0`, any `/0`) is refused;
-  a colon-less entry (no port) is allowed but warns, since it opens every port to that host.
+  proxy. **IPv4-only.** Scope each entry: `ip:port[/proto]`. Refused: a catch-all (`0.0.0.0/0`, any
+  `/0` or `0.0.0.0/N`), a CIDR broader than the `/8` floor (e.g. `0.0.0.0/1 128.0.0.0/1`), and an
+  IPv6 literal. A colon-less entry (no port) is allowed but warns, since it opens every port to that
+  host. The in-box firewall enforces the same floor as a second layer.
 - `SLUICE_POLICY_URL` - URL (http/https/file) to a central egress policy, applied host-side as the
   final gate. A bare host list is back-compat (additive); v2 directives can also `deny` hosts and
   refuse to run on a crossed ceiling (`forbid <knob>`, `deny-ip`, `max-allow-ips`,
