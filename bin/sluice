@@ -2610,9 +2610,11 @@ build() {
   # for non-prefetch builds) so the Dockerfile COPY never fails on a missing dir.
   mkdir -p "$tmp/prefetch"; : > "$tmp/prefetch/.keep"
   local _pf
+  set -f   # split the config list on whitespace, not glob it against $PWD
   for _pf in ${SLUICE_PREFETCH_FILES:-}; do
     [ -f "$PROJECT_DIR/$_pf" ] && cp "$PROJECT_DIR/$_pf" "$tmp/prefetch/" 2>/dev/null || true
   done
+  set +f
   # Self-describing labels (read by `sluice ls`; not part of config_hash, so no spurious rebuild).
   local args=(--label "sluice.confighash=$(config_hash)"
     --label "sluice.project=$PROJECT_DIR"
@@ -2779,7 +2781,11 @@ start() {
   case "${SLUICE_SECCOMP:-}" in
     hardened) run_args+=(--security-opt "seccomp=$CORE/seccomp.json") ;;
     browser)  run_args+=(--security-opt "seccomp=$CORE/seccomp-browser.json") ;;
-    audit)    _sc="$(mktemp "${TMPDIR:-/tmp}/sluice-seccomp-audit.XXXXXX")"
+    audit)    # Write the log-only profile to the stable per-box state dir and overwrite in place, so
+              # repeated runs don't leak a /tmp file each (a bare mktemp had no reaper - run-default/shell
+              # then arm the receipt EXIT trap, which would clobber any rm trap we set here).
+              _sc="${XDG_STATE_HOME:-$HOME/.local/state}/sluice/$slug/seccomp-audit.json"
+              mkdir -p "${_sc%/*}" 2>/dev/null || _sc="$(mktemp "${TMPDIR:-/tmp}/sluice-seccomp-audit.XXXXXX")"
               sed 's/SCMP_ACT_ERRNO/SCMP_ACT_LOG/g' "$CORE/seccomp.json" > "$_sc"
               run_args+=(--security-opt "seccomp=$_sc") ;;
     ""|default) : ;;
@@ -2862,12 +2868,14 @@ EOF
   # (rejected below); never a baked path (.npm-global, cursor's .local).
   if [ -n "${SLUICE_STATE_DIRS:-}" ]; then
     local state_base="${XDG_STATE_HOME:-$HOME/.local/state}/sluice/$slug" sd state_paths=""
+    set -f   # split the config list on whitespace, not glob it against $PWD
     for sd in ${SLUICE_STATE_DIRS}; do
       case "$sd" in /*|*..*) die "SLUICE_STATE_DIRS entry must be a relative path under the home dir: $sd";; esac
       mkdir -p "$state_base/$sd"
       run_args+=(-v "$state_base/$sd":"/home/sluice/$sd")
       state_paths="$state_paths /home/sluice/$sd"
     done
+    set +f
     run_args+=(-e "SLUICE_STATE_PATHS=$state_paths")
   fi
 
@@ -2877,6 +2885,7 @@ EOF
   # ('sluice rm'/'prune'). The entrypoint chowns a fresh volume to the sluice user (SLUICE_OVERLAY_PATHS).
   if [ -n "${SLUICE_OVERLAY_DIRS:-}" ]; then
     local od ovol opaths="" odirs=""
+    set -f   # split the config list on whitespace, not glob it against $PWD
     for od in ${SLUICE_OVERLAY_DIRS}; do
       case "$od" in /*|*..*) die "SLUICE_OVERLAY_DIRS entry must be a relative path inside the project (no leading /, no ..): $od" ;; esac
       od="${od%/}"
@@ -2885,6 +2894,7 @@ EOF
       run_args+=(-v "$ovol":"$PROJECT_DIR/$od")
       opaths="$opaths $PROJECT_DIR/$od"; odirs="$odirs $od"
     done
+    set +f
     run_args+=(-e "SLUICE_OVERLAY_PATHS=$opaths")
     echo "[sluice] overlay dirs (box-local volumes, host contents untouched):$odirs" >&2
   fi
@@ -2899,9 +2909,11 @@ EOF
   fi
 
   # Publish declared ports on host loopback only; init-firewall.sh opens the inbound ACCEPT.
+  set -f   # split the config list on whitespace, not glob it against $PWD
   for p in ${SLUICE_PORTS:-}; do
     run_args+=(-p "127.0.0.1:$p:$p")
   done
+  set +f
 
   echo "[sluice] starting $container ..."
   runtime_run --name "$container" "${run_args[@]}" "$tag" >/dev/null
@@ -2919,9 +2931,11 @@ ensure_up() { maybe_build; runtime_sync_image; running || start; }
 _exec_args() {
   _EXEC_ARGS=(-i --user sluice -w "$PROJECT_DIR")
   [ -t 0 ] && [ -t 1 ] && _EXEC_ARGS+=(-t)
+  set -f   # split the config list on whitespace, not glob it against $PWD
   for v in ${SLUICE_ENV:-}; do
     _EXEC_ARGS+=(-e "$v")
   done
+  set +f
 }
 # exec_in replaces this process (shell/run); run_in waits so an EXIT trap can fire after (run-default).
 exec_in() { _exec_args; exec "$RUNNER" exec "${_EXEC_ARGS[@]}" "$container" "$@"; }
