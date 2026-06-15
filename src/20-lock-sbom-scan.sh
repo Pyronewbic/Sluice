@@ -82,7 +82,14 @@ cmd_egress_export() {
 # self-hash recomputes and its prev links to the previous line's self (genesis = 64 zeros). Exits
 # non-zero on the first break (tamper / reorder / truncation) - a CI integrity gate on the receipts.
 cmd_egress_verify() {
-  local json=0; [ "${1:-}" = --json ] && json=1
+  # Parse the one optional flag strictly (mirrors cmd_scan/_drift_report): a typo'd gate flag must die,
+  # not silently downgrade to the human path at exit 0 (a CI 'egress --verify --jsonn' would lose its JSON).
+  local json=0
+  case "${1:-}" in
+    --json) json=1 ;;
+    "")     ;;
+    *)      die "usage: sluice egress --verify [--json]" ;;
+  esac
   local log="${XDG_STATE_HOME:-$HOME/.local/state}/sluice/$slug/egress-log.jsonl"
   # No log = an empty chain: trivially intact (0 records), exit 0 - unchanged.
   if [ ! -f "$log" ]; then

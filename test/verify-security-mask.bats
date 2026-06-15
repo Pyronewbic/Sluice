@@ -24,7 +24,7 @@ teardown_file() {
 
 @test "mask: a masked file reads empty in the box" {
   run bash -c "cd '$WORK/mask' && '$SLUICE' run sh -c 'wc -c < .env' 2>/dev/null"
-  assert_output --partial "0"
+  assert_output "0"   # exact: --partial "0" fail-opens on any byte count containing a 0 (10, 15, 100)
 }
 
 @test "mask: a masked file is read-only (write rejected)" {
@@ -34,7 +34,7 @@ teardown_file() {
 
 @test "mask: a masked dir reads empty (its files are gone)" {
   run bash -c "cd '$WORK/mask' && '$SLUICE' run sh -c 'ls -A secrets | wc -l' 2>/dev/null"
-  assert_output --partial "0"
+  assert_output "0"   # exact: --partial "0" fail-opens on any line count containing a 0
 }
 
 @test "mask: the masked path still exists in the box (name visible, content shadowed)" {
