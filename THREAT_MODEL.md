@@ -170,7 +170,10 @@ The guarantees below hold only while these do:
    can corrupt/delete your working tree (git history on the host is your backstop). Opt into
    `SLUICE_WORKSPACE=overlay` to mount the repo **read-only** and have the box edit a throwaway
    copy instead: the agent can't touch your files, and you review (`sluice diff`) and explicitly
-   write back (`sluice apply`) - or discard by just stopping the box.
+   write back (`sluice apply`) - or discard by just stopping the box. `apply` deletes host files the
+   box deleted only against a boot-time snapshot of the original; if seeding the copy ever fails (a
+   partial `cp`), that snapshot is **skipped** and `apply` deletes nothing, so an incomplete copy can
+   never cost you an untouched host file.
 6. **Whatever `SLUICE_PRELAUNCH` does.** It runs on the **host** and is fully trusted - a
    malicious config is out of scope (you author it).
 7. **Host-side Claude/editor hooks, side channels, timing.** Not addressed.

@@ -10,6 +10,10 @@ set -e
 # Same override semantics for the opt-in TLS-interception (bump) knobs (default off; see below).
 [ -n "${SLUICE_RUNTIME_BUMP+x}" ]      && SLUICE_BUMP_DOMAINS="${SLUICE_RUNTIME_BUMP}"
 [ -n "${SLUICE_RUNTIME_BUMP_URLS+x}" ] && SLUICE_BUMP_URLS="${SLUICE_RUNTIME_BUMP_URLS}"
+# Word-split the config lists (allowlist/bump/dns/state/overlay) on whitespace only, never pathname-
+# expand them against / (CWD here): a glob char in an allowlisted domain must not mangle the list.
+# Nothing below relies on globbing, so this stays on for the rest of boot.
+set -f
 # DoH/DoT resolvers are denied even when allowlisted: an agent could tunnel exfil as DNS-over-HTTPS
 # to an allowed resolver, bypassing the SNI filter. We do this by FILTERING the denylisted hosts out
 # of the splice allowlist (not via squid ssl_bump rules - a doh ACL in the splice rule makes squid
@@ -175,11 +179,21 @@ fi
 # working copy (an anon volume at SLUICE_WORKDIR) from it. The agent works on the copy; the host repo
 # is untouched until `sluice apply`. The chown loop below then hands the copy to the sluice user.
 if [ "${SLUICE_WORKSPACE:-}" = overlay ] && [ -d /mnt/sluice-orig ] && [ -n "${SLUICE_WORKDIR:-}" ]; then
-  cp -a /mnt/sluice-orig/. "$SLUICE_WORKDIR"/ 2>/dev/null || true
+  # Seed the writable copy from the read-only orig. Capture cp's REAL status (cp -a does partial
+  # copies and exits non-zero on per-file errors) - do NOT swallow it with `|| true`.
+  cp -a /mnt/sluice-orig/. "$SLUICE_WORKDIR"/ 2>/dev/null && _seed_ok=1 || _seed_ok=0
   # Snapshot the orig file list at seed time. `sluice apply` diffs the working copy against THIS
   # baseline to find box deletions - never the /mnt/sluice-orig bind, which is LIVE: a file the host
   # creates mid-session would otherwise look like a box deletion and be removed from the host repo.
-  ( cd /mnt/sluice-orig && find . -mindepth 1 | sort ) > /run/sluice-orig-manifest 2>/dev/null || true
+  # DATA-SAFETY GATE: only write the manifest when the seed FULLY succeeded. A short working copy
+  # (a file the seed never copied) paired with a complete manifest makes `sluice apply` compute that
+  # file as a box deletion and rm it from the HOST repo. On a failed/partial seed, skip the manifest
+  # and warn loudly: apply then falls into its safe "no snapshot -> skip deletions" branch.
+  if [ "$_seed_ok" = 1 ]; then
+    ( cd /mnt/sluice-orig && find . -mindepth 1 | sort ) > /run/sluice-orig-manifest 2>/dev/null || true
+  else
+    echo "[sluice] WARNING: overlay seed copy was incomplete (cp from /mnt/sluice-orig failed) - the working copy may be missing files. Skipping the apply-safety snapshot so 'sluice apply' will NOT delete host files; re-run 'sluice rebuild' to re-seed." >&2
+  fi
 fi
 
 # User-writable npm prefix (NPM_CONFIG_PREFIX=/home/sluice/.npm-global) for runtime installs.
