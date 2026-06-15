@@ -19,6 +19,9 @@ elif [ -f "./bin/sluice" ] && [ -f "./install.sh" ]; then
 else
   command -v git >/dev/null 2>&1 || { echo "sluice: git is required to install" >&2; exit 1; }
   [ -d "$DEST/.git" ] && echo "Updating $DEST ($REF) ..." || { echo "Cloning $REPO ($REF) -> $DEST ..."; git clone --depth 1 --quiet "$REPO" "$DEST"; }
+  # Re-point origin to $REPO before fetching: an existing clone's origin is whatever the FIRST install
+  # set, so re-running with a changed SLUICE_REPO would otherwise keep fetching the OLD repo.
+  git -C "$DEST" remote set-url origin "$REPO"
   # Resolve REF (a commit sha, branch, or tag) and check it out detached - so the install is pinned to
   # an exact commit, not a floating branch ref. Default REF=main pins to main's current tip; re-run to
   # advance. GitHub serves arbitrary shas (allowAnySHA1InWant), so a sha pin works too.
@@ -40,7 +43,8 @@ zshc="$HOME/.local/share/zsh/site-functions"
 mkdir -p "$bashc" "$zshc"
 ln -sf "$src/completion/sluice.bash" "$bashc/sluice"
 ln -sf "$src/completion/_sluice" "$zshc/_sluice"
-echo "Completion: bash auto-loads; zsh needs  fpath=($zshc \$fpath)  before compinit."
+# Quote the dir as one array element so a spaced $HOME survives the paste (an unquoted $zshc would word-split).
+echo "Completion: bash auto-loads; zsh needs  fpath=(\"$zshc\" \$fpath)  before compinit."
 
 case ":$PATH:" in
   *":$BIN:"*) echo "Ready - run 'sluice init' in a project, or 'sluice agent claude'." ;;
