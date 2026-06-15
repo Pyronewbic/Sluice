@@ -506,7 +506,7 @@ assert d['config_error'] is False, d   # valid syntax: the parse check passed
     echo 'set -euo pipefail'
     echo 'C_RED=""; C_RST=""; C_DIM=""'   # NO_COLOR-equivalent so assertions match plain text
   } > "$t"
-  sed -n '/^_term_esc()/,/^}/p'      "$ROOT/bin/sluice" >> "$t"
+  sed -n '/^_term_esc()/{p;q;}'      "$ROOT/bin/sluice" >> "$t"   # _term_esc is a one-liner (brace is mid-line); print the defining line and quit
   sed -n '/^_doctor_bullets()/,/^}/p' "$ROOT/bin/sluice" >> "$t"
   echo 'seq 1 13 | _doctor_bullets "$C_RED"' >> "$t"
   run bash "$t"
@@ -525,7 +525,7 @@ assert d['config_error'] is False, d   # valid syntax: the parse check passed
     echo 'set -euo pipefail'
     echo 'C_RED=""; C_RST=""; C_DIM=""'
   } > "$t"
-  sed -n '/^_term_esc()/,/^}/p'      "$ROOT/bin/sluice" >> "$t"
+  sed -n '/^_term_esc()/{p;q;}'      "$ROOT/bin/sluice" >> "$t"   # _term_esc is a one-liner (brace is mid-line); print the defining line and quit
   sed -n '/^_doctor_bullets()/,/^}/p' "$ROOT/bin/sluice" >> "$t"
   {
     echo 'printf "" | _doctor_bullets; echo "EMPTY_RC=$?"'                 # empty input: nothing, rc 0

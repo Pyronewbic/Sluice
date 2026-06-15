@@ -22,7 +22,7 @@ the contract a preset must follow lives in [`agents/README.md`](../agents/README
 |---|---|---|
 | `claude` | `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` | `claude --dangerously-skip-permissions` |
 | `codex` | `OPENAI_API_KEY` | `codex --dangerously-bypass-approvals-and-sandbox` |
-| `gemini` | `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) | `gemini --yolo` |
+| `gemini` | `GEMINI_API_KEY` | `gemini --yolo` |
 | `aider` | `OPENAI_API_KEY` and/or `ANTHROPIC_API_KEY` | `aider --yes-always` |
 | `cursor` | `CURSOR_API_KEY` | `cursor-agent --force` |
 | `opencode` | `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` | `opencode` (allow-all permission config baked at build) |

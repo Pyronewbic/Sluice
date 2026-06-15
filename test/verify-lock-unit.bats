@@ -132,3 +132,41 @@ _run_classify() {
   run bash "$t"
   assert_success
 }
+
+# --- PR6 #1: cmd_egress_verify parses its one flag strictly (no Docker) ----------------------------
+# Old code did `local json=0; [ "$1" = --json ] && json=1`, so any non---json arg (a typo like --jsonn,
+# or garbage) was IGNORED and the human path ran at exit 0 - silently downgrading a CI gate that meant
+# to read JSON. Mirror cmd_scan/_drift_report: accept only --json or empty, else die. Extract the fn and
+# point $slug at an empty state dir (no log -> the happy paths exit 0 without an engine). RED against old.
+_run_egress_verify() {  # $1 = arg(s) to pass to cmd_egress_verify
+  local t="$BATS_TEST_TMPDIR/everify.sh"
+  {
+    echo 'set -euo pipefail'
+    printf 'export XDG_STATE_HOME=%q\n' "$BATS_TEST_TMPDIR/state"   # no egress-log.jsonl -> empty chain
+    echo 'slug="nobox"'
+    echo 'die() { echo "[sluice] $*" >&2; exit 1; }'
+    echo '_tilde() { printf "%s" "$1"; }'
+    echo '_sha256() { sha256sum | cut -d" " -f1; }'
+    echo 'C_GRN=""; C_RST=""; E_RED=""; E_RST=""'
+    sed -n '/^cmd_egress_verify()/,/^}/p' "$ROOT/bin/sluice"
+    echo 'cmd_egress_verify "$@"'
+  } > "$t"
+  run bash "$t" "$@"
+}
+
+@test "egress --verify: an unknown flag (typo'd --jsonn / garbage) is rejected, not silently ignored" {
+  _run_egress_verify --jsonn
+  assert_failure
+  assert_output --partial "usage: sluice egress --verify"
+  _run_egress_verify garbage
+  assert_failure
+  assert_output --partial "usage: sluice egress --verify"
+}
+
+@test "egress --verify: the happy paths (empty + --json) still work" {
+  _run_egress_verify            # no flag, no log -> human note, exit 0
+  assert_success
+  _run_egress_verify --json     # --json, no log -> a verify object, exit 0
+  assert_success
+  assert_output --partial '"verified":true'
+}
