@@ -241,3 +241,19 @@ hasnt() { ! grep -qF -- "$2" "$WORK/$1/sluice.config.sh"; }
   has node-noscript '# NOTE:' &&
   has node-noscript 'no dev/start/serve script'
 }
+
+@test "init: a crafted Procfile run cmd cannot inject host commands when the config is sourced (security)" {
+  d="$(mktemp -d)"; marker="$d/PWNED"
+  # '$' forces the single-quote path; the embedded "'" would break a naive wrap and run a host command.
+  printf "web: app\$X'; touch %s; echo '\n" "$marker" > "$d/Procfile"
+  ( cd "$d" && "$SLUICE" init ) >/dev/null 2>&1
+
+  # Sourcing the generated config (as the launcher does) must not execute anything.
+  bash -c ". '$d/sluice.config.sh'" >/dev/null 2>&1 || true
+  [ ! -e "$marker" ]
+
+  # The run command must survive verbatim, inert.
+  run bash -c ". '$d/sluice.config.sh'; printf %s \"\$SLUICE_RUN_CMD\""
+  assert_output "app\$X'; touch $marker; echo '"
+  rm -rf "$d"
+}

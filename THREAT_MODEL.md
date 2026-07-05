@@ -139,6 +139,11 @@ The guarantees below hold only while these do:
   a committable package inventory with drift detection, plus an advisory host-side CVE scan -
   a clean scan means "no *known* CVE in the scanner's DB," not proof of safety. Full tour:
   [docs/supply-chain.md](docs/supply-chain.md).
+- **`sluice init` reading a crafted repo** -> init proposes a config from repo files (`Procfile`,
+  `Makefile`, `package.json`) - untrusted input, read host-side. Every value it writes into the
+  generated `sluice.config.sh` is single-quote-escaped, so a `web:` line (or any detected run command)
+  with an embedded quote cannot break out and run host commands when the launcher sources the config.
+  You still review the generated config before the first run.
 
 ## What it does NOT defend against (be explicit)
 

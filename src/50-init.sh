@@ -3,8 +3,21 @@ _init_port_from() { printf '%s' "$(printf '%s' "$1" | grep -oiE -- '(--port|--se
 _init_pkg_has()   { grep -qE "\"$2(\"|/)" "$1" 2>/dev/null; }          # dependency / scoped-pkg key
 _init_has_script(){ grep -qE "\"$2\"[[:space:]]*:" "$1" 2>/dev/null; } # a package.json/deno.json script
 _init_py_has()    { grep -qiE "(^|[^a-zA-Z0-9_.-])$1" "$dir/requirements.txt" "$dir/pyproject.toml" "$dir/Pipfile" 2>/dev/null; }
-# Quote a config value: single-quote if it contains $ or " (we never emit a literal single quote).
-_init_q()         { case "$1" in *[\$\"]*) printf "'%s'" "$1" ;; *) printf '"%s"' "$1" ;; esac; }
+# Quote a config value for the host-sourced sluice.config.sh. Safe values stay double-quoted
+# (readable); anything with $ ` \ or " is single-quoted with embedded ' rendered as '\'', so a
+# crafted repo file (Procfile web line, etc.) cannot break out and run host commands.
+_init_q() {
+  case "$1" in
+    *[\$\`\\\"]*)
+      local s=$1 out=
+      while [ "$s" != "${s#*\'}" ]; do
+        out=$out${s%%\'*}"'\''"
+        s=${s#*\'}
+      done
+      printf "'%s'" "$out$s" ;;
+    *) printf '"%s"' "$1" ;;
+  esac
+}
 # A run command the project already declares (Procfile web line, or a Makefile/justfile run-ish target),
 # so the generic fallback can propose something real instead of 'bash'. Echoes the command; rc 1 if none.
 _init_runcmd_from_files() {
