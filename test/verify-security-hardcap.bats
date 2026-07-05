@@ -14,7 +14,11 @@ setup_file() {
 teardown_file() { destroy_box hardcap hc; }
 
 _skip_if_no_xtquota() {
-  grep -q "lacks xt_quota" "$WORK/hclog" 2>/dev/null && skip "runner kernel lacks xt_quota - the hard cap cannot be enforced here (box fails closed)"
+  # if...fi (not `&& skip`): a bare `grep -q ... && skip` returns grep's exit 1 when the pattern is
+  # ABSENT (xt_quota present, box booted), failing the test at the guard instead of letting it run.
+  if grep -q "lacks xt_quota" "$WORK/hclog" 2>/dev/null; then
+    skip "runner kernel lacks xt_quota - the hard cap cannot be enforced here (box fails closed)"
+  fi
 }
 
 @test "hardcap: box image built" { run "$ENG" image inspect sluice-sectest-hardcap; assert_success; }
