@@ -44,9 +44,9 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with: { submodules: recursive }
-      - name: Install grype (for the lock --scan leg)
+      - name: Install grype (pinned, checksummed; for the lock --scan leg)
         if: matrix.suite == 'lock'
-        run: curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sudo sh -s -- -b /usr/local/bin
+        run: bash scripts/install-grype.sh
       - name: Verify ${{ matrix.suite }}
         run: test/bats/bin/bats --print-output-on-failure test/nightly-${{ matrix.suite }}.bats   # python3 (for control-plane) + docker preinstalled
 

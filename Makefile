@@ -18,7 +18,7 @@ UNIT_BATS     := test/init-detection.bats test/verify-init-quoting.bats test/ver
                  test/verify-worktree-mount.bats test/verify-doh-case.bats \
                  test/verify-seccomp-leak-unit.bats test/verify-setf-noglob-unit.bats \
                  test/verify-egress-allowlist-failopen.bats test/verify-ls-egress-unit.bats \
-                 test/verify-lane-membership-unit.bats
+                 test/verify-lane-membership-unit.bats test/verify-ci-supplychain-unit.bats
 ACCEPT_BATS   := test/acceptance.bats test/acceptance-bump.bats test/verify-run-default.bats
 SECURITY_BATS := $(wildcard test/verify-security-*.bats)
 ENGINE_BATS   := $(ACCEPT_BATS) $(SECURITY_BATS)
