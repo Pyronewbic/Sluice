@@ -25,7 +25,7 @@ ENGINE_BATS   := $(ACCEPT_BATS) $(SECURITY_BATS)
 GATE_BATS     := $(UNIT_BATS) $(ENGINE_BATS)
 SRC := $(sort $(wildcard src/*.sh))
 
-.PHONY: test test-unit test-engine test-acceptance test-security test-nightly structure lint setup build build-check _bats-check
+.PHONY: test test-unit test-engine test-acceptance test-security test-nightly structure lint lint-ci setup build build-check _bats-check
 setup:
 	git submodule update --init --recursive
 _bats-check:
@@ -52,6 +52,10 @@ structure:
 # one-liners and no flag preserves them, so it could never gate the launcher's hand-kept style.
 lint:
 	shellcheck -S warning bin/sluice
+
+# advisory actionlint over .github/workflows - the same digest-pinned image as the scans.yml lane.
+lint-ci:
+	docker run --rm --platform linux/amd64 -v "$(CURDIR):/repo" --workdir /repo rhysd/actionlint:1.7.12@sha256:9d36088643581e728c969f35141f88139fec77280b2be23c1f66f8e40e1025e7 -color
 
 # bin/sluice is a GENERATED single-file launcher (assembled from the ordered src/*.sh slices, so the
 # curl-one-file install still works). Edit the slices, then `make build`.

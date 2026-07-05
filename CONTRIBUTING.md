@@ -31,6 +31,7 @@ The suites are [bats-core](https://github.com/bats-core/bats-core), vendored as 
 make test            # gate: CLI/init/install units + egress + security invariants (needs docker/podman)
 make test-nightly    # heavy suites: lock, learn, runtimes, nix, agents, control-plane
 make structure       # base-image invariants (no sudo, uid 1000, firewall packages) via container-structure-test
+make lint-ci         # advisory: actionlint over .github/workflows (mirrors the scans.yml lane)
 ```
 
 Each suite is `test/<name>.bats` (gate) or `test/nightly-<name>.bats` (heavy); shared helpers live in

@@ -1,0 +1,51 @@
+# Advisory scanners: workflow linting (actionlint), workflow security posture (zizmor), and a
+# full-history secret sweep (gitleaks). Advisory = continue-on-error + NOT in the branch ruleset's
+# required checks - do NOT add these job names to the ruleset. Log-only by design: no SARIF upload,
+# no PR comments, so the whole workflow stays contents: read.
+name: advisory scans
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * 1" # weekly: scanner rules move even when the repo doesn't
+
+permissions:
+  contents: read # least privilege: log-only advisory
+
+jobs:
+  actionlint:
+    name: actionlint (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Lint workflows (digest-pinned image; same ref as make lint-ci)
+        run: docker run --rm --platform linux/amd64 -v "$PWD:/repo" --workdir /repo rhysd/actionlint:1.7.12@sha256:9d36088643581e728c969f35141f88139fec77280b2be23c1f66f8e40e1025e7 -color
+
+  zizmor:
+    name: zizmor (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: zizmorcore/zizmor-action@192e21d79ab29983730a13d1382995c2307fbcaa # v0.5.7
+        with:
+          version: "1.26.1" # pin the CLI too, not just the action
+          advanced-security: false # log-only: no SARIF upload (needs a write grant to the security tab)
+
+  gitleaks:
+    name: gitleaks (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with: { fetch-depth: 0 } # full history - a leak in any past commit counts
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: "false" # log-only: PR comments would need pull-requests + write
