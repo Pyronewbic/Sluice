@@ -36,9 +36,9 @@ make lint-ci         # advisory: actionlint over .github/workflows (mirrors the 
 
 Each suite is `test/<name>.bats` (gate) or `test/nightly-<name>.bats` (heavy); shared helpers live in
 `test/test_helper/common.bash`. Run just the one your change touches with
-`test/bats/bin/bats test/<name>.bats`, and extend it when you change behavior. Five gate suites need
-no container engine at all: `verify-cli`, `verify-install`, `init-detection`, `verify-doctor-checks`,
-`verify-agent-scaffold`.
+`test/bats/bin/bats test/<name>.bats`, and extend it when you change behavior. The no-Docker gate
+suites are the `UNIT_BATS` lane in the Makefile (run them all with `make test-unit`); the engine lanes
+build real boxes.
 
 ## Style
 
@@ -46,8 +46,8 @@ The launcher (`src/*.sh`, assembled into `bin/sluice`) is the code to be careful
 macOS, so avoid bashisms newer than 3.2 (no associative arrays, no `${var^^}`), and never put a
 `case` inside a `$(...)` command substitution - bash 3.2 mis-parses it at runtime and `bash -n`
 won't catch it, so run the real command, not just the syntax check. `sluice.config.sh` is sourced as
-POSIX `sh` (space/newline strings, no bash arrays). `make lint` runs **shellcheck** (the gate) plus
-**shfmt** `-i 2 -ci` (`brew install shellcheck shfmt`); run it on what you touch, and keep comments terse.
+POSIX `sh` (space/newline strings, no bash arrays). `make lint` runs **shellcheck** (the gate;
+`brew install shellcheck`); run it on what you touch, and keep comments terse.
 
 ## Pull requests
 
