@@ -18,8 +18,11 @@ CFG
 
 teardown_file() {
   destroy_box mask mask
-  "$ENG" rm -f -v sluice-sectest-mask-off >/dev/null 2>&1 || true   # a 2nd box some @tests create
-  "$ENG" rmi -f sluice-sectest-mask-off >/dev/null 2>&1 || true
+  local extra
+  for extra in sluice-sectest-mask-off sluice-sectest-mask-audit sluice-sectest-mask-audit-audit; do
+    "$ENG" rm -f -v "$extra" >/dev/null 2>&1 || true   # 2nd boxes some @tests create
+    "$ENG" rmi -f "$extra" >/dev/null 2>&1 || true
+  done
 }
 
 @test "mask: a masked file reads empty in the box" {
@@ -81,4 +84,20 @@ teardown_file() {
   run bash -c "cd '$WORK/mask-off' && '$SLUICE' run cat .env 2>/dev/null"
   assert_output --partial "SECRET=visible"   # --partial: the first run interleaves build/start lines
   ( cd "$WORK/mask-off" 2>/dev/null && "$SLUICE" rm ) >/dev/null 2>&1 || true
+}
+
+@test "mask: stays in force during 'learn --audit' (the open-egress pass)" {
+  mkdir -p "$WORK/mask-audit"
+  echo "SECRET=hunter2" > "$WORK/mask-audit/.env"
+  cat > "$WORK/mask-audit/sluice.config.sh" <<CFG
+SLUICE_NAME="sectest-mask-audit"
+SLUICE_MASK=".env*"
+SLUICE_RUN_CMD='printf MASKBYTES=%s\\\\n "\$(wc -c < .env)"'
+CFG
+  # The audit run reaches no hosts (the cmd is local-only), so it exits 0 after printing.
+  run bash -c "cd '$WORK/mask-audit' && SLUICE_YES=1 '$SLUICE' learn --audit 2>&1"
+  assert_success
+  assert_output --partial "MASKBYTES=0"        # .env is the empty masked bind during the audit pass
+  refute_output --partial "hunter2"
+  ( cd "$WORK/mask-audit" && "$SLUICE" rm ) >/dev/null 2>&1 || true
 }
