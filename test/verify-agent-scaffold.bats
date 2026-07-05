@@ -72,3 +72,14 @@ _agent() { run bash -c "cd '$WORK/proj' && PATH='$WORK/bin:$PATH' SLUICE_ENGINE=
   run grep -l 'from stack detection' "$ROOT"/agents/*.config.sh
   assert_failure
 }
+
+# PR6 #3: the gemini preset allowlists only generativelanguage.googleapis.com (the AI Studio /
+# USE_GEMINI path). gemini-cli reads GOOGLE_API_KEY only under USE_VERTEX_AI - a different, non-
+# allowlisted endpoint - so forwarding it is inert and misleading (`sluice agent` would show it set).
+# Source the preset and assert SLUICE_ENV carries GEMINI_API_KEY but NOT GOOGLE_API_KEY.
+@test "agent preset: gemini forwards GEMINI_API_KEY only, not the inert GOOGLE_API_KEY" {
+  run sh -c '. "$1"; printf "%s" "$SLUICE_ENV"' _ "$ROOT/agents/gemini.config.sh"
+  assert_success
+  assert_output --partial "GEMINI_API_KEY"
+  refute_output --partial "GOOGLE_API_KEY"
+}

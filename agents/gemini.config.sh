@@ -13,7 +13,9 @@ SLUICE_ALLOW_DOMAINS="generativelanguage.googleapis.com"
 SLUICE_DESC="Gemini CLI (Google)"
 # In-repo secrets: .env* files are shadowed (unreadable in the box); SLUICE_MASK="" to disable.
 SLUICE_MASK=".env*"
-SLUICE_ENV="GEMINI_API_KEY GOOGLE_API_KEY"
+# GOOGLE_API_KEY is read only under USE_VERTEX_AI (a different, non-allowlisted endpoint), so it's
+# inert for this preset's generativelanguage.googleapis.com host - don't forward it (misleading otherwise).
+SLUICE_ENV="GEMINI_API_KEY"
 # Persist Gemini's sessions/history/auth across runs (host-side, per project).
 SLUICE_STATE_DIRS=".gemini"
 # --yolo auto-approves all actions. Drop it for interactive.

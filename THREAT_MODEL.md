@@ -129,6 +129,15 @@ The guarantees below hold only while these do:
   with system files or leave persistence. (On SELinux-enforcing hosts the box runs
   `--security-opt label=disable` so it can read the project mount; that drops the SELinux layer, but
   the guarantees above are unaffected.)
+- **Host code execution from scaffolding an untrusted repo** -> `sluice init` reads the repo's
+  manifests (`Procfile`, `Makefile`/`justfile` targets, `package.json` scripts, ...) to propose a
+  run command and writes them into `sluice.config.sh`, which the launcher then **sources on the host**
+  (pre-container, before any sandbox exists). So every repo-derived value init emits is **shell-quoted**
+  (single-quoted, embedded quotes escaped) - inside single quotes a backtick, `$(...)`, `$var`, or `"`
+  is literal, so a hostile value (e.g. a `Procfile` web line carrying a backtick) is the literal string
+  when sourced, never executed. Running `sluice init` in an untrusted checkout does not run that repo's
+  code on your host. (You still author and review the config you ultimately run - the values init
+  proposes are advisory.)
 - **Supply-chain fetch vs. runtime** -> deps are pulled at build (pre-firewall); the
   *running* container is locked to the allowlist.
 - **Tampered sandbox core** -> the generic core (proxy, firewall, entrypoint, non-root user)
@@ -150,10 +159,15 @@ The guarantees below hold only while these do:
    a shared host - `raw.githubusercontent.com`, a cloud storage endpoint, an LLM API -
    data can be laundered through it. Keep the list minimal; never allow a host an attacker can also
    write to. `sluice` flags such a host at session start (`SLUICE_LAUNDERING_OK=1` acknowledges and
-   silences it, `SLUICE_STRICT_LAUNDERING=1` refuses to run).
+   silences it, `SLUICE_STRICT_LAUNDERING=1` refuses to run). The flag matches the **leading-dot
+   wildcard** form too (`.storage.googleapis.com`, what `sluice learn` writes), not just the bare host,
+   so a wildcard allowlist doesn't slip a known launderer past the gate or a `forbid-laundering` policy.
 3. **Exfil through `SLUICE_ALLOW_IPS`.** Reviewed fixed IPs get *direct* egress (the escape hatch for
    non-HTTP services like a database) - bypassing the proxy, so unfiltered by hostname. Scope each
    entry to one port with `ip:port` (a bare ip/cidr opens *every* port); keep the list minimal and specific.
+   It is **IPv4-only** and floored at **/8**: an IPv6 literal, any `0.0.0.0/N`, and a prefix shorter than
+   `/8` (e.g. the two-CIDR `0.0.0.0/1 128.0.0.0/1` cover) are **refused** host-side, and the in-box
+   firewall independently refuses the same so a bypassed launcher check can't open all direct egress.
 4. **A squid vulnerability or a loose allowlist.** The egress policy rests on squid +
    the allowlist file. A squid CVE or an over-broad `SLUICE_ALLOW_DOMAINS` is the trust anchor
    to guard - including the `.domain` wildcards `sluice learn` can write (a leading-dot entry
@@ -170,7 +184,10 @@ The guarantees below hold only while these do:
    can corrupt/delete your working tree (git history on the host is your backstop). Opt into
    `SLUICE_WORKSPACE=overlay` to mount the repo **read-only** and have the box edit a throwaway
    copy instead: the agent can't touch your files, and you review (`sluice diff`) and explicitly
-   write back (`sluice apply`) - or discard by just stopping the box.
+   write back (`sluice apply`) - or discard by just stopping the box. `apply` deletes host files the
+   box deleted only against a boot-time snapshot of the original; if seeding the copy ever fails (a
+   partial `cp`), that snapshot is **skipped** and `apply` deletes nothing, so an incomplete copy can
+   never cost you an untouched host file.
 6. **Whatever `SLUICE_PRELAUNCH` does.** It runs on the **host** and is fully trusted - a
    malicious config is out of scope (you author it).
 7. **Host-side Claude/editor hooks, side channels, timing.** Not addressed.
@@ -249,4 +266,6 @@ clean-PATH root execs (no uid-1000 PATH-shadow privesc), `host_verify_strict` (f
 validated worktree common-dir mount, case-insensitive + wildcard-coverage DoH filter, fail-closed egress
 audit, sanitized `doctor` output, policy deny over a covering allow wildcard, and the IPv6-closed
 disjunction; plus `learn` failing closed on an unreachable `SLUICE_POLICY_URL`, matching the run path.
+Hardened 2026-06-15: `sluice init` shell-quotes every repo-derived value it writes (the generated,
+host-sourced config no longer executes a hostile `Procfile`/manifest value at scaffold time).
 Revisit when the egress path, mount model, or runtime options change._

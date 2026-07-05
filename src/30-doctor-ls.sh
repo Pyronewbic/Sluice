@@ -546,6 +546,9 @@ cmd_doctor() {
       _attn=$((_attn+1))
       _doc egress "${C_RED}$(printf '%s\n' "$blocked" | grep -c .) host(s) blocked${C_RST} (last run) - run 'sluice learn' to allow:"
       printf '%s\n' "$blocked" | _doctor_bullets "$C_RED"
+    elif ! _audit_readable; then
+      _attn=$((_attn+1))
+      _doc egress "${C_YEL}egress audit unavailable${C_RST} - could not read the in-box log (pids limit?); can't confirm nothing was blocked"
     else
       _doc egress "${C_GRN}no blocked egress needs allowing${C_RST}"
     fi
@@ -610,8 +613,13 @@ cmd_doctor_json() {
     else lock="present-unbuilt"; fi
   fi
 
-  local running_b=false blocked=""
-  if [ -n "$eng" ] && running; then running_b=true; local _RCPT_OFFSET; _RCPT_OFFSET="$(last_run_offset)"; blocked="$(blocked_new 2>/dev/null || true)"; fi
+  local running_b=false blocked="" egress_unavail=false
+  if [ -n "$eng" ] && running; then
+    running_b=true; local _RCPT_OFFSET; _RCPT_OFFSET="$(last_run_offset)"
+    blocked="$(blocked_new 2>/dev/null || true)"
+    # Empty may mean "nothing blocked" or a failed read; distinguish so blocked isn't a false [].
+    [ -z "$blocked" ] && ! _audit_readable && egress_unavail=true
+  fi
 
   local nsd=0 _sd; set -f; for _sd in ${SLUICE_STATE_DIRS:-}; do nsd=$((nsd+1)); done; set +f   # dir names aren't globs
 
@@ -696,6 +704,7 @@ cmd_doctor_json() {
   ports_json="$(printf '%s'   "${SLUICE_PORTS:-}"         | tr ' \t' '\n\n' | _json_arr)"
   ips_json="$(printf '%s'     "${SLUICE_ALLOW_IPS:-}"     | tr ' \t' '\n\n' | _json_arr)"
   blocked_json="$(printf '%s' "$blocked"                  | tr ' \t' '\n\n' | _json_arr)"
+  [ "$egress_unavail" = true ] && blocked_json=null
 
   printf '{"engine":"%s","engine_found":%s,"daemon":%s,"config":"%s","config_error":%s,"project_dir":"%s","name":"%s","desc":"%s","image":{"tag":"%s","built":%s,"stale":%s},"lock":"%s","allowlist":%s,"base":%s,"ports":%s,"allow_ips":%s,"base_image":"%s","policy_url":"%s","policy":%s,"state_dirs":%s,"overlay_dirs":%s,"mounts":%s,"auth":%s,"hardening":%s,"mask":{"patterns":%s,"masked":%s,"unmasked_secrets":%s},"risk":%s,"broken_symlinks":%s,"egress":{"running":%s,"blocked":%s}}\n' \
     "$(_json_esc "$engine_ver")" "$engine_found" "$daemon" "$(_json_esc "$PROJECT_CONFIG")" "$config_error" "$(_json_esc "$PROJECT_DIR")" "$(_json_esc "$tag")" "$(_json_esc "${SLUICE_DESC:-}")" \

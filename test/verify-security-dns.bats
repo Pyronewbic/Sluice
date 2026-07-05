@@ -58,6 +58,13 @@ teardown_file() { destroy_box dns dns; }
   assert_output ""
 }
 
+# Must precede the SLUICE_DNS_OPEN test below: it rebuilds this same box into forward-all mode,
+# which deliberately drops stop-dns-rebind.
+@test "dns: rebinding answers into RFC1918 are dropped (stop-dns-rebind in the dnsmasq config)" {
+  run "$ENG" exec --user root sluice-sectest-dns sh -c 'grep -q "^stop-dns-rebind" /run/dnsmasq-sluice.conf'
+  assert_success
+}
+
 @test "dns: SLUICE_DNS_OPEN=1 restores forward-all resolution (opt-in)" {
   mkdir -p "$WORK/dns-open"
   printf 'SLUICE_NAME="sectest-dns"\nSLUICE_DNS_OPEN=1\nSLUICE_RUN_CMD="bash"\n' > "$WORK/dns-open/sluice.config.sh"

@@ -29,7 +29,18 @@ if [ -n "$SLUICE_BOX_TARGET" ]; then
   case "${1:-}" in
     init|help|-h|--help|version|-v|--version|ls|prune|agent) die "--box doesn't apply to '${1:-}'" ;;
   esac
-  resolve_engine   # idempotent; doctor skipped it in the case above
+  # doctor is the lenient path (reports, never dies, since it's what you run when the runtime is broken):
+  # mirror line 22 and skip the strict resolve_engine. resolve_box_target still needs $ENGINE for its
+  # image inspect, so set it leniently (docker/podman/SLUICE_ENGINE, no runtime preflight) - matching
+  # cmd_doctor's own engine probe. Every other -b command keeps the strict resolve_engine.
+  case "${1:-}" in
+    doctor)
+      if   [ -n "${SLUICE_ENGINE:-}" ]; then ENGINE="$SLUICE_ENGINE"
+      elif command -v docker >/dev/null 2>&1; then ENGINE=docker
+      elif command -v podman >/dev/null 2>&1; then ENGINE=podman
+      else ENGINE="" ; fi ;;
+    *) resolve_engine ;;   # idempotent; the line-22 case skipped it for doctor
+  esac
   resolve_box_target "$SLUICE_BOX_TARGET"
   echo "${E_DIM}[sluice]${E_RST} targeting ${SLUICE_BOX_SLUG} (${BOX_PROJECT:-<dir gone>})" >&2
 fi
