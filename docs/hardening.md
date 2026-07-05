@@ -155,3 +155,12 @@ Kata wants a rootful containerd. Your engine (docker or podman) still builds the
 loads it into containerd and runs the box under nerdctl with the Kata runtime - same firewall,
 non-root user, and mount semantics. Cost: slower boot than a container, plus an image copy into
 containerd's store after every rebuild.
+
+## Rootless podman: repo ownership
+
+The box runs as uid 1000 (`sluice`) and chowns the mounted repo to it so the sandboxed user can write.
+Under rootless podman your host user maps to container-root, so sluice adds `--userns=keep-id:uid=1000`
+to map your host user straight onto the sluice uid: the repo stays writable in the box **and** owned by
+you on the host. This needs **podman >= 4.3**. On older podman sluice warns and falls back to the plain
+chown, which re-owns the repo to a subuid; restore your write access with
+`podman unshare chown -R 0:0 "$PWD"`.
