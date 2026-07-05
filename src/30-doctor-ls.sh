@@ -706,7 +706,7 @@ cmd_doctor_json() {
   blocked_json="$(printf '%s' "$blocked"                  | tr ' \t' '\n\n' | _json_arr)"
   [ "$egress_unavail" = true ] && blocked_json=null
 
-  printf '{"engine":"%s","engine_found":%s,"daemon":%s,"config":"%s","config_error":%s,"project_dir":"%s","name":"%s","desc":"%s","image":{"tag":"%s","built":%s,"stale":%s},"lock":"%s","allowlist":%s,"base":%s,"ports":%s,"allow_ips":%s,"base_image":"%s","policy_url":"%s","policy":%s,"state_dirs":%s,"overlay_dirs":%s,"mounts":%s,"auth":%s,"hardening":%s,"mask":{"patterns":%s,"masked":%s,"unmasked_secrets":%s},"risk":%s,"broken_symlinks":%s,"egress":{"running":%s,"blocked":%s}}\n' \
+  printf '{"schema":"sluice.doctor/v1","engine":"%s","engine_found":%s,"daemon":%s,"config":"%s","config_error":%s,"project_dir":"%s","name":"%s","desc":"%s","image":{"tag":"%s","built":%s,"stale":%s},"lock":"%s","allowlist":%s,"base":%s,"ports":%s,"allow_ips":%s,"base_image":"%s","policy_url":"%s","policy":%s,"state_dirs":%s,"overlay_dirs":%s,"mounts":%s,"auth":%s,"hardening":%s,"mask":{"patterns":%s,"masked":%s,"unmasked_secrets":%s},"risk":%s,"broken_symlinks":%s,"egress":{"running":%s,"blocked":%s}}\n' \
     "$(_json_esc "$engine_ver")" "$engine_found" "$daemon" "$(_json_esc "$PROJECT_CONFIG")" "$config_error" "$(_json_esc "$PROJECT_DIR")" "$(_json_esc "$tag")" "$(_json_esc "${SLUICE_DESC:-}")" \
     "$(_json_esc "$tag")" "$img_built" "$img_stale" "$lock" \
     "$allow_json" "$(base_domains | tr ' ' '\n' | _json_arr)" \
@@ -714,6 +714,23 @@ cmd_doctor_json() {
     "$(_json_esc "${SLUICE_POLICY_URL:-}")" "$policy_json" "$nsd" "$overlays_json" "$mounts_json" "$auth_json" "$hardening_json" \
     "$mask_pats" "$mask_hits" "$mask_unm" "$risk_json" "$links_json" \
     "$running_b" "$blocked_json"
+}
+
+# Verbatim-embed a box's latest egress-receipt.json into `ls --json` (a fleet<->audit join, so a
+# dashboard reads posture + last egress in one call), or `null`. The file is sluice's own single-line
+# JSON (_persist_receipt, src/80), so a guarded raw embed needs no parsing and stays valid JSON: it must
+# be one line, open with the known schema, close with `}`, and carry no control byte - else null. Fail
+# closed on anything malformed so `ls --json` never emits broken JSON. Its integrity is attested by
+# `egress --verify`, not by ls (documented in docs/operations.md).
+_last_receipt_json() {
+  local f="$1/egress-receipt.json" line nl
+  [ -f "$f" ] || { printf 'null'; return 0; }
+  nl="$(wc -l < "$f" 2>/dev/null | tr -d ' ')"; case "$nl" in ''|*[!0-9]*) nl=2 ;; esac
+  [ "$nl" -le 1 ] || { printf 'null'; return 0; }           # multi-line = not our single-line receipt
+  line="$(head -1 "$f" 2>/dev/null)"
+  case "$line" in '{"schema":"sluice.egress/v1"'*'}') ;; *) printf 'null'; return 0 ;; esac
+  printf '%s' "$line" | LC_ALL=C grep -q '[[:cntrl:]]' && { printf 'null'; return 0; }
+  printf '%s' "$line"
 }
 
 # `sluice ls`: a derived, read-only table of every built sluice box on this machine
@@ -750,8 +767,8 @@ cmd_ls() {
 
   # Gather labels + container state into parallel arrays, applying filters as we go. (Kept as a plain
   # while-loop, NOT a $(...) capture: a case pattern's ) inside command substitution mis-parses on bash 3.2.)
-  local names=() stats=() projs=() stacks=() descs=() curs=() orphs=() allows=() ports_=() locks=() blocks=() ovls=()
-  local name proj stack desc status cur orphan allowcount portslbl lock blocked ovl
+  local names=() stats=() projs=() stacks=() descs=() curs=() orphs=() allows=() ports_=() locks=() blocks=() ovls=() chashes=()
+  local name proj stack desc status cur orphan allowcount portslbl lock blocked ovl chash
   while IFS= read -r name; do
     [ -n "$name" ] || continue
     proj="$( "$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.project" }}' "$name" 2>/dev/null || true)"
@@ -760,12 +777,14 @@ cmd_ls() {
     allowcount="$("$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.allowcount" }}' "$name" 2>/dev/null || true)"
     portslbl="$(  "$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.ports" }}'      "$name" 2>/dev/null || true)"
     ovl="$(       "$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.overlays" }}'   "$name" 2>/dev/null || true)"
+    chash="$(     "$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.confighash" }}' "$name" 2>/dev/null || true)"
     case "$proj"       in "<no value>") proj=""       ;; esac
     case "$stack"      in "<no value>") stack=""      ;; esac
     case "$desc"       in "<no value>") desc=""       ;; esac
     case "$allowcount" in "<no value>") allowcount="" ;; esac
     case "$portslbl"   in "<no value>") portslbl=""   ;; esac
     case "$ovl"        in "<no value>") ovl=""        ;; esac
+    case "$chash"      in "<no value>") chash=""      ;; esac
     orphan=false; [ -n "$proj" ] && [ ! -d "$proj" ] && orphan=true
     if   "$RUNNER" ps    --filter "name=$name" --filter status=running --format '{{.Names}}' 2>/dev/null | grep -qx "$name"; then status=running
     elif "$RUNNER" ps -a --filter "name=$name" --format '{{.Names}}' 2>/dev/null | grep -qx "$name"; then status=stopped
@@ -778,7 +797,7 @@ cmd_ls() {
     lock="-"; [ -n "$proj" ] && [ -f "$proj/sluice.lock" ] && lock=locked
     blocked=""; [ -n "$egress" ] && [ "$status" = running ] && blocked="$(box_blocked_count "$name")"   # opt-in: execs into the box
     names+=("$name"); stats+=("$status"); projs+=("$proj"); stacks+=("$stack"); descs+=("$desc"); curs+=("$cur"); orphs+=("$orphan")
-    allows+=("$allowcount"); ports_+=("$portslbl"); locks+=("$lock"); blocks+=("$blocked"); ovls+=("$ovl")
+    allows+=("$allowcount"); ports_+=("$portslbl"); locks+=("$lock"); blocks+=("$blocked"); ovls+=("$ovl"); chashes+=("$chash")
   done <<EOF
 $imgs
 EOF
@@ -806,7 +825,7 @@ EOF
 $sorted
 EOF
 
-  local i j ac lk pjson ojson bjson
+  local i j ac lk pjson ojson bjson _slug _sdir _lr _chjson
   if [ "$mode" = --json ]; then
     printf '['
     for j in "${!order[@]}"; do
@@ -817,14 +836,20 @@ EOF
       # tr-split (like overlays) keeps a glob metachar in the label literal - no pathname expansion against $PWD
       pjson="$(printf '%s' "${ports_[$i]}" | tr ' \t' '\n\n' | _json_arr)"
       ojson="$(printf '%s' "${ovls[$i]}" | tr ' \t' '\n\n' | _json_arr)"
+      # confighash (null on an un-rebuilt/pre-posture image) + state_dir + last egress receipt (a
+      # fleet<->audit join): all pure file/label reads, so the ls "nothing sourced here" invariant holds.
+      _chjson=null; [ -n "${chashes[$i]}" ] && _chjson="\"$(_json_esc "${chashes[$i]}")\""
+      _slug="${names[$i]#sluice-}"
+      _sdir="${XDG_STATE_HOME:-$HOME/.local/state}/sluice/$_slug"
+      _lr="$(_last_receipt_json "$_sdir")"
       bjson=""; if [ -n "$egress" ]; then
         # null = not running OR audit unreadable (unknown) - never a defaulted 0 over a failed read
         if [ "${stats[$i]}" = running ] && [ -n "${blocks[$i]}" ]; then bjson=",\"blocked\":${blocks[$i]}"; else bjson=',"blocked":null'; fi
       fi
-      printf '{"name":"%s","status":"%s","stack":"%s","path":"%s","description":"%s","current":%s,"orphan":%s,"allow_count":%s,"ports":%s,"overlay_dirs":%s,"locked":%s%s}' \
+      printf '{"schema":"sluice.box/v1","name":"%s","status":"%s","stack":"%s","path":"%s","description":"%s","current":%s,"orphan":%s,"allow_count":%s,"ports":%s,"overlay_dirs":%s,"locked":%s,"confighash":%s,"state_dir":"%s","last_receipt":%s%s}' \
         "$(_json_esc "${names[$i]}")" "$(_json_esc "${stats[$i]}")" "$(_json_esc "${stacks[$i]}")" \
         "$(_json_esc "${projs[$i]}")" "$(_json_esc "${descs[$i]}")" "${curs[$i]}" "${orphs[$i]}" \
-        "$ac" "$pjson" "$ojson" "$lk" "$bjson"
+        "$ac" "$pjson" "$ojson" "$lk" "$_chjson" "$(_json_esc "$_sdir")" "$_lr" "$bjson"
     done
     printf ']\n'; return 0
   fi

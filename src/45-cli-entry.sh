@@ -17,9 +17,12 @@ case "${1:-}" in
                  _banner_posture ' - '; printf '%s%s\n' "$_POSTURE_TEXT" "${_POSTURE_RISK:+ [risk]}"; exit 0 ;;
 esac
 
-# init + info commands need no engine; resolve one only for the rest.
+# init + info commands need no engine; resolve one only for the rest. `egress ... --all` is a
+# host-side, file-only fleet audit (no engine, no config), so it must survive the daemon being down
+# or absent - skip resolve_engine for it too, matching doctor's leniency.
 case "${1:-}" in
   init|help|-h|--help|version|-v|--version|doctor) ;;
+  egress) case " $* " in *" --all "*) ;; *) resolve_engine ;; esac ;;
   *) resolve_engine ;;
 esac
 
@@ -28,6 +31,7 @@ esac
 if [ -n "$SLUICE_BOX_TARGET" ]; then
   case "${1:-}" in
     init|help|-h|--help|version|-v|--version|ls|prune|agent) die "--box doesn't apply to '${1:-}'" ;;
+    egress) case " $* " in *" --all "*) die "--box doesn't apply to 'egress --all' (it spans every box)" ;; esac ;;
   esac
   # doctor is the lenient path (reports, never dies, since it's what you run when the runtime is broken):
   # mirror line 22 and skip the strict resolve_engine. resolve_box_target still needs $ENGINE for its

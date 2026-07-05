@@ -252,7 +252,9 @@ sharp edge is **allowed-host laundering**: because we splice (never decrypt), da
 to an *allowed* host isn't inspected. Keep `SLUICE_ALLOW_DOMAINS`/`SLUICE_ALLOW_IPS` minimal (the
 latter port-scoped) and never allow a host an attacker can also write to - `sluice` flags such a host
 at run, a per-run **egress receipt** (hosts reached + bytes, in the state dir) makes after-the-fact
-audit possible, and `SLUICE_EGRESS_MAX_BYTES` can gate CI on volume. An org can enforce a
+audit possible, and `SLUICE_EGRESS_MAX_BYTES` (whole-box) plus `SLUICE_EGRESS_HOST_BUDGETS` (per-host)
+can gate CI on volume. These volume gates are **detective** - they surface and fail CI after the fact;
+they do not stop bytes leaving mid-flight. An org can enforce a
 deny-capable [central policy](docs/policy.md) that a developer's local config cannot loosen; that
 policy is tamper-resistant only via its root-owned deployment, not by sluice itself (signing: v2.1).
 

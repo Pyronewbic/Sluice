@@ -61,10 +61,12 @@ Inspect:
   doctor           health check: engine, image, allowlist, blocked egress (--json)
   ls               list all boxes + posture (status, stack, allow/ports/lock, path); --running/--orphans/--stack <name>/--egress/--json
   egress           show what this box reached vs. was blocked (--json | --export | --verify)
+                   --verify/--export accept --all to span every box's audit log (fleet-wide, no engine)
   logs             follow firewall + readiness logs
   lock             record installed apk+npm+pip+gem+go+cargo versions to sluice.lock (supply-chain audit)
                    --check fails on drift (CI gate, --json); --enforce is the strict variant; --diff shows it;
-                   --sbom emits CycloneDX (--format spdx for SPDX); --scan vuln-checks via a host Grype/Trivy (--fail-on <sev>)
+                   --sbom emits CycloneDX (--format spdx for SPDX); --scan vuln-checks via a host Grype/Trivy (--fail-on <sev>);
+                   --pin writes sluice.pin (base digest + exact versions) for a SLUICE_PIN=1 replay build
   smoke            build (if needed) + run the image smoke test
 
 Meta:
@@ -98,9 +100,9 @@ help_for() {
     prune)   echo "sluice prune [--orphans] - remove every sluice container + image (or only orphans); confirms." ;;
     doctor)  echo "sluice doctor [--json]  - health check: engine, image, allowlist, blocked egress." ;;
     ls)      echo "sluice ls [--running|--orphans|--stack <name>|--egress|--json] - list boxes + posture (allow/ports/lock; --egress adds live blocked counts). Posture populates after rebuild." ;;
-    egress)  echo "sluice egress [--json | --export | --verify]  - reached vs. blocked; --export the append-only audit log (JSONL), --verify its hash chain." ;;
+    egress)  echo "sluice egress [--json | --export [--all] | --verify [--all] [--json]]  - reached vs. blocked; --export the append-only audit log (JSONL), --verify its hash chain; --all spans every box (fleet-wide, no engine needed)." ;;
     logs)    echo "sluice logs             - follow firewall + readiness logs." ;;
-    lock)    echo "sluice lock [--check [--json] | --diff [--json] | --enforce [--json] | --sbom [--format cyclonedx|spdx] | --scan [--json] [--fail-on <sev>]] - record/verify/vuln-scan the supply-chain inventory." ;;
+    lock)    echo "sluice lock [--check [--json] | --diff [--json] | --enforce [--json] | --sbom [--format cyclonedx|spdx] | --scan [--json] [--fail-on <sev>] | --pin] - record/verify/vuln-scan the supply-chain inventory; --pin writes a replay manifest." ;;
     smoke)   echo "sluice smoke            - build (if needed) + run the image smoke test." ;;
     version) echo "sluice version [--json] - show version + host runtime." ;;
     *)       usage ;;
@@ -129,7 +131,7 @@ cmd_version_json() {
   elif command -v docker >/dev/null 2>&1; then eng=docker
   elif command -v podman >/dev/null 2>&1; then eng=podman; fi
   [ -n "$eng" ] && command -v "$eng" >/dev/null 2>&1 && eng="$("$eng" --version 2>/dev/null | head -1)"
-  printf '{"version":"%s","engine":"%s","os":"%s","install":"%s"}\n' \
+  printf '{"schema":"sluice.version/v1","version":"%s","engine":"%s","os":"%s","install":"%s"}\n' \
     "$(_json_esc "$(sluice_version)")" "$(_json_esc "$eng")" "$(_json_esc "$(uname -s) $(uname -m)")" "$(_json_esc "$ROOT")"
 }
 

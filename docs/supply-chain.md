@@ -31,6 +31,25 @@ Wolfi apk is a rolling repo, so the same config builds different versions on dif
 `sluice.lock` is a drift/audit artifact - it tells you exactly what changed between builds; it
 does not pin a bit-for-bit rebuild. The lock header says so.
 
+## `sluice lock --pin`: a replay manifest
+
+`sluice lock --pin` writes a committable `./sluice.pin`: the base image pinned by **`@sha256` digest**
+plus every apk/npm/pip/gem/go/cargo name and version - the coordinates a `SLUICE_PIN=1` build replays to
+converge on those exact versions (the replay build itself lands next; the pin is the artifact it reads).
+
+```bash
+sluice lock --pin        # write ./sluice.pin (also refreshes ./sluice.lock from the same image)
+```
+
+`--pin` reads one built image, so it refreshes `sluice.lock` in the same pass - the two can never
+disagree. It fails **closed** two ways: a hollow inventory (the masked-read case, like `lock`) refuses to
+write, and a base that cannot be resolved to a digest refuses too - a pin that cannot freeze its base is
+worse than none (it pulls the base once to resolve the digest if the local engine has none yet).
+
+**Honest scope.** Pinning narrows, it does not fully reproduce: an apk pin **fails closed** once Wolfi
+stops serving that exact version (a rolling repo garbage-collects old versions), and the pin header says
+so. It is a stronger guarantee than `sluice.lock`'s drift audit, not a bit-for-bit reproducibility claim.
+
 ## SBOM
 
 `sluice lock --sbom` emits a deterministic SBOM to stdout - no timestamp or serial, purl-sorted,

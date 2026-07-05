@@ -15,6 +15,12 @@ load test_helper/common
   echo "$output" | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if all(k in d for k in ('version','engine','os','install')) and d['version'] else 1)"
 }
 
+@test "version --json carries the sluice.version/v1 schema stamp" {
+  run "$SLUICE" version --json
+  assert_success
+  echo "$output" | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get('schema')=='sluice.version/v1' else 1)"
+}
+
 @test "per-command --help prints its own synopsis (not 'unknown command')" {
   for c in run lock learn rm prune ls; do
     run "$SLUICE" "$c" --help

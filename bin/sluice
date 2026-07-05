@@ -115,10 +115,12 @@ Inspect:
   doctor           health check: engine, image, allowlist, blocked egress (--json)
   ls               list all boxes + posture (status, stack, allow/ports/lock, path); --running/--orphans/--stack <name>/--egress/--json
   egress           show what this box reached vs. was blocked (--json | --export | --verify)
+                   --verify/--export accept --all to span every box's audit log (fleet-wide, no engine)
   logs             follow firewall + readiness logs
   lock             record installed apk+npm+pip+gem+go+cargo versions to sluice.lock (supply-chain audit)
                    --check fails on drift (CI gate, --json); --enforce is the strict variant; --diff shows it;
-                   --sbom emits CycloneDX (--format spdx for SPDX); --scan vuln-checks via a host Grype/Trivy (--fail-on <sev>)
+                   --sbom emits CycloneDX (--format spdx for SPDX); --scan vuln-checks via a host Grype/Trivy (--fail-on <sev>);
+                   --pin writes sluice.pin (base digest + exact versions) for a SLUICE_PIN=1 replay build
   smoke            build (if needed) + run the image smoke test
 
 Meta:
@@ -152,9 +154,9 @@ help_for() {
     prune)   echo "sluice prune [--orphans] - remove every sluice container + image (or only orphans); confirms." ;;
     doctor)  echo "sluice doctor [--json]  - health check: engine, image, allowlist, blocked egress." ;;
     ls)      echo "sluice ls [--running|--orphans|--stack <name>|--egress|--json] - list boxes + posture (allow/ports/lock; --egress adds live blocked counts). Posture populates after rebuild." ;;
-    egress)  echo "sluice egress [--json | --export | --verify]  - reached vs. blocked; --export the append-only audit log (JSONL), --verify its hash chain." ;;
+    egress)  echo "sluice egress [--json | --export [--all] | --verify [--all] [--json]]  - reached vs. blocked; --export the append-only audit log (JSONL), --verify its hash chain; --all spans every box (fleet-wide, no engine needed)." ;;
     logs)    echo "sluice logs             - follow firewall + readiness logs." ;;
-    lock)    echo "sluice lock [--check [--json] | --diff [--json] | --enforce [--json] | --sbom [--format cyclonedx|spdx] | --scan [--json] [--fail-on <sev>]] - record/verify/vuln-scan the supply-chain inventory." ;;
+    lock)    echo "sluice lock [--check [--json] | --diff [--json] | --enforce [--json] | --sbom [--format cyclonedx|spdx] | --scan [--json] [--fail-on <sev>] | --pin] - record/verify/vuln-scan the supply-chain inventory; --pin writes a replay manifest." ;;
     smoke)   echo "sluice smoke            - build (if needed) + run the image smoke test." ;;
     version) echo "sluice version [--json] - show version + host runtime." ;;
     *)       usage ;;
@@ -183,7 +185,7 @@ cmd_version_json() {
   elif command -v docker >/dev/null 2>&1; then eng=docker
   elif command -v podman >/dev/null 2>&1; then eng=podman; fi
   [ -n "$eng" ] && command -v "$eng" >/dev/null 2>&1 && eng="$("$eng" --version 2>/dev/null | head -1)"
-  printf '{"version":"%s","engine":"%s","os":"%s","install":"%s"}\n' \
+  printf '{"schema":"sluice.version/v1","version":"%s","engine":"%s","os":"%s","install":"%s"}\n' \
     "$(_json_esc "$(sluice_version)")" "$(_json_esc "$eng")" "$(_json_esc "$(uname -s) $(uname -m)")" "$(_json_esc "$ROOT")"
 }
 
@@ -357,6 +359,48 @@ egress_tx_total() {
     } END { print total+0 }'
 }
 
+# Bytes SENT OUT keyed by reached host: "<host>\t<tx>". Same exfil-direction measure as egress_tx_total
+# (tx only; blocked requests never left the proxy), grouped by host for the SLUICE_EGRESS_HOST_BUDGETS
+# per-host gate. Offset-aware via _squid_log (scoped to the run for the receipt). Mirrors egress_rows'
+# host + hostname-charset parsing.
+egress_tx_by_host() {
+  _squid_log | awk '
+    { sni=""; tx=0; status=$3; url=$5;
+      if (status ~ /NONE_NONE/ || status ~ /TCP_DENIED/ || status ~ /\/000/) next;   # blocked: did not leave
+      for (i=1;i<=NF;i++) { if ($i ~ /^ssl_sni=/) sni=substr($i,9); else if ($i ~ /^tx=/) tx=substr($i,4)+0; }
+      host="";
+      if (sni != "" && sni != "-") host=sni;
+      else if (url ~ /^http:\/\//) { h=url; sub(/^http:\/\//,"",h); sub(/\/.*/,"",h); sub(/:.*/,"",h); host=h }
+      if (host == "" || host ~ /^[0-9.]+$/) next;
+      if (host !~ /^\.?[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$/) next;   # drop non-hostname chars (SNI/Host can carry $(),",ESC)
+      tot[host] += tx;
+    }
+    END { for (h in tot) printf "%s\t%d\n", h, tot[h] }'
+}
+
+# Resolve a host to its SLUICE_EGRESS_HOST_BUDGETS cap in bytes (empty = no budget for this host).
+# Tokens are "host=bytes" (exact) or ".wildcard=bytes" (.x matches x + *.x, squid dstdomain style).
+# Exact match wins outright; among wildcards the longest (most specific) wins. set -f so the unquoted
+# split can't glob a value.
+_host_budget_for() {
+  local host="$1" tok thost tbytes bare best="" bestlen=-1
+  set -f
+  for tok in ${SLUICE_EGRESS_HOST_BUDGETS:-}; do
+    case "$tok" in *=*) ;; *) continue ;; esac
+    thost="${tok%%=*}"; tbytes="${tok#*=}"
+    case "$tbytes" in ''|*[!0-9]*) continue ;; esac
+    if [ "$thost" = "$host" ]; then best="$tbytes"; break; fi   # exact beats any wildcard
+    case "$thost" in
+      .*) bare="${thost#.}"
+          if [ "$host" = "$bare" ] || case "$host" in *"$thost") true ;; *) false ;; esac; then
+            [ "${#thost}" -gt "$bestlen" ] && { best="$tbytes"; bestlen="${#thost}"; }
+          fi ;;
+    esac
+  done
+  set +f
+  printf '%s' "$best"
+}
+
 # The proxy-log byte offset captured at the start of the last `sluice` run (written to /run by the run
 # arms). Lets `sluice learn` scope to that run instead of the whole boot; empty if no run / box rebooted.
 # `|| true` on the cat: a missing offset file -> empty offset (callers' full-log fallback), never a
@@ -467,16 +511,43 @@ cmd_egress() {
   case "$cap" in *[!0-9]*) cap="";; esac   # non-numeric (or empty) -> no budget
   tx="$(egress_tx_total 2>/dev/null || echo 0)"; case "$tx" in ''|*[!0-9]*) tx=0;; esac
   [ -n "$cap" ] && [ "$tx" -gt "$cap" ] && over=1
+  # SLUICE_EGRESS_HOST_BUDGETS: a PER-HOST tx budget (bounds laundering through one allowed host more
+  # tightly than the whole-box cap). Any single reached host over its cap makes this command exit
+  # non-zero too - the same CI gate. Detective, boot-scoped (like the total cap). hb_tx_table is the
+  # per-host tx tally, computed once and reused by the human + JSON renders below.
+  local hb_over=0 hb_tx_table="" hb_host hb_tx hb_cap
+  if [ -n "${SLUICE_EGRESS_HOST_BUDGETS:-}" ]; then
+    hb_tx_table="$(egress_tx_by_host 2>/dev/null || true)"
+    while IFS="$TAB" read -r hb_host hb_tx; do
+      [ -n "$hb_host" ] || continue
+      hb_cap="$(_host_budget_for "$hb_host")"; [ -n "$hb_cap" ] || continue
+      case "$hb_tx" in ''|*[!0-9]*) hb_tx=0 ;; esac
+      [ "$hb_tx" -gt "$hb_cap" ] && hb_over=1
+    done <<EOF
+$hb_tx_table
+EOF
+  fi
+  [ "$hb_over" = 1 ] && over=1
   if [ "$mode" = --json ]; then
     # Back-compat host arrays + a detailed hosts array (class/requests/bytes) for the control plane.
     local allowed blocked hosts_json="" first=1 cls host cnt byt over_json=false
     [ "$over" = 1 ] && over_json=true
     allowed="$(printf '%s\n' "$rows" | awk -F"$TAB" '$1=="reached"{print $2}')"
     blocked="$(printf '%s\n' "$rows" | awk -F"$TAB" '$1=="blocked"{print $2}')"
+    local _bud _ovb _htx
     while IFS="$TAB" read -r cls host cnt byt; do
       [ -n "$host" ] || continue
       [ "$first" = 1 ] && first=0 || hosts_json="$hosts_json,"
-      hosts_json="$hosts_json{\"host\":\"$(_json_esc "$host")\",\"class\":\"$cls\",\"requests\":$cnt,\"bytes\":$byt}"
+      _bud=null; _ovb=false
+      if [ -n "$hb_tx_table" ] && [ "$cls" = reached ]; then
+        _bud="$(_host_budget_for "$host")"
+        if [ -n "$_bud" ]; then
+          _htx="$(printf '%s\n' "$hb_tx_table" | awk -F"$TAB" -v h="$host" '$1==h{print $2; exit}')"
+          case "$_htx" in ''|*[!0-9]*) _htx=0 ;; esac
+          [ "$_htx" -gt "$_bud" ] && _ovb=true
+        else _bud=null; fi
+      fi
+      hosts_json="$hosts_json{\"host\":\"$(_json_esc "$host")\",\"class\":\"$cls\",\"requests\":$cnt,\"bytes\":$byt,\"budget\":$_bud,\"over_budget\":$_ovb}"
     done <<EOF
 $rows
 EOF
@@ -508,8 +579,17 @@ EOF
     echo "  ${C_DIM}(nothing yet - exercise the app, then re-run)${C_RST}"
   fi
   if [ -n "$cap" ]; then
-    if [ "$over" = 1 ]; then echo "  ${C_RED}egress budget EXCEEDED${C_RST}: $(_human_bytes "$tx") sent > $(_human_bytes "$cap") cap (SLUICE_EGRESS_MAX_BYTES)"
+    if [ "$tx" -gt "$cap" ]; then echo "  ${C_RED}egress budget EXCEEDED${C_RST}: $(_human_bytes "$tx") sent > $(_human_bytes "$cap") cap (SLUICE_EGRESS_MAX_BYTES)"
     else echo "  ${C_DIM}egress budget: $(_human_bytes "$tx") sent / $(_human_bytes "$cap") cap${C_RST}"; fi
+  fi
+  # Per-host budget breaches (SLUICE_EGRESS_HOST_BUDGETS): one line per host over its own cap.
+  if [ "$hb_over" = 1 ]; then
+    printf '%s\n' "$hb_tx_table" | while IFS="$TAB" read -r hb_host hb_tx; do
+      [ -n "$hb_host" ] || continue
+      hb_cap="$(_host_budget_for "$hb_host")"; [ -n "$hb_cap" ] || continue
+      case "$hb_tx" in ''|*[!0-9]*) hb_tx=0 ;; esac
+      [ "$hb_tx" -gt "$hb_cap" ] && echo "  ${C_RED}host budget EXCEEDED${C_RST}: $hb_host sent $(_human_bytes "$hb_tx") > $(_human_bytes "$hb_cap") cap (SLUICE_EGRESS_HOST_BUDGETS)"
+    done
   fi
   # C2: make the tamper-evident audit log discoverable (has-rows human path only; the empty case stays quiet).
   [ -n "$rows" ] && echo "  ${C_DIM}audit log: sluice egress --export | --verify${C_RST}"
@@ -522,6 +602,35 @@ cmd_egress_export() {
   local log="${XDG_STATE_HOME:-$HOME/.local/state}/sluice/$slug/egress-log.jsonl"
   [ -f "$log" ] || { echo "[sluice] no egress log yet at $(_tilde "$log") - run the box first." >&2; return 0; }
   cat "$log"
+}
+
+# Walk ONE egress-log.jsonl hash chain. Sets _VCF_RECORDS / _VCF_BROKEN / _VCF_REASON and returns 0 if
+# intact, 1 on the first break (self-hash / prev-link) or an unreadable file. Byte-identical chain
+# semantics to the old inline loop - the `|| [ -n "$line" ]` unterminated-tail catch and the blank-line
+# continue are both pinned by test/verify-receipt-unit.bats (which must pass unmodified). Shared by the
+# single-box `egress --verify` and the fleet `egress --verify --all`; M3's rotation adds a `rotation-link`
+# reason on top of this walker.
+_verify_chain_file() {
+  local log="$1"
+  _VCF_RECORDS=0; _VCF_BROKEN=""; _VCF_REASON=""
+  # A file we cannot read (perms) reports unreadable, never a silent pass (fail closed, like the audit reads).
+  [ -r "$log" ] || { _VCF_REASON=unreadable; return 1; }
+  local n=0 prev="0000000000000000000000000000000000000000000000000000000000000000" line payload self pfield
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ -n "$line" ] || continue   # tolerate blank lines (don't hash "" into a bogus TAMPERED); count only real records
+    n=$((n+1))
+    self="$(printf '%s' "$line"   | sed -n 's/.*,"self":"\([0-9a-f]*\)"}$/\1/p')"
+    payload="$(printf '%s' "$line" | sed 's/,"self":"[0-9a-f]*"}$/}/')"
+    pfield="$(printf '%s' "$line"  | sed -n 's/.*,"prev":"\([0-9a-f]*\)".*/\1/p')"
+    if [ -z "$self" ] || [ "$(printf '%s' "$payload" | _sha256)" != "$self" ]; then
+      _VCF_RECORDS="$n"; _VCF_BROKEN="$n"; _VCF_REASON="self-hash"; return 1
+    fi
+    if [ "$pfield" != "$prev" ]; then
+      _VCF_RECORDS="$n"; _VCF_BROKEN="$n"; _VCF_REASON="prev-link"; return 1
+    fi
+    prev="$self"
+  done < "$log"
+  _VCF_RECORDS="$n"; return 0
 }
 
 # `sluice egress --verify`: walk the hash chain of the egress audit log; OK only if every line's
@@ -543,29 +652,80 @@ cmd_egress_verify() {
     else echo "[sluice] no egress log yet at $(_tilde "$log")." >&2; fi
     return 0
   fi
-  local n=0 prev="0000000000000000000000000000000000000000000000000000000000000000" line payload self pfield
-  # `|| [ -n "$line" ]` so an UNTERMINATED final record is still verified (read returns non-zero at EOF
-  # on a missing trailing newline) - else a forged tail appended without a leading newline is invisible.
-  while IFS= read -r line || [ -n "$line" ]; do
-    [ -n "$line" ] || continue   # tolerate blank lines (don't hash "" into a bogus TAMPERED); count only real records
-    n=$((n+1))
-    self="$(printf '%s' "$line"   | sed -n 's/.*,"self":"\([0-9a-f]*\)"}$/\1/p')"
-    payload="$(printf '%s' "$line" | sed 's/,"self":"[0-9a-f]*"}$/}/')"
-    pfield="$(printf '%s' "$line"  | sed -n 's/.*,"prev":"\([0-9a-f]*\)".*/\1/p')"
-    if [ -z "$self" ] || [ "$(printf '%s' "$payload" | _sha256)" != "$self" ]; then
-      if [ "$json" = 1 ]; then printf '{"schema":"sluice.egress-verify/v1","verified":false,"records":%d,"broken_line":%d,"reason":"self-hash"}\n' "$n" "$n"
-      else echo "[sluice] ${E_RED}egress log TAMPERED${E_RST}: line $n self-hash mismatch ($(_tilde "$log"))" >&2; fi
-      return 1
+  if _verify_chain_file "$log"; then
+    if [ "$json" = 1 ]; then printf '{"schema":"sluice.egress-verify/v1","verified":true,"records":%d,"broken_line":null,"reason":null}\n' "$_VCF_RECORDS"
+    else echo "[sluice] ${C_GRN}egress log verified${C_RST}: $_VCF_RECORDS record(s), hash chain intact ($(_tilde "$log"))"; fi
+    return 0
+  fi
+  if [ "$json" = 1 ]; then
+    local _bl="$_VCF_BROKEN"; [ -n "$_bl" ] || _bl=null
+    printf '{"schema":"sluice.egress-verify/v1","verified":false,"records":%d,"broken_line":%s,"reason":"%s"}\n' "$_VCF_RECORDS" "$_bl" "$_VCF_REASON"
+  else
+    case "$_VCF_REASON" in
+      prev-link) echo "[sluice] ${E_RED}egress log TAMPERED${E_RST}: line $_VCF_BROKEN prev-link broken - reordered or dropped ($(_tilde "$log"))" >&2 ;;
+      unreadable) echo "[sluice] ${E_RED}egress log unreadable${E_RST}: $(_tilde "$log")" >&2 ;;
+      *)          echo "[sluice] ${E_RED}egress log TAMPERED${E_RST}: line $_VCF_BROKEN self-hash mismatch ($(_tilde "$log"))" >&2 ;;
+    esac
+  fi
+  return 1
+}
+
+# `sluice egress --verify --all [--json]`: walk EVERY box's egress chain in one pass - the fleet-wide
+# integrity gate. Pure host-side file reads (no engine, no per-box config), so it covers orphaned boxes
+# and runs with the daemon down. Exit 1 if any chain is broken/unreadable, 0 on an intact or empty fleet.
+cmd_egress_verify_all() {
+  local json=0
+  case "${1:-}" in --json) json=1 ;; "") ;; *) die "usage: sluice egress --verify --all [--json]" ;; esac
+  local store="${XDG_STATE_HOME:-$HOME/.local/state}/sluice" logs
+  # LC_ALL=C slug order; the */ glob skips the dot-prefixed .policy-cache dir + the .mask-empty stub.
+  logs="$(for _l in "$store"/*/egress-log.jsonl; do [ -f "$_l" ] && printf '%s\n' "$_l"; done | LC_ALL=C sort)"
+  if [ -z "$logs" ]; then
+    if [ "$json" = 1 ]; then echo '{"schema":"sluice.fleet-verify/v1","verified":true,"boxes_total":0,"boxes_broken":0,"boxes":[]}'
+    else echo "[sluice] no egress logs yet under $(_tilde "$store")." >&2; fi
+    return 0
+  fi
+  local total=0 broken=0 first=1 boxes_json="" log s bslug bok bl reason
+  while IFS= read -r log; do
+    [ -n "$log" ] || continue
+    s="${log%/egress-log.jsonl}"; bslug="${s##*/}"
+    total=$((total+1))
+    if _verify_chain_file "$log"; then bok=true; bl=null; reason=null
+    else bok=false; broken=$((broken+1)); bl="$_VCF_BROKEN"; [ -n "$bl" ] || bl=null; reason="\"$_VCF_REASON\""; fi
+    if [ "$json" = 1 ]; then
+      [ "$first" = 1 ] && first=0 || boxes_json="$boxes_json,"
+      boxes_json="$boxes_json{\"box\":\"sluice-$(_json_esc "$bslug")\",\"slug\":\"$(_json_esc "$bslug")\",\"state_dir\":\"$(_json_esc "$s")\",\"records\":$_VCF_RECORDS,\"verified\":$bok,\"broken_line\":$bl,\"reason\":$reason}"
+    elif [ "$bok" = true ]; then
+      printf '  %-24s  %s record(s)  %sintact%s\n' "sluice-$bslug" "$_VCF_RECORDS" "$C_GRN" "$C_RST"
+    elif [ "$_VCF_REASON" = unreadable ]; then
+      printf '  %-24s  %sunreadable%s\n' "sluice-$bslug" "$C_RED" "$C_RST"
+    else
+      printf '  %-24s  %sTAMPERED%s  line %s (%s)\n' "sluice-$bslug" "$C_RED" "$C_RST" "$_VCF_BROKEN" "$_VCF_REASON"
     fi
-    if [ "$pfield" != "$prev" ]; then
-      if [ "$json" = 1 ]; then printf '{"schema":"sluice.egress-verify/v1","verified":false,"records":%d,"broken_line":%d,"reason":"prev-link"}\n' "$n" "$n"
-      else echo "[sluice] ${E_RED}egress log TAMPERED${E_RST}: line $n prev-link broken - reordered or dropped ($(_tilde "$log"))" >&2; fi
-      return 1
-    fi
-    prev="$self"
-  done < "$log"
-  if [ "$json" = 1 ]; then printf '{"schema":"sluice.egress-verify/v1","verified":true,"records":%d,"broken_line":null,"reason":null}\n' "$n"
-  else echo "[sluice] ${C_GRN}egress log verified${C_RST}: $n record(s), hash chain intact ($(_tilde "$log"))"; fi
+  done <<EOF
+$logs
+EOF
+  if [ "$json" = 1 ]; then
+    local verified=true; [ "$broken" -gt 0 ] && verified=false
+    printf '{"schema":"sluice.fleet-verify/v1","verified":%s,"boxes_total":%d,"boxes_broken":%d,"boxes":[%s]}\n' "$verified" "$total" "$broken" "$boxes_json"
+  elif [ "$broken" -gt 0 ]; then
+    echo "[sluice] ${E_RED}$broken of $total box(es) TAMPERED / unreadable${E_RST}" >&2
+  else
+    echo "[sluice] ${C_GRN}all $total box(es) intact${C_RST}"
+  fi
+  if [ "$broken" -gt 0 ]; then return 1; fi
+  return 0
+}
+
+# `sluice egress --export --all`: concatenate every box's append-only JSONL log, slug-sorted, for a
+# SIEM/CI to ingest the whole fleet at once. Each record carries its own `box`, so a consumer regroups
+# by `.box` regardless of order. Host-side reads only (works with the daemon down / on orphans).
+cmd_egress_export_all() {
+  local store="${XDG_STATE_HOME:-$HOME/.local/state}/sluice" logs log
+  logs="$(for _l in "$store"/*/egress-log.jsonl; do [ -f "$_l" ] && printf '%s\n' "$_l"; done | LC_ALL=C sort)"
+  [ -n "$logs" ] || { echo "[sluice] no egress logs yet under $(_tilde "$store")." >&2; return 0; }
+  while IFS= read -r log; do [ -n "$log" ] && cat "$log"; done <<EOF
+$logs
+EOF
 }
 
 # sluice.lock: a committable inventory of the built image. base ref + every apk
@@ -626,6 +786,48 @@ write_lock() {
     # C4: an unchanged re-lock is silent otherwise - confirm it, mirroring --check's "lock in sync".
     echo "[sluice] ${C_GRN}no supply-chain change since last lock${C_RST}"
   fi
+}
+
+# Pin inventory: current_inventory's package set (apk/npm/pip/gem/go/cargo, with the frozen
+# `apk name ver checksum` shape) but with the base line replaced by a DIGEST-checked one. The pin's
+# whole point is a rebuildable coordinate, so it fails closed if the base can't be resolved to a
+# @sha256 digest - pulling the base once if the local engine has no RepoDigests yet.
+_pin_inventory() {
+  local baseref bdig
+  baseref="${SLUICE_BASE_IMAGE:-cgr.dev/chainguard/wolfi-base}"
+  bdig="$("$ENGINE" image inspect "$baseref" --format '{{ if .RepoDigests }}{{ index .RepoDigests 0 }}{{ end }}' 2>/dev/null || true)"
+  if [ -z "$bdig" ]; then
+    echo "[sluice] resolving the base image digest (pulling $baseref) ..." >&2
+    "$ENGINE" pull "$baseref" >/dev/null 2>&1 || true
+    bdig="$("$ENGINE" image inspect "$baseref" --format '{{ if .RepoDigests }}{{ index .RepoDigests 0 }}{{ end }}' 2>/dev/null || true)"
+  fi
+  printf 'base  %s\n' "${bdig:-$baseref}"
+  current_inventory | grep -v '^base '   # drop current_inventory's own (maybe-digestless) base line
+}
+
+# `sluice lock --pin`: write ./sluice.pin, a committable replay manifest - the base pinned by digest
+# plus every apk/npm/pip/gem/go/cargo name+version. `SLUICE_PIN=1` (M2) rebuilds converging on exactly
+# these versions. Also refreshes sluice.lock from the same built image (they read one image, so they
+# never disagree; the extra introspection is a no-op build + a second read). Fails closed on a hollow
+# inventory or an unresolvable base digest - a pin that can't freeze its base is worse than none.
+write_pin() {
+  maybe_build
+  local pin="$PROJECT_DIR/sluice.pin" inv base na
+  inv="$(_pin_inventory)"
+  printf '%s\n' "$inv" | grep -q '^apk ' || die "could not read the image inventory - refusing to write a hollow sluice.pin"
+  base="$(printf '%s\n' "$inv" | awk '$1=="base"{print $2; exit}')"
+  case "$base" in *@sha256:*) ;; *) die "could not resolve a base image digest - refusing to write a pin that cannot freeze its base (is the base image pullable?)" ;; esac
+  {
+    printf "# sluice.pin - pinned replay manifest for %s.\n" "$tag"
+    printf "# Rebuild with SLUICE_PIN=1 to converge on these exact versions. Honest scope: an apk pin\n"
+    printf "# fails CLOSED once Wolfi stops serving that version (rolling repo) - see docs/supply-chain.md.\n"
+    printf "# 'base' pins the image by @sha256 digest; each '<eco>  <name>  <version>' line pins a package.\n"
+    printf 'base  %s\n' "$base"
+    printf '%s\n' "$inv" | grep -v '^base ' | LC_ALL=C sort
+  } > "$pin"
+  na="$(printf '%s\n' "$inv" | grep -c '^apk ' || true)"
+  echo "[sluice] wrote $pin (base pinned by digest + $na apk + npm/pip/gem/go/cargo versions)"
+  write_lock   # keep sluice.lock in lockstep (same image, so the two agree)
 }
 
 # Drifted lines between ./sluice.lock and the live image inventory ("< lock / > current"); empty =
@@ -1591,7 +1793,7 @@ cmd_doctor_json() {
   blocked_json="$(printf '%s' "$blocked"                  | tr ' \t' '\n\n' | _json_arr)"
   [ "$egress_unavail" = true ] && blocked_json=null
 
-  printf '{"engine":"%s","engine_found":%s,"daemon":%s,"config":"%s","config_error":%s,"project_dir":"%s","name":"%s","desc":"%s","image":{"tag":"%s","built":%s,"stale":%s},"lock":"%s","allowlist":%s,"base":%s,"ports":%s,"allow_ips":%s,"base_image":"%s","policy_url":"%s","policy":%s,"state_dirs":%s,"overlay_dirs":%s,"mounts":%s,"auth":%s,"hardening":%s,"mask":{"patterns":%s,"masked":%s,"unmasked_secrets":%s},"risk":%s,"broken_symlinks":%s,"egress":{"running":%s,"blocked":%s}}\n' \
+  printf '{"schema":"sluice.doctor/v1","engine":"%s","engine_found":%s,"daemon":%s,"config":"%s","config_error":%s,"project_dir":"%s","name":"%s","desc":"%s","image":{"tag":"%s","built":%s,"stale":%s},"lock":"%s","allowlist":%s,"base":%s,"ports":%s,"allow_ips":%s,"base_image":"%s","policy_url":"%s","policy":%s,"state_dirs":%s,"overlay_dirs":%s,"mounts":%s,"auth":%s,"hardening":%s,"mask":{"patterns":%s,"masked":%s,"unmasked_secrets":%s},"risk":%s,"broken_symlinks":%s,"egress":{"running":%s,"blocked":%s}}\n' \
     "$(_json_esc "$engine_ver")" "$engine_found" "$daemon" "$(_json_esc "$PROJECT_CONFIG")" "$config_error" "$(_json_esc "$PROJECT_DIR")" "$(_json_esc "$tag")" "$(_json_esc "${SLUICE_DESC:-}")" \
     "$(_json_esc "$tag")" "$img_built" "$img_stale" "$lock" \
     "$allow_json" "$(base_domains | tr ' ' '\n' | _json_arr)" \
@@ -1599,6 +1801,23 @@ cmd_doctor_json() {
     "$(_json_esc "${SLUICE_POLICY_URL:-}")" "$policy_json" "$nsd" "$overlays_json" "$mounts_json" "$auth_json" "$hardening_json" \
     "$mask_pats" "$mask_hits" "$mask_unm" "$risk_json" "$links_json" \
     "$running_b" "$blocked_json"
+}
+
+# Verbatim-embed a box's latest egress-receipt.json into `ls --json` (a fleet<->audit join, so a
+# dashboard reads posture + last egress in one call), or `null`. The file is sluice's own single-line
+# JSON (_persist_receipt, src/80), so a guarded raw embed needs no parsing and stays valid JSON: it must
+# be one line, open with the known schema, close with `}`, and carry no control byte - else null. Fail
+# closed on anything malformed so `ls --json` never emits broken JSON. Its integrity is attested by
+# `egress --verify`, not by ls (documented in docs/operations.md).
+_last_receipt_json() {
+  local f="$1/egress-receipt.json" line nl
+  [ -f "$f" ] || { printf 'null'; return 0; }
+  nl="$(wc -l < "$f" 2>/dev/null | tr -d ' ')"; case "$nl" in ''|*[!0-9]*) nl=2 ;; esac
+  [ "$nl" -le 1 ] || { printf 'null'; return 0; }           # multi-line = not our single-line receipt
+  line="$(head -1 "$f" 2>/dev/null)"
+  case "$line" in '{"schema":"sluice.egress/v1"'*'}') ;; *) printf 'null'; return 0 ;; esac
+  printf '%s' "$line" | LC_ALL=C grep -q '[[:cntrl:]]' && { printf 'null'; return 0; }
+  printf '%s' "$line"
 }
 
 # `sluice ls`: a derived, read-only table of every built sluice box on this machine
@@ -1635,8 +1854,8 @@ cmd_ls() {
 
   # Gather labels + container state into parallel arrays, applying filters as we go. (Kept as a plain
   # while-loop, NOT a $(...) capture: a case pattern's ) inside command substitution mis-parses on bash 3.2.)
-  local names=() stats=() projs=() stacks=() descs=() curs=() orphs=() allows=() ports_=() locks=() blocks=() ovls=()
-  local name proj stack desc status cur orphan allowcount portslbl lock blocked ovl
+  local names=() stats=() projs=() stacks=() descs=() curs=() orphs=() allows=() ports_=() locks=() blocks=() ovls=() chashes=()
+  local name proj stack desc status cur orphan allowcount portslbl lock blocked ovl chash
   while IFS= read -r name; do
     [ -n "$name" ] || continue
     proj="$( "$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.project" }}' "$name" 2>/dev/null || true)"
@@ -1645,12 +1864,14 @@ cmd_ls() {
     allowcount="$("$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.allowcount" }}' "$name" 2>/dev/null || true)"
     portslbl="$(  "$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.ports" }}'      "$name" 2>/dev/null || true)"
     ovl="$(       "$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.overlays" }}'   "$name" 2>/dev/null || true)"
+    chash="$(     "$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.confighash" }}' "$name" 2>/dev/null || true)"
     case "$proj"       in "<no value>") proj=""       ;; esac
     case "$stack"      in "<no value>") stack=""      ;; esac
     case "$desc"       in "<no value>") desc=""       ;; esac
     case "$allowcount" in "<no value>") allowcount="" ;; esac
     case "$portslbl"   in "<no value>") portslbl=""   ;; esac
     case "$ovl"        in "<no value>") ovl=""        ;; esac
+    case "$chash"      in "<no value>") chash=""      ;; esac
     orphan=false; [ -n "$proj" ] && [ ! -d "$proj" ] && orphan=true
     if   "$RUNNER" ps    --filter "name=$name" --filter status=running --format '{{.Names}}' 2>/dev/null | grep -qx "$name"; then status=running
     elif "$RUNNER" ps -a --filter "name=$name" --format '{{.Names}}' 2>/dev/null | grep -qx "$name"; then status=stopped
@@ -1663,7 +1884,7 @@ cmd_ls() {
     lock="-"; [ -n "$proj" ] && [ -f "$proj/sluice.lock" ] && lock=locked
     blocked=""; [ -n "$egress" ] && [ "$status" = running ] && blocked="$(box_blocked_count "$name")"   # opt-in: execs into the box
     names+=("$name"); stats+=("$status"); projs+=("$proj"); stacks+=("$stack"); descs+=("$desc"); curs+=("$cur"); orphs+=("$orphan")
-    allows+=("$allowcount"); ports_+=("$portslbl"); locks+=("$lock"); blocks+=("$blocked"); ovls+=("$ovl")
+    allows+=("$allowcount"); ports_+=("$portslbl"); locks+=("$lock"); blocks+=("$blocked"); ovls+=("$ovl"); chashes+=("$chash")
   done <<EOF
 $imgs
 EOF
@@ -1691,7 +1912,7 @@ EOF
 $sorted
 EOF
 
-  local i j ac lk pjson ojson bjson
+  local i j ac lk pjson ojson bjson _slug _sdir _lr _chjson
   if [ "$mode" = --json ]; then
     printf '['
     for j in "${!order[@]}"; do
@@ -1702,14 +1923,20 @@ EOF
       # tr-split (like overlays) keeps a glob metachar in the label literal - no pathname expansion against $PWD
       pjson="$(printf '%s' "${ports_[$i]}" | tr ' \t' '\n\n' | _json_arr)"
       ojson="$(printf '%s' "${ovls[$i]}" | tr ' \t' '\n\n' | _json_arr)"
+      # confighash (null on an un-rebuilt/pre-posture image) + state_dir + last egress receipt (a
+      # fleet<->audit join): all pure file/label reads, so the ls "nothing sourced here" invariant holds.
+      _chjson=null; [ -n "${chashes[$i]}" ] && _chjson="\"$(_json_esc "${chashes[$i]}")\""
+      _slug="${names[$i]#sluice-}"
+      _sdir="${XDG_STATE_HOME:-$HOME/.local/state}/sluice/$_slug"
+      _lr="$(_last_receipt_json "$_sdir")"
       bjson=""; if [ -n "$egress" ]; then
         # null = not running OR audit unreadable (unknown) - never a defaulted 0 over a failed read
         if [ "${stats[$i]}" = running ] && [ -n "${blocks[$i]}" ]; then bjson=",\"blocked\":${blocks[$i]}"; else bjson=',"blocked":null'; fi
       fi
-      printf '{"name":"%s","status":"%s","stack":"%s","path":"%s","description":"%s","current":%s,"orphan":%s,"allow_count":%s,"ports":%s,"overlay_dirs":%s,"locked":%s%s}' \
+      printf '{"schema":"sluice.box/v1","name":"%s","status":"%s","stack":"%s","path":"%s","description":"%s","current":%s,"orphan":%s,"allow_count":%s,"ports":%s,"overlay_dirs":%s,"locked":%s,"confighash":%s,"state_dir":"%s","last_receipt":%s%s}' \
         "$(_json_esc "${names[$i]}")" "$(_json_esc "${stats[$i]}")" "$(_json_esc "${stacks[$i]}")" \
         "$(_json_esc "${projs[$i]}")" "$(_json_esc "${descs[$i]}")" "${curs[$i]}" "${orphs[$i]}" \
-        "$ac" "$pjson" "$ojson" "$lk" "$bjson"
+        "$ac" "$pjson" "$ojson" "$lk" "$_chjson" "$(_json_esc "$_sdir")" "$_lr" "$bjson"
     done
     printf ']\n'; return 0
   fi
@@ -1918,9 +2145,12 @@ case "${1:-}" in
                  _banner_posture ' - '; printf '%s%s\n' "$_POSTURE_TEXT" "${_POSTURE_RISK:+ [risk]}"; exit 0 ;;
 esac
 
-# init + info commands need no engine; resolve one only for the rest.
+# init + info commands need no engine; resolve one only for the rest. `egress ... --all` is a
+# host-side, file-only fleet audit (no engine, no config), so it must survive the daemon being down
+# or absent - skip resolve_engine for it too, matching doctor's leniency.
 case "${1:-}" in
   init|help|-h|--help|version|-v|--version|doctor) ;;
+  egress) case " $* " in *" --all "*) ;; *) resolve_engine ;; esac ;;
   *) resolve_engine ;;
 esac
 
@@ -1929,6 +2159,7 @@ esac
 if [ -n "$SLUICE_BOX_TARGET" ]; then
   case "${1:-}" in
     init|help|-h|--help|version|-v|--version|ls|prune|agent) die "--box doesn't apply to '${1:-}'" ;;
+    egress) case " $* " in *" --all "*) die "--box doesn't apply to 'egress --all' (it spans every box)" ;; esac ;;
   esac
   # doctor is the lenient path (reports, never dies, since it's what you run when the runtime is broken):
   # mirror line 22 and skip the strict resolve_engine. resolve_box_target still needs $ENGINE for its
@@ -2368,6 +2599,28 @@ if [ "${1:-}" = prune ]; then
   case "${2:-}" in ""|--orphans) cmd_prune "${2:-}"; exit $? ;; *) die "usage: sluice prune [--orphans]" ;; esac
 fi
 
+# `sluice egress --verify --all` / `--export --all`: fleet-wide audit over EVERY box's hash chain.
+# Dispatched here, before find_config, so it needs neither a project config nor a running engine and
+# reaches orphaned boxes (their chains outlive the box). Bare `egress --all` defaults to --verify.
+# `-b ... egress --all` was already rejected in src/45.
+if [ "${1:-}" = egress ]; then
+  case " $* " in
+    *" --all "*)
+      _eg_mode="verify"; _eg_json=""
+      for _eg_a in "$@"; do
+        case "$_eg_a" in
+          egress|--all|--verify) ;;
+          --export) _eg_mode="export" ;;
+          --json)   _eg_json="--json" ;;
+          *)        die "usage: sluice egress [--verify | --export] --all [--json]" ;;
+        esac
+      done
+      if [ "$_eg_mode" = export ]; then cmd_egress_export_all; else cmd_egress_verify_all "$_eg_json"; fi
+      exit $?
+      ;;
+  esac
+fi
+
 # Package-registry hosts for the stack detected in $PWD (a manifest sniff mirroring cmd_init's
 # per-stack allowlists - kept lean here, full detection lives in cmd_init). Always the full registry
 # set: an agent installs deps at RUNTIME inside the box, so the init prefetch shortcut doesn't apply.
@@ -2625,6 +2878,27 @@ validate_allow_ips() {
   set +f
 }
 case "${1:-run-default}" in run-default|run|shell|build|rebuild|update) validate_allow_ips ;; esac
+
+# SLUICE_EGRESS_HOST_BUDGETS: "host=bytes .wildcard=bytes ..." - a detective per-host tx budget (over
+# any host's cap, `sluice egress` exits non-zero). Validate strictly and fail CLOSED: a malformed token
+# dies rather than silently no-op. (SLUICE_EGRESS_MAX_BYTES is silently ignored when malformed - src/20;
+# this stricter contract is intentional and noted in docs/configuration.md: a silently-void budget is
+# worse than a stop.)
+validate_host_budgets() {
+  local tok host bytes
+  set -f
+  for tok in ${SLUICE_EGRESS_HOST_BUDGETS:-}; do
+    case "$tok" in
+      *=*) host="${tok%%=*}"; bytes="${tok#*=}" ;;
+      *)   set +f; die "SLUICE_EGRESS_HOST_BUDGETS entry '$tok' must be host=bytes (e.g. .s3.amazonaws.com=1048576)" ;;
+    esac
+    case "$host"  in '') set +f; die "SLUICE_EGRESS_HOST_BUDGETS entry '$tok' has an empty host" ;;
+                     *[!A-Za-z0-9.-]*) set +f; die "SLUICE_EGRESS_HOST_BUDGETS host '$host' has invalid characters" ;; esac
+    case "$bytes" in ''|*[!0-9]*) set +f; die "SLUICE_EGRESS_HOST_BUDGETS '$tok': '$bytes' is not a byte count" ;; esac
+  done
+  set +f
+}
+case "${1:-run-default}" in run-default|run|shell|build|rebuild|update) validate_host_budgets ;; esac
 
 # build: assemble a temp context (core + this project's config) and build
 # Verify a published base image's cosign signature (keyless/OIDC). Soft by default: warn if
@@ -3179,6 +3453,20 @@ show_egress_receipt() {
          printf '%s[sluice] egress budget exceeded:%s %s sent > %s cap - `sluice egress` will fail CI.\n' \
            "$red" "$rst" "$(_human_bytes "$_tx")" "$(_human_bytes "$SLUICE_EGRESS_MAX_BYTES")" >&2 ;;
   esac
+
+  # SLUICE_EGRESS_HOST_BUDGETS: a run-scoped nudge per reached host over its own cap (`sluice egress`
+  # is the CI gate that exits non-zero). Mirrors the total-budget warning above.
+  if [ -n "${SLUICE_EGRESS_HOST_BUDGETS:-}" ]; then
+    local _hbh _hbtx _hbcap
+    egress_tx_by_host 2>/dev/null | while IFS="$TAB" read -r _hbh _hbtx; do
+      [ -n "$_hbh" ] || continue
+      _hbcap="$(_host_budget_for "$_hbh")"; [ -n "$_hbcap" ] || continue
+      case "$_hbtx" in ''|*[!0-9]*) _hbtx=0 ;; esac
+      [ "$_hbtx" -gt "$_hbcap" ] && \
+        printf '%s[sluice] host budget exceeded:%s %s sent %s > %s cap - `sluice egress` will fail CI.\n' \
+          "$red" "$rst" "$_hbh" "$(_human_bytes "$_hbtx")" "$(_human_bytes "$_hbcap")" >&2
+    done
+  fi
 }
 
 # Write/replace the SLUICE_ALLOW_DOMAINS line in the project config (interactive + --apply share this).
@@ -3484,7 +3772,7 @@ case "${1:-run-default}" in
       ""|--json) cmd_egress "${1:-}"; exit $? ;;
       --export)  cmd_egress_export; exit $? ;;
       --verify)  cmd_egress_verify "${2:-}"; exit $? ;;   # accepts a trailing --json (one verify object)
-      *)         die "usage: sluice egress [--json | --export | --verify [--json]]" ;;
+      *)         die "usage: sluice egress [--json | --export [--all] | --verify [--all] [--json]]" ;;   # --all is dispatched earlier (src/60), before config/engine
     esac
     ;;
   lock)
@@ -3495,8 +3783,9 @@ case "${1:-run-default}" in
       --enforce) shift; cmd_lock_enforce "$@"; exit $? ;;
       --sbom)    shift; cmd_sbom "$@"; exit $? ;;
       --scan)    shift; cmd_scan "$@"; exit $? ;;
+      --pin)     shift; [ "$#" -eq 0 ] || die "usage: sluice lock --pin"; write_pin; exit 0 ;;
       "")        write_lock; exit 0 ;;
-      *)         die "usage: sluice lock [--check [--json] | --diff [--json] | --enforce [--json] | --sbom [--format cyclonedx|spdx] | --scan [--json] [--fail-on <sev>]]" ;;
+      *)         die "usage: sluice lock [--check [--json] | --diff [--json] | --enforce [--json] | --sbom [--format cyclonedx|spdx] | --scan [--json] [--fail-on <sev>] | --pin]" ;;
     esac
     ;;
   update)  build --no-cache; write_lock; echo "${E_DIM}[sluice]${E_RST} updated - the box is down; run 'sluice' to start it (or 'sluice rebuild' to rebuild + start)." >&2; exit 0 ;;

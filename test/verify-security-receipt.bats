@@ -55,6 +55,24 @@ teardown_file() { destroy_box receipt r; }   # XDG_STATE_HOME is under WORK, so 
   assert_output --partial '"over_budget":true'
 }
 
+@test "host budget: a 1-byte per-host cap on a reached host makes 'sluice egress' exit non-zero" {
+  run bash -c "cd '$WORK/r' && SLUICE_EGRESS_HOST_BUDGETS='registry.npmjs.org=1' '$SLUICE' egress"
+  assert_failure
+  assert_output --partial "host budget EXCEEDED"
+  assert_output --partial "registry.npmjs.org"
+}
+
+@test "host budget: a large per-host cap passes (exit 0)" {
+  run bash -c "cd '$WORK/r' && SLUICE_EGRESS_HOST_BUDGETS='registry.npmjs.org=999999999' '$SLUICE' egress"
+  assert_success
+}
+
+@test "host budget --json: the reached host over its cap carries over_budget:true" {
+  run bash -c "cd '$WORK/r' && SLUICE_EGRESS_HOST_BUDGETS='registry.npmjs.org=1' '$SLUICE' egress --json"
+  assert_failure
+  assert_output --partial '"over_budget":true'
+}
+
 @test "egress budget: a non-numeric cap is ignored (no gate, exit 0)" {
   # the guard treats a garbage cap as "no budget"; under set -euo a removed guard would make it
   # always-pass OR error, so pin the intended behavior.

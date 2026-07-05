@@ -167,6 +167,48 @@ egress_tx_total() {
     } END { print total+0 }'
 }
 
+# Bytes SENT OUT keyed by reached host: "<host>\t<tx>". Same exfil-direction measure as egress_tx_total
+# (tx only; blocked requests never left the proxy), grouped by host for the SLUICE_EGRESS_HOST_BUDGETS
+# per-host gate. Offset-aware via _squid_log (scoped to the run for the receipt). Mirrors egress_rows'
+# host + hostname-charset parsing.
+egress_tx_by_host() {
+  _squid_log | awk '
+    { sni=""; tx=0; status=$3; url=$5;
+      if (status ~ /NONE_NONE/ || status ~ /TCP_DENIED/ || status ~ /\/000/) next;   # blocked: did not leave
+      for (i=1;i<=NF;i++) { if ($i ~ /^ssl_sni=/) sni=substr($i,9); else if ($i ~ /^tx=/) tx=substr($i,4)+0; }
+      host="";
+      if (sni != "" && sni != "-") host=sni;
+      else if (url ~ /^http:\/\//) { h=url; sub(/^http:\/\//,"",h); sub(/\/.*/,"",h); sub(/:.*/,"",h); host=h }
+      if (host == "" || host ~ /^[0-9.]+$/) next;
+      if (host !~ /^\.?[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$/) next;   # drop non-hostname chars (SNI/Host can carry $(),",ESC)
+      tot[host] += tx;
+    }
+    END { for (h in tot) printf "%s\t%d\n", h, tot[h] }'
+}
+
+# Resolve a host to its SLUICE_EGRESS_HOST_BUDGETS cap in bytes (empty = no budget for this host).
+# Tokens are "host=bytes" (exact) or ".wildcard=bytes" (.x matches x + *.x, squid dstdomain style).
+# Exact match wins outright; among wildcards the longest (most specific) wins. set -f so the unquoted
+# split can't glob a value.
+_host_budget_for() {
+  local host="$1" tok thost tbytes bare best="" bestlen=-1
+  set -f
+  for tok in ${SLUICE_EGRESS_HOST_BUDGETS:-}; do
+    case "$tok" in *=*) ;; *) continue ;; esac
+    thost="${tok%%=*}"; tbytes="${tok#*=}"
+    case "$tbytes" in ''|*[!0-9]*) continue ;; esac
+    if [ "$thost" = "$host" ]; then best="$tbytes"; break; fi   # exact beats any wildcard
+    case "$thost" in
+      .*) bare="${thost#.}"
+          if [ "$host" = "$bare" ] || case "$host" in *"$thost") true ;; *) false ;; esac; then
+            [ "${#thost}" -gt "$bestlen" ] && { best="$tbytes"; bestlen="${#thost}"; }
+          fi ;;
+    esac
+  done
+  set +f
+  printf '%s' "$best"
+}
+
 # The proxy-log byte offset captured at the start of the last `sluice` run (written to /run by the run
 # arms). Lets `sluice learn` scope to that run instead of the whole boot; empty if no run / box rebooted.
 # `|| true` on the cat: a missing offset file -> empty offset (callers' full-log fallback), never a

@@ -39,7 +39,7 @@ case "${1:-run-default}" in
       ""|--json) cmd_egress "${1:-}"; exit $? ;;
       --export)  cmd_egress_export; exit $? ;;
       --verify)  cmd_egress_verify "${2:-}"; exit $? ;;   # accepts a trailing --json (one verify object)
-      *)         die "usage: sluice egress [--json | --export | --verify [--json]]" ;;
+      *)         die "usage: sluice egress [--json | --export [--all] | --verify [--all] [--json]]" ;;   # --all is dispatched earlier (src/60), before config/engine
     esac
     ;;
   lock)
@@ -50,8 +50,9 @@ case "${1:-run-default}" in
       --enforce) shift; cmd_lock_enforce "$@"; exit $? ;;
       --sbom)    shift; cmd_sbom "$@"; exit $? ;;
       --scan)    shift; cmd_scan "$@"; exit $? ;;
+      --pin)     shift; [ "$#" -eq 0 ] || die "usage: sluice lock --pin"; write_pin; exit 0 ;;
       "")        write_lock; exit 0 ;;
-      *)         die "usage: sluice lock [--check [--json] | --diff [--json] | --enforce [--json] | --sbom [--format cyclonedx|spdx] | --scan [--json] [--fail-on <sev>]]" ;;
+      *)         die "usage: sluice lock [--check [--json] | --diff [--json] | --enforce [--json] | --sbom [--format cyclonedx|spdx] | --scan [--json] [--fail-on <sev>] | --pin]" ;;
     esac
     ;;
   update)  build --no-cache; write_lock; echo "${E_DIM}[sluice]${E_RST} updated - the box is down; run 'sluice' to start it (or 'sluice rebuild' to rebuild + start)." >&2; exit 0 ;;

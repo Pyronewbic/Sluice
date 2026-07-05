@@ -93,6 +93,20 @@ show_egress_receipt() {
          printf '%s[sluice] egress budget exceeded:%s %s sent > %s cap - `sluice egress` will fail CI.\n' \
            "$red" "$rst" "$(_human_bytes "$_tx")" "$(_human_bytes "$SLUICE_EGRESS_MAX_BYTES")" >&2 ;;
   esac
+
+  # SLUICE_EGRESS_HOST_BUDGETS: a run-scoped nudge per reached host over its own cap (`sluice egress`
+  # is the CI gate that exits non-zero). Mirrors the total-budget warning above.
+  if [ -n "${SLUICE_EGRESS_HOST_BUDGETS:-}" ]; then
+    local _hbh _hbtx _hbcap
+    egress_tx_by_host 2>/dev/null | while IFS="$TAB" read -r _hbh _hbtx; do
+      [ -n "$_hbh" ] || continue
+      _hbcap="$(_host_budget_for "$_hbh")"; [ -n "$_hbcap" ] || continue
+      case "$_hbtx" in ''|*[!0-9]*) _hbtx=0 ;; esac
+      [ "$_hbtx" -gt "$_hbcap" ] && \
+        printf '%s[sluice] host budget exceeded:%s %s sent %s > %s cap - `sluice egress` will fail CI.\n' \
+          "$red" "$rst" "$_hbh" "$(_human_bytes "$_hbtx")" "$(_human_bytes "$_hbcap")" >&2
+    done
+  fi
 }
 
 # Write/replace the SLUICE_ALLOW_DOMAINS line in the project config (interactive + --apply share this).

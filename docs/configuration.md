@@ -91,6 +91,22 @@ What the filter guarantees - and does not - is in
   [THREAT_MODEL.md](../THREAT_MODEL.md#what-it-does-not-defend-against-be-explicit).
 - `SLUICE_EGRESS_MAX_BYTES` - budget on bytes sent out per run: over it, `sluice egress`
   exits non-zero (CI gate) and the run's receipt warns. Empty = off.
+- `SLUICE_EGRESS_HOST_BUDGETS` - a **per-host** tx budget, a tighter laundering bound than the
+  whole-box cap. Space-separated `host=bytes` tokens; a leading dot is a wildcard
+  (`.s3.amazonaws.com=1048576` matches the host and its subdomains), exact beats wildcard, the
+  longest wildcard wins. Over any single host's cap, `sluice egress` exits non-zero and the receipt
+  warns. Unlike `SLUICE_EGRESS_MAX_BYTES` (silently ignored when malformed), a malformed token here
+  **dies** (fail closed) - a silently-void security budget is worse than a stop.
+
+The byte-denominated egress knobs, so they are not conflated:
+
+| Knob | Kind | Scope | Measures |
+|---|---|---|---|
+| `SLUICE_EGRESS_MAX_BYTES` | detective (CI gate + warning) | whole box | total tx bytes |
+| `SLUICE_EGRESS_HOST_BUDGETS` | detective (CI gate + warning) | per host | that host's tx bytes |
+
+Both are **detective** - they report and gate after the fact; neither stops bytes mid-flight (a
+preventive in-box cap is on the roadmap). Both read the boot-scoped proxy log via `sluice egress`.
 
 ## Hardening (opt-in; off by default)
 
