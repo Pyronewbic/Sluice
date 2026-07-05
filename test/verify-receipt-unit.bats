@@ -98,6 +98,23 @@ _rec() { local TAB; TAB="$(printf '\t')"; _persist_receipt "$(printf 'reached%s%
   assert_failure
 }
 
+@test "learn: an unreadable in-box audit fails closed, not a false 'nothing blocked'" {
+  running() { return 0; }; egress_rows() { :; }; _audit_readable() { return 1; }
+  last_run_offset() { echo 0; }
+  run cmd_learn
+  assert_failure
+  refute_output --partial "already allowed"
+  assert_output --partial "unavailable"
+}
+
+@test "learn: a genuinely empty audit that IS readable still reports the clean all-clear" {
+  running() { return 0; }; egress_rows() { :; }; _audit_readable() { return 0; }
+  last_run_offset() { echo 0; }
+  run cmd_learn
+  assert_success
+  assert_output --partial "already allowed"
+}
+
 # cmd_egress_verify is a sourced function (no box), so capture its --json stdout via `run` and pipe
 # $output to jq - bash -c can't see the sourced function.
 @test "egress --verify --json: an intact chain reports verified:true records:N, exit 0" {
@@ -121,4 +138,30 @@ _rec() { local TAB; TAB="$(printf '\t')"; _persist_receipt "$(printf 'reached%s%
   run cmd_egress_verify --json
   assert_failure
   jq -e '.verified==false and .reason=="prev-link" and (.broken_line|type=="number")' <<<"$output"
+}
+
+# last_run_offset reads /run/sluice-run-offset off the box. A box brought up by `sluice rebuild` with no
+# run yet has NO offset file, so the in-container `cat` exits 1. Under set -e + pipefail the head of a
+# pipe failing fails the whole pipeline; called as the bare-assignment RHS of a `||` (learn:246 -
+# the major - plus doctor/ls), that aborts the command silently. The fix `|| true`s the cat so a missing
+# file yields an EMPTY offset (the callers' full-log fallback), never a fatal pipefail. Extract the fn
+# from bin/sluice (the doctor-checks sed pattern) and run it under set -euo pipefail with `cat` stubbed
+# to exit 1 (the missing-file case): the sentinel after the assignment MUST be reached and off be empty.
+@test "last_run_offset: a missing offset file yields empty (no set -e/pipefail abort)" {
+  local bin; bin="$(cd "$BATS_TEST_DIRNAME/.." && pwd)/bin/sluice"   # setup() sources the prelude, which clobbers $ROOT
+  local t="$BATS_TEST_TMPDIR/last_run_offset.sh"
+  {
+    echo 'set -euo pipefail'
+    echo 'container=box'
+    echo '_root_exec() { shift; "$@"; }'   # real _root_exec runs the cmd INSIDE the box; shift off the container arg so the stubbed cat runs (exit 1)
+    echo 'cat() { return 1; }'      # simulate the absent /run/sluice-run-offset: in-container cat exits 1
+  } > "$t"
+  sed -n '/^last_run_offset()/,/^}/p' "$bin" >> "$t"
+  {
+    echo 'off="$(last_run_offset)"'
+    echo 'echo "REACHED off=[$off]"'   # only printed if the assignment did NOT abort under set -e
+  } >> "$t"
+  run bash "$t"
+  assert_success
+  assert_output --partial "REACHED off=[]"   # sentinel reached AND offset empty (full-log fallback)
 }

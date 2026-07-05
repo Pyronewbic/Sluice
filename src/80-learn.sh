@@ -249,6 +249,13 @@ cmd_learn() {
   local rows; rows="$(egress_rows 2>/dev/null | awk -F"$TAB" '$1=="blocked"{print $2 FS $3 FS $4}' | sort -t"$TAB" -k3,3nr -k1,1 || true)"
   local label; [ "$scope" = all ] && label="blocked since the box booted" || label="blocked during the last run"
 
+  # Empty rows mean "nothing blocked" OR a FAILED in-box read (pids cgroup exhausted so the audit
+  # exec couldn't fork). Fail closed rather than present an unread log as a clean all-clear.
+  if [ -z "$rows" ] && ! _audit_readable; then
+    echo "[sluice] ${C_YEL:-}egress audit unavailable${C_RST} - could not read the in-box log (pids limit?); failing closed." >&2
+    return 2
+  fi
+
   if [ -z "$rows" ]; then
     echo "[sluice] ${C_GRN}nothing $label - every host your app reached is already allowed.${C_RST}"
     [ "$scope" = run ] && echo "[sluice] (try 'sluice learn --all' for everything since boot.)"

@@ -359,7 +359,9 @@ egress_tx_total() {
 
 # The proxy-log byte offset captured at the start of the last `sluice` run (written to /run by the run
 # arms). Lets `sluice learn` scope to that run instead of the whole boot; empty if no run / box rebooted.
-last_run_offset() { _root_exec "$container" cat /run/sluice-run-offset 2>/dev/null | tr -dc 0-9; }
+# `|| true` on the cat: a missing offset file -> empty offset (callers' full-log fallback), never a
+# pipefail that would abort the bare-assignment call sites (learn/doctor/ls) under set -e.
+last_run_offset() { { _root_exec "$container" cat /run/sluice-run-offset 2>/dev/null || true; } | tr -dc 0-9; }
 mark_run_start()  { _root_exec "$container" sh -c 'wc -c < /var/log/squid/access.log | tr -dc 0-9 > /run/sluice-run-offset' 2>/dev/null || true; }
 
 # sha256 of stdin (hex only). shasum ships on macOS + the Linux runners (config_hash already uses it).
@@ -521,7 +523,14 @@ cmd_egress_export() {
 # self-hash recomputes and its prev links to the previous line's self (genesis = 64 zeros). Exits
 # non-zero on the first break (tamper / reorder / truncation) - a CI integrity gate on the receipts.
 cmd_egress_verify() {
-  local json=0; [ "${1:-}" = --json ] && json=1
+  # Parse the one optional flag strictly (mirrors cmd_scan/_drift_report): a typo'd gate flag must die,
+  # not silently downgrade to the human path at exit 0 (a CI 'egress --verify --jsonn' would lose its JSON).
+  local json=0
+  case "${1:-}" in
+    --json) json=1 ;;
+    "")     ;;
+    *)      die "usage: sluice egress --verify [--json]" ;;
+  esac
   local log="${XDG_STATE_HOME:-$HOME/.local/state}/sluice/$slug/egress-log.jsonl"
   # No log = an empty chain: trivially intact (0 records), exit 0 - unchanged.
   if [ ! -f "$log" ]; then
@@ -1411,6 +1420,9 @@ cmd_doctor() {
       _attn=$((_attn+1))
       _doc egress "${C_RED}$(printf '%s\n' "$blocked" | grep -c .) host(s) blocked${C_RST} (last run) - run 'sluice learn' to allow:"
       printf '%s\n' "$blocked" | _doctor_bullets "$C_RED"
+    elif ! _audit_readable; then
+      _attn=$((_attn+1))
+      _doc egress "${C_YEL}egress audit unavailable${C_RST} - could not read the in-box log (pids limit?); can't confirm nothing was blocked"
     else
       _doc egress "${C_GRN}no blocked egress needs allowing${C_RST}"
     fi
@@ -1475,8 +1487,13 @@ cmd_doctor_json() {
     else lock="present-unbuilt"; fi
   fi
 
-  local running_b=false blocked=""
-  if [ -n "$eng" ] && running; then running_b=true; local _RCPT_OFFSET; _RCPT_OFFSET="$(last_run_offset)"; blocked="$(blocked_new 2>/dev/null || true)"; fi
+  local running_b=false blocked="" egress_unavail=false
+  if [ -n "$eng" ] && running; then
+    running_b=true; local _RCPT_OFFSET; _RCPT_OFFSET="$(last_run_offset)"
+    blocked="$(blocked_new 2>/dev/null || true)"
+    # Empty may mean "nothing blocked" or a failed read; distinguish so blocked isn't a false [].
+    [ -z "$blocked" ] && ! _audit_readable && egress_unavail=true
+  fi
 
   local nsd=0 _sd; for _sd in ${SLUICE_STATE_DIRS:-}; do nsd=$((nsd+1)); done
 
@@ -1559,6 +1576,7 @@ cmd_doctor_json() {
   ports_json="$(printf '%s'   "${SLUICE_PORTS:-}"         | tr ' \t' '\n\n' | _json_arr)"
   ips_json="$(printf '%s'     "${SLUICE_ALLOW_IPS:-}"     | tr ' \t' '\n\n' | _json_arr)"
   blocked_json="$(printf '%s' "$blocked"                  | tr ' \t' '\n\n' | _json_arr)"
+  [ "$egress_unavail" = true ] && blocked_json=null
 
   printf '{"engine":"%s","engine_found":%s,"daemon":%s,"config":"%s","config_error":%s,"project_dir":"%s","name":"%s","desc":"%s","image":{"tag":"%s","built":%s,"stale":%s},"lock":"%s","allowlist":%s,"base":%s,"ports":%s,"allow_ips":%s,"base_image":"%s","policy_url":"%s","policy":%s,"state_dirs":%s,"overlay_dirs":%s,"mounts":%s,"auth":%s,"hardening":%s,"mask":{"patterns":%s,"masked":%s,"unmasked_secrets":%s},"risk":%s,"broken_symlinks":%s,"egress":{"running":%s,"blocked":%s}}\n' \
     "$(_json_esc "$engine_ver")" "$engine_found" "$daemon" "$(_json_esc "$PROJECT_CONFIG")" "$config_error" "$(_json_esc "$PROJECT_DIR")" "$(_json_esc "$tag")" "$(_json_esc "${SLUICE_DESC:-}")" \
@@ -1897,7 +1915,18 @@ if [ -n "$SLUICE_BOX_TARGET" ]; then
   case "${1:-}" in
     init|help|-h|--help|version|-v|--version|ls|prune|agent) die "--box doesn't apply to '${1:-}'" ;;
   esac
-  resolve_engine   # idempotent; doctor skipped it in the case above
+  # doctor is the lenient path (reports, never dies, since it's what you run when the runtime is broken):
+  # mirror line 22 and skip the strict resolve_engine. resolve_box_target still needs $ENGINE for its
+  # image inspect, so set it leniently (docker/podman/SLUICE_ENGINE, no runtime preflight) - matching
+  # cmd_doctor's own engine probe. Every other -b command keeps the strict resolve_engine.
+  case "${1:-}" in
+    doctor)
+      if   [ -n "${SLUICE_ENGINE:-}" ]; then ENGINE="$SLUICE_ENGINE"
+      elif command -v docker >/dev/null 2>&1; then ENGINE=docker
+      elif command -v podman >/dev/null 2>&1; then ENGINE=podman
+      else ENGINE="" ; fi ;;
+    *) resolve_engine ;;   # idempotent; the line-22 case skipped it for doctor
+  esac
   resolve_box_target "$SLUICE_BOX_TARGET"
   echo "${E_DIM}[sluice]${E_RST} targeting ${SLUICE_BOX_SLUG} (${BOX_PROJECT:-<dir gone>})" >&2
 fi
@@ -2612,9 +2641,11 @@ build() {
   # for non-prefetch builds) so the Dockerfile COPY never fails on a missing dir.
   mkdir -p "$tmp/prefetch"; : > "$tmp/prefetch/.keep"
   local _pf
+  set -f   # split the config list on whitespace, not glob it against $PWD
   for _pf in ${SLUICE_PREFETCH_FILES:-}; do
     [ -f "$PROJECT_DIR/$_pf" ] && cp "$PROJECT_DIR/$_pf" "$tmp/prefetch/" 2>/dev/null || true
   done
+  set +f
   # Self-describing labels (read by `sluice ls`; not part of config_hash, so no spurious rebuild).
   local args=(--label "sluice.confighash=$(config_hash)"
     --label "sluice.project=$PROJECT_DIR"
@@ -2781,7 +2812,11 @@ start() {
   case "${SLUICE_SECCOMP:-}" in
     hardened) run_args+=(--security-opt "seccomp=$CORE/seccomp.json") ;;
     browser)  run_args+=(--security-opt "seccomp=$CORE/seccomp-browser.json") ;;
-    audit)    _sc="$(mktemp "${TMPDIR:-/tmp}/sluice-seccomp-audit.XXXXXX")"
+    audit)    # Write the log-only profile to the stable per-box state dir and overwrite in place, so
+              # repeated runs don't leak a /tmp file each (a bare mktemp had no reaper - run-default/shell
+              # then arm the receipt EXIT trap, which would clobber any rm trap we set here).
+              _sc="${XDG_STATE_HOME:-$HOME/.local/state}/sluice/$slug/seccomp-audit.json"
+              mkdir -p "${_sc%/*}" 2>/dev/null || _sc="$(mktemp "${TMPDIR:-/tmp}/sluice-seccomp-audit.XXXXXX")"
               sed 's/SCMP_ACT_ERRNO/SCMP_ACT_LOG/g' "$CORE/seccomp.json" > "$_sc"
               run_args+=(--security-opt "seccomp=$_sc") ;;
     ""|default) : ;;
@@ -2864,12 +2899,14 @@ EOF
   # (rejected below); never a baked path (.npm-global, cursor's .local).
   if [ -n "${SLUICE_STATE_DIRS:-}" ]; then
     local state_base="${XDG_STATE_HOME:-$HOME/.local/state}/sluice/$slug" sd state_paths=""
+    set -f   # split the config list on whitespace, not glob it against $PWD
     for sd in ${SLUICE_STATE_DIRS}; do
       case "$sd" in /*|*..*) die "SLUICE_STATE_DIRS entry must be a relative path under the home dir: $sd";; esac
       mkdir -p "$state_base/$sd"
       run_args+=(-v "$state_base/$sd":"/home/sluice/$sd")
       state_paths="$state_paths /home/sluice/$sd"
     done
+    set +f
     run_args+=(-e "SLUICE_STATE_PATHS=$state_paths")
   fi
 
@@ -2879,6 +2916,7 @@ EOF
   # ('sluice rm'/'prune'). The entrypoint chowns a fresh volume to the sluice user (SLUICE_OVERLAY_PATHS).
   if [ -n "${SLUICE_OVERLAY_DIRS:-}" ]; then
     local od ovol opaths="" odirs=""
+    set -f   # split the config list on whitespace, not glob it against $PWD
     for od in ${SLUICE_OVERLAY_DIRS}; do
       case "$od" in /*|*..*) die "SLUICE_OVERLAY_DIRS entry must be a relative path inside the project (no leading /, no ..): $od" ;; esac
       od="${od%/}"
@@ -2887,6 +2925,7 @@ EOF
       run_args+=(-v "$ovol":"$PROJECT_DIR/$od")
       opaths="$opaths $PROJECT_DIR/$od"; odirs="$odirs $od"
     done
+    set +f
     run_args+=(-e "SLUICE_OVERLAY_PATHS=$opaths")
     echo "[sluice] overlay dirs (box-local volumes, host contents untouched):$odirs" >&2
   fi
@@ -2901,9 +2940,11 @@ EOF
   fi
 
   # Publish declared ports on host loopback only; init-firewall.sh opens the inbound ACCEPT.
+  set -f   # split the config list on whitespace, not glob it against $PWD
   for p in ${SLUICE_PORTS:-}; do
     run_args+=(-p "127.0.0.1:$p:$p")
   done
+  set +f
 
   echo "[sluice] starting $container ..."
   runtime_run --name "$container" "${run_args[@]}" "$tag" >/dev/null
@@ -2921,9 +2962,11 @@ ensure_up() { maybe_build; runtime_sync_image; running || start; }
 _exec_args() {
   _EXEC_ARGS=(-i --user sluice -w "$PROJECT_DIR")
   [ -t 0 ] && [ -t 1 ] && _EXEC_ARGS+=(-t)
+  set -f   # split the config list on whitespace, not glob it against $PWD
   for v in ${SLUICE_ENV:-}; do
     _EXEC_ARGS+=(-e "$v")
   done
+  set +f
 }
 # exec_in replaces this process (shell/run); run_in waits so an EXIT trap can fire after (run-default).
 exec_in() { _exec_args; exec "$RUNNER" exec "${_EXEC_ARGS[@]}" "$container" "$@"; }
@@ -3256,6 +3299,13 @@ cmd_learn() {
   local TAB; TAB="$(printf '\t')"
   local rows; rows="$(egress_rows 2>/dev/null | awk -F"$TAB" '$1=="blocked"{print $2 FS $3 FS $4}' | sort -t"$TAB" -k3,3nr -k1,1 || true)"
   local label; [ "$scope" = all ] && label="blocked since the box booted" || label="blocked during the last run"
+
+  # Empty rows mean "nothing blocked" OR a FAILED in-box read (pids cgroup exhausted so the audit
+  # exec couldn't fork). Fail closed rather than present an unread log as a clean all-clear.
+  if [ -z "$rows" ] && ! _audit_readable; then
+    echo "[sluice] ${C_YEL:-}egress audit unavailable${C_RST} - could not read the in-box log (pids limit?); failing closed." >&2
+    return 2
+  fi
 
   if [ -z "$rows" ]; then
     echo "[sluice] ${C_GRN}nothing $label - every host your app reached is already allowed.${C_RST}"
