@@ -159,10 +159,15 @@ The guarantees below hold only while these do:
    a shared host - `raw.githubusercontent.com`, a cloud storage endpoint, an LLM API -
    data can be laundered through it. Keep the list minimal; never allow a host an attacker can also
    write to. `sluice` flags such a host at session start (`SLUICE_LAUNDERING_OK=1` acknowledges and
-   silences it, `SLUICE_STRICT_LAUNDERING=1` refuses to run).
+   silences it, `SLUICE_STRICT_LAUNDERING=1` refuses to run). The flag matches the **leading-dot
+   wildcard** form too (`.storage.googleapis.com`, what `sluice learn` writes), not just the bare host,
+   so a wildcard allowlist doesn't slip a known launderer past the gate or a `forbid-laundering` policy.
 3. **Exfil through `SLUICE_ALLOW_IPS`.** Reviewed fixed IPs get *direct* egress (the escape hatch for
    non-HTTP services like a database) - bypassing the proxy, so unfiltered by hostname. Scope each
    entry to one port with `ip:port` (a bare ip/cidr opens *every* port); keep the list minimal and specific.
+   It is **IPv4-only** and floored at **/8**: an IPv6 literal, any `0.0.0.0/N`, and a prefix shorter than
+   `/8` (e.g. the two-CIDR `0.0.0.0/1 128.0.0.0/1` cover) are **refused** host-side, and the in-box
+   firewall independently refuses the same so a bypassed launcher check can't open all direct egress.
 4. **A squid vulnerability or a loose allowlist.** The egress policy rests on squid +
    the allowlist file. A squid CVE or an over-broad `SLUICE_ALLOW_DOMAINS` is the trust anchor
    to guard - including the `.domain` wildcards `sluice learn` can write (a leading-dot entry

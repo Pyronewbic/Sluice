@@ -383,6 +383,7 @@ allowed_domains() { printf '%s %s' "${SLUICE_ALLOW_DOMAINS:-}" "$(base_domains)"
 # laundered out through it even though it's allowlisted (THREAT_MODEL "allowed-host laundering"; we
 # splice, never decrypt). Heuristic + non-exhaustive; doctor nudges, never blocks.
 laundering_host() {
+  set -- "${1#.}"   # a leading-dot wildcard (.host, what `sluice learn` writes) covers the bare host
   case "$1" in
     *s3.amazonaws.com|*.s3.*.amazonaws.com|storage.googleapis.com|*.blob.core.windows.net|*.r2.cloudflarestorage.com|*.digitaloceanspaces.com) return 0 ;;
     gist.github.com|gist.githubusercontent.com|raw.githubusercontent.com|*pastebin.com|paste.*|transfer.sh|0x0.st|file.io|*.tmpfiles.org) return 0 ;;
@@ -2574,20 +2575,40 @@ warn_laundering() {
 case "${1:-run-default}" in run-default|run|shell) warn_laundering ;; esac
 
 # SLUICE_ALLOW_IPS is a direct-egress escape hatch that BYPASSES squid (init-firewall.sh ACCEPTs it
-# raw), and unlike the other path-y knobs it had no floor: a catch-all (0.0.0.0/0) opens all direct
-# egress and a colon-less entry opens EVERY port to that host. Reject the catch-alls; loudly warn on
-# an all-ports entry. Each entry is ip[/cidr][:port[/proto]].
+# raw), and unlike the other path-y knobs it had no floor: a /0 opened all direct egress yet a broader-
+# than-/0-by-pieces cover (0.0.0.0/1 128.0.0.0/1) or any short prefix (/1../7) slipped through, as did
+# an IPv6 literal (which then mis-parses in the firewall). Floor = /8: refuse a prefix below /8 and any
+# 0.0.0.0/N; refuse IPv6 (we are IPv4-only); loudly warn on a port-less (all-ports) entry. A /8-or-longer
+# prefix, a single IP, an ip:port, and a bare host still pass. Each entry is ip[/cidr][:port[/proto]].
+_ALLOW_IPS_MIN_PREFIX=8   # documented floor: a CIDR shorter than this is too broad for a direct-egress hatch
 validate_allow_ips() {
-  local e
+  local e hostcidr plen
+  set -f                              # the split below is unquoted-on-purpose; don't glob a '*' in a value
   for e in ${SLUICE_ALLOW_IPS:-}; do
+    # Literal catch-alls (0.0.0.0, any /0): all direct egress.
     case "$e" in
-      0.0.0.0|0.0.0.0:*|::|*/0) die "SLUICE_ALLOW_IPS='$e' opens direct egress to everything - refusing. Scope it to a host and port, e.g. 10.0.0.5:5432" ;;
+      0.0.0.0|0.0.0.0:*|*/0) die "SLUICE_ALLOW_IPS='$e' opens direct egress to everything - refusing. Scope it to a host and port, e.g. 10.0.0.5:5432" ;;
+    esac
+    # IPv4-only: '::' shorthand, or 2+ colons (a full-form IPv6 literal) - refuse rather than let the
+    # single-colon host/port split below feed iptables a broken -d (opaque fail-closed boot abort).
+    case "$e" in *::*) die "SLUICE_ALLOW_IPS='$e' is an IPv6 literal - SLUICE_ALLOW_IPS is IPv4-only (the box proxies/filters v4; IPv6 egress is default-closed). Drop it or use the IPv4 address." ;; esac
+    case "${e#*:}" in *:*) die "SLUICE_ALLOW_IPS='$e' is an IPv6 literal - SLUICE_ALLOW_IPS is IPv4-only. Drop it or use the IPv4 address." ;; esac
+    # Floor: a CIDR shorter than /_ALLOW_IPS_MIN_PREFIX (and any 0.0.0.0/N, caught above) is too broad
+    # for a raw direct-egress ACCEPT. Strip a trailing :port first; a bare host / single IP has no '/'.
+    hostcidr="${e%%:*}"
+    case "$hostcidr" in
+      */*) plen="${hostcidr##*/}"
+           case "$plen" in
+             ''|*[!0-9]*) ;;          # non-numeric prefix: not a broad cover; leave it to the firewall
+             *) [ "$plen" -lt "$_ALLOW_IPS_MIN_PREFIX" ] && die "SLUICE_ALLOW_IPS='$e' is a /$plen - too broad (floor is /$_ALLOW_IPS_MIN_PREFIX) for a direct-egress hatch that bypasses the proxy. Narrow it to /$_ALLOW_IPS_MIN_PREFIX or longer, e.g. 10.0.0.5:5432" ;;
+           esac ;;
     esac
     case "$e" in
       *:*) ;;   # ip:port - scoped, fine
       *)   echo "${E_YEL}[sluice] WARNING:${E_RST} SLUICE_ALLOW_IPS '$e' has no port - it opens EVERY port to that host, direct (bypasses the hostname filter). Scope it: ${e}:PORT" >&2 ;;
     esac
   done
+  set +f
 }
 case "${1:-run-default}" in run-default|run|shell|build|rebuild|update) validate_allow_ips ;; esac
 
