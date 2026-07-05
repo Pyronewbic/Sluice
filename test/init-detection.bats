@@ -72,31 +72,31 @@ has()   { grep -qF -- "$2" "$WORK/$1/sluice.config.sh"; }
 hasnt() { ! grep -qF -- "$2" "$WORK/$1/sluice.config.sh"; }
 
 @test "node/vite: dev-script port + run cmd" {
-  has node-vite 'SLUICE_PORTS="5173"' &&
+  has node-vite "SLUICE_PORTS='5173'" &&
   has node-vite 'npm install && npm run dev -- --host 0.0.0.0 --port 5173'
 }
 @test "node/pnpm: manager + honored port + run cmd" {
-  has node-pnpm-port 'SLUICE_EXTRA_NPM="pnpm"' &&
-  has node-pnpm-port 'SLUICE_PORTS="4000"' &&
+  has node-pnpm-port "SLUICE_EXTRA_NPM='pnpm'" &&
+  has node-pnpm-port "SLUICE_PORTS='4000'" &&
   has node-pnpm-port 'pnpm install && pnpm run dev -- --host 0.0.0.0 --port 4000'
 }
 @test "node/next: -H/-p flags" { has node-next 'npm run dev -- -H 0.0.0.0 -p 3000'; }
 @test "node/bun: apk + run cmd" {
-  has node-bun 'SLUICE_EXTRA_PKGS="bun"' &&
+  has node-bun "SLUICE_EXTRA_PKGS='bun'" &&
   has node-bun 'bun install && bun run dev'
 }
 @test "node/yarn: manager + run cmd" {
-  has node-yarn 'SLUICE_EXTRA_NPM="yarn"' &&
+  has node-yarn "SLUICE_EXTRA_NPM='yarn'" &&
   has node-yarn 'yarn install && yarn dev --'
 }
 @test "node/bound: honors port, runs as-is, no duplicate flags" {
-  has   node-bound 'SLUICE_PORTS="7777"' &&
-  has   node-bound 'npm install && npm run dev"' &&
+  has   node-bound "SLUICE_PORTS='7777'" &&
+  has   node-bound "SLUICE_RUN_CMD='npm install && npm run dev'" &&
   hasnt node-bound 'npm run dev -- '
 }
 
 @test "py/fastapi: pkgs + uvicorn entry + user pip install" {
-  has py-fastapi 'SLUICE_EXTRA_PKGS="python-3.12 py3.12-pip"' &&
+  has py-fastapi "SLUICE_EXTRA_PKGS='python-3.12 py3.12-pip'" &&
   has py-fastapi 'uvicorn main:app --host 0.0.0.0 --port 8000' &&
   has py-fastapi 'export PATH="$HOME/.local/bin:$PATH"; pip install --user -r requirements.txt'
 }
@@ -110,92 +110,92 @@ hasnt() { ! grep -qF -- "$2" "$WORK/$1/sluice.config.sh"; }
 }
 @test "py/flask: run + port" {
   has py-flask 'flask --app app run --host 0.0.0.0 --port 5000' &&
-  has py-flask 'SLUICE_PORTS="5000"'
+  has py-flask "SLUICE_PORTS='5000'"
 }
-@test "py/.python-version 3.11 honored" { has py-ver 'SLUICE_EXTRA_PKGS="python-3.11 py3.11-pip"'; }
+@test "py/.python-version 3.11 honored" { has py-ver "SLUICE_EXTRA_PKGS='python-3.11 py3.11-pip'"; }
 @test "py/pipenv: setup + run cmd + detection line" {
-  has py-pipenv 'SLUICE_SETUP_CMDS="pip install --user pipenv"' &&
+  has py-pipenv "SLUICE_SETUP_CMDS='pip install --user pipenv'" &&
   has py-pipenv 'pipenv install && pipenv run flask --app app run' &&
   has py-pipenv 'detected: python-3.12/pipenv (flask)'
 }
 
 @test "deno: apk + run cmd" {
-  has deno 'SLUICE_EXTRA_PKGS="deno"' &&
-  has deno 'SLUICE_RUN_CMD="deno task dev"'
+  has deno "SLUICE_EXTRA_PKGS='deno'" &&
+  has deno "SLUICE_RUN_CMD='deno task dev'"
 }
 @test "ruby: native-ext toolchain + bindir mkdir + GEM_HOME" {
-  has ruby 'SLUICE_EXTRA_PKGS="ruby-3.3 ruby-3.3-dev build-base linux-headers"' &&
+  has ruby "SLUICE_EXTRA_PKGS='ruby-3.3 ruby-3.3-dev build-base linux-headers'" &&
   has ruby 'mkdir -p "$HOME/.local/bin" "$HOME/.gem/ruby"' &&
   has ruby 'export GEM_HOME="$HOME/.gem/ruby"'
 }
 @test "ruby/rails: port + server" {
-  has ruby-rails 'SLUICE_PORTS="3000"' &&
+  has ruby-rails "SLUICE_PORTS='3000'" &&
   has ruby-rails 'bundle exec rails server -b 0.0.0.0 -p 3000'
 }
 @test "ruby+lock: F2 prefetch (bundle install at build, no rubygems)" {
-  has ruby-lock 'SLUICE_PREFETCH_FILES="Gemfile Gemfile.lock"' &&
-  has ruby-lock 'SLUICE_ALLOW_DOMAINS=""' &&
+  has ruby-lock "SLUICE_PREFETCH_FILES='Gemfile Gemfile.lock'" &&
+  has ruby-lock "SLUICE_ALLOW_DOMAINS=''" &&
   has ruby-lock 'detected: ruby-3.3 (prefetched)'
 }
 @test "py/pip+requirements: F2 prefetch (deps installed at build, no pypi)" {
-  has py-fastapi 'SLUICE_PREFETCH_FILES="requirements.txt"' &&
-  has py-fastapi 'SLUICE_ALLOW_DOMAINS=""'
+  has py-fastapi "SLUICE_PREFETCH_FILES='requirements.txt'" &&
+  has py-fastapi "SLUICE_ALLOW_DOMAINS=''"
 }
 @test "rust: build pkgs + run cmd" {
-  has rust 'SLUICE_EXTRA_PKGS="rust build-base"' &&
-  has rust 'SLUICE_RUN_CMD="cargo run"'
+  has rust "SLUICE_EXTRA_PKGS='rust build-base'" &&
+  has rust "SLUICE_RUN_CMD='cargo run'"
 }
 @test "go: apk + run cmd" {
-  has go 'SLUICE_EXTRA_PKGS="go"' &&
-  has go 'SLUICE_RUN_CMD="go run ."'
+  has go "SLUICE_EXTRA_PKGS='go'" &&
+  has go "SLUICE_RUN_CMD='go run .'"
 }
 @test "rust+lock: F2 prefetch (cargo fetch at build, offline run, no crates.io)" {
-  has rust-lock 'SLUICE_PREFETCH_CMD="cargo fetch"' &&
-  has rust-lock 'SLUICE_RUN_CMD="cargo run --offline"' &&
-  has rust-lock 'SLUICE_ALLOW_DOMAINS=""'
+  has rust-lock "SLUICE_PREFETCH_CMD='cargo fetch'" &&
+  has rust-lock "SLUICE_RUN_CMD='cargo run --offline'" &&
+  has rust-lock "SLUICE_ALLOW_DOMAINS=''"
 }
 @test "go+lock: F2 prefetch (go mod download at build, GOPROXY=off run, no go proxy)" {
-  has go-lock 'SLUICE_PREFETCH_FILES="go.mod go.sum"' &&
-  has go-lock 'SLUICE_RUN_CMD="GOPROXY=off go run ."' &&
-  has go-lock 'SLUICE_ALLOW_DOMAINS=""'
+  has go-lock "SLUICE_PREFETCH_FILES='go.mod go.sum'" &&
+  has go-lock "SLUICE_RUN_CMD='GOPROXY=off go run .'" &&
+  has go-lock "SLUICE_ALLOW_DOMAINS=''"
 }
 
 @test "java/maven+spring: jdk+maven pkgs, JAVA_HOME, spring-boot run, port" {
-  has java-maven 'SLUICE_EXTRA_PKGS="openjdk-21 maven"' &&
+  has java-maven "SLUICE_EXTRA_PKGS='openjdk-21 maven'" &&
   has java-maven 'export JAVA_HOME=/usr/lib/jvm/java-21-openjdk' &&
   has java-maven 'mvn -q spring-boot:run' &&
-  has java-maven 'SLUICE_PORTS="8080"' &&
+  has java-maven "SLUICE_PORTS='8080'" &&
   has java-maven 'detected: java/maven (spring-boot)'
 }
 @test "java/gradle: jdk+gradle pkgs, gradle run, gradle registry" {
-  has java-gradle 'SLUICE_EXTRA_PKGS="openjdk-21 gradle"' &&
+  has java-gradle "SLUICE_EXTRA_PKGS='openjdk-21 gradle'" &&
   has java-gradle 'gradle run' &&
   has java-gradle 'plugins.gradle.org'
 }
 @test "php: php+composer pkgs, built-in server, packagist" {
-  has php 'SLUICE_EXTRA_PKGS="php composer"' &&
+  has php "SLUICE_EXTRA_PKGS='php composer'" &&
   has php 'composer install && php -S 0.0.0.0:8000' &&
   has php 'repo.packagist.org'
 }
 @test "dotnet: sdk pkg, dotnet run urls, nuget" {
-  has dotnet 'SLUICE_EXTRA_PKGS="dotnet-10-sdk"' &&
+  has dotnet "SLUICE_EXTRA_PKGS='dotnet-10-sdk'" &&
   has dotnet 'dotnet run --urls http://0.0.0.0:8080' &&
   has dotnet 'api.nuget.org'
 }
 @test "elixir/phoenix: elixir pkg, phx.server, port, hex" {
-  has elixir 'SLUICE_EXTRA_PKGS="elixir"' &&
+  has elixir "SLUICE_EXTRA_PKGS='elixir'" &&
   has elixir 'mix deps.get && mix phx.server' &&
-  has elixir 'SLUICE_PORTS="4000"' &&
+  has elixir "SLUICE_PORTS='4000'" &&
   has elixir 'detected: elixir/phoenix'
 }
 @test "dart: dart pkg, pub get + run, pub.dev" {
-  has dart 'SLUICE_EXTRA_PKGS="dart"' &&
+  has dart "SLUICE_EXTRA_PKGS='dart'" &&
   has dart 'dart pub get && dart run' &&
   has dart 'pub.dev'
 }
 @test "generic+Makefile: run cmd sourced from a make target" {
-  has gmake 'SLUICE_RUN_CMD="make run"' &&
-  has gmake 'SLUICE_EXTRA_PKGS="make"'
+  has gmake "SLUICE_RUN_CMD='make run'" &&
+  has gmake "SLUICE_EXTRA_PKGS='make'"
 }
 @test "scaffold: hardening knobs present as commented options (F3)" {
   has node-vite '# SLUICE_SECCOMP=hardened' &&
@@ -203,7 +203,7 @@ hasnt() { ! grep -qF -- "$2" "$WORK/$1/sluice.config.sh"; }
 }
 
 @test "generic: bash run cmd + no-stack note" {
-  has generic 'SLUICE_RUN_CMD="bash"' &&
+  has generic "SLUICE_RUN_CMD='bash'" &&
   has generic 'no known stack detected'
 }
 @test "polyglot: targets node, flags python" {
@@ -219,11 +219,13 @@ hasnt() { ! grep -qF -- "$2" "$WORK/$1/sluice.config.sh"; }
 }
 
 @test "update: refreshes detected fields (run cmd + port)" {
-  has upd 'SLUICE_RUN_CMD="npm install && npm run dev -- --host 0.0.0.0 --port 5173"' &&
-  has upd 'SLUICE_PORTS="5173"'
+  has upd "SLUICE_RUN_CMD='npm install && npm run dev -- --host 0.0.0.0 --port 5173'" &&
+  has upd "SLUICE_PORTS='5173'"
 }
 @test "update: preserves allowlist + env + uncommented hardening" {
-  has upd 'SLUICE_ALLOW_DOMAINS="my.custom.host"' &&
+  # ALLOW_DOMAINS is init-managed (re-quoted), so it is now single-quoted; ENV/SECCOMP are preserved
+  # verbatim from the prior config (not re-quoted), so they keep their original double-quote/bare form.
+  has upd "SLUICE_ALLOW_DOMAINS='my.custom.host'" &&
   has upd 'SLUICE_ENV="MY_TOKEN"' &&
   has upd 'SLUICE_SECCOMP=hardened'
 }

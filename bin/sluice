@@ -1421,6 +1421,9 @@ cmd_doctor() {
       _attn=$((_attn+1))
       _doc egress "${C_RED}$(printf '%s\n' "$blocked" | grep -c .) host(s) blocked${C_RST} (last run) - run 'sluice learn' to allow:"
       printf '%s\n' "$blocked" | _doctor_bullets "$C_RED"
+    elif ! _audit_readable; then
+      _attn=$((_attn+1))
+      _doc egress "${C_YEL}egress audit unavailable${C_RST} - could not read the in-box log (pids limit?); can't confirm nothing was blocked"
     else
       _doc egress "${C_GRN}no blocked egress needs allowing${C_RST}"
     fi
@@ -1485,8 +1488,13 @@ cmd_doctor_json() {
     else lock="present-unbuilt"; fi
   fi
 
-  local running_b=false blocked=""
-  if [ -n "$eng" ] && running; then running_b=true; local _RCPT_OFFSET; _RCPT_OFFSET="$(last_run_offset)"; blocked="$(blocked_new 2>/dev/null || true)"; fi
+  local running_b=false blocked="" egress_unavail=false
+  if [ -n "$eng" ] && running; then
+    running_b=true; local _RCPT_OFFSET; _RCPT_OFFSET="$(last_run_offset)"
+    blocked="$(blocked_new 2>/dev/null || true)"
+    # Empty may mean "nothing blocked" or a failed read; distinguish so blocked isn't a false [].
+    [ -z "$blocked" ] && ! _audit_readable && egress_unavail=true
+  fi
 
   local nsd=0 _sd; for _sd in ${SLUICE_STATE_DIRS:-}; do nsd=$((nsd+1)); done
 
@@ -1569,6 +1577,7 @@ cmd_doctor_json() {
   ports_json="$(printf '%s'   "${SLUICE_PORTS:-}"         | tr ' \t' '\n\n' | _json_arr)"
   ips_json="$(printf '%s'     "${SLUICE_ALLOW_IPS:-}"     | tr ' \t' '\n\n' | _json_arr)"
   blocked_json="$(printf '%s' "$blocked"                  | tr ' \t' '\n\n' | _json_arr)"
+  [ "$egress_unavail" = true ] && blocked_json=null
 
   printf '{"engine":"%s","engine_found":%s,"daemon":%s,"config":"%s","config_error":%s,"project_dir":"%s","name":"%s","desc":"%s","image":{"tag":"%s","built":%s,"stale":%s},"lock":"%s","allowlist":%s,"base":%s,"ports":%s,"allow_ips":%s,"base_image":"%s","policy_url":"%s","policy":%s,"state_dirs":%s,"overlay_dirs":%s,"mounts":%s,"auth":%s,"hardening":%s,"mask":{"patterns":%s,"masked":%s,"unmasked_secrets":%s},"risk":%s,"broken_symlinks":%s,"egress":{"running":%s,"blocked":%s}}\n' \
     "$(_json_esc "$engine_ver")" "$engine_found" "$daemon" "$(_json_esc "$PROJECT_CONFIG")" "$config_error" "$(_json_esc "$PROJECT_DIR")" "$(_json_esc "$tag")" "$(_json_esc "${SLUICE_DESC:-}")" \
@@ -1929,8 +1938,11 @@ _init_port_from() { printf '%s' "$(printf '%s' "$1" | grep -oiE -- '(--port|--se
 _init_pkg_has()   { grep -qE "\"$2(\"|/)" "$1" 2>/dev/null; }          # dependency / scoped-pkg key
 _init_has_script(){ grep -qE "\"$2\"[[:space:]]*:" "$1" 2>/dev/null; } # a package.json/deno.json script
 _init_py_has()    { grep -qiE "(^|[^a-zA-Z0-9_.-])$1" "$dir/requirements.txt" "$dir/pyproject.toml" "$dir/Pipfile" 2>/dev/null; }
-# Quote a config value: single-quote if it contains $ or " (we never emit a literal single quote).
-_init_q()         { case "$1" in *[\$\"]*) printf "'%s'" "$1" ;; *) printf '"%s"' "$1" ;; esac; }
+# Quote a config value for the generated config (host-sourced pre-container): single-quote and escape
+# embedded quotes via the '\'' idiom, so every char ($, backtick, ", \, newline) is literal - no
+# evaluation. The 4 backslashes are load-bearing: the double-quoted string collapses them to the sed
+# program s/'/'\\''/g (don't "simplify" to 2 - that emits ''' and breaks values with a single quote).
+_init_q()         { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
 # A run command the project already declares (Procfile web line, or a Makefile/justfile run-ish target),
 # so the generic fallback can propose something real instead of 'bash'. Echoes the command; rc 1 if none.
 _init_runcmd_from_files() {
@@ -2258,7 +2270,8 @@ cmd_init() {
     elif [ "${SLUICE_YES:-}" != 1 ]; then
       rm -f "$out"; echo "[sluice] non-interactive: re-run with SLUICE_YES=1 to apply these changes."; return 0
     fi
-    mv "$out" "$cfg"; echo "[sluice] updated $cfg (allowlist + non-detected keys preserved)"; return 0
+    mv "$out" "$cfg"; chmod 0644 "$cfg" 2>/dev/null || true   # mktemp is 0600; the build sources it
+    echo "[sluice] updated $cfg (allowlist + non-detected keys preserved)"; return 0
   fi
 
   echo "[sluice] detected: $detected"
@@ -3307,6 +3320,13 @@ cmd_learn() {
   local TAB; TAB="$(printf '\t')"
   local rows; rows="$(egress_rows 2>/dev/null | awk -F"$TAB" '$1=="blocked"{print $2 FS $3 FS $4}' | sort -t"$TAB" -k3,3nr -k1,1 || true)"
   local label; [ "$scope" = all ] && label="blocked since the box booted" || label="blocked during the last run"
+
+  # Empty rows mean "nothing blocked" OR a FAILED in-box read (pids cgroup exhausted so the audit
+  # exec couldn't fork). Fail closed rather than present an unread log as a clean all-clear.
+  if [ -z "$rows" ] && ! _audit_readable; then
+    echo "[sluice] ${C_YEL:-}egress audit unavailable${C_RST} - could not read the in-box log (pids limit?); failing closed." >&2
+    return 2
+  fi
 
   if [ -z "$rows" ]; then
     echo "[sluice] ${C_GRN}nothing $label - every host your app reached is already allowed.${C_RST}"

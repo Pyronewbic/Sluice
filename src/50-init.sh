@@ -3,8 +3,11 @@ _init_port_from() { printf '%s' "$(printf '%s' "$1" | grep -oiE -- '(--port|--se
 _init_pkg_has()   { grep -qE "\"$2(\"|/)" "$1" 2>/dev/null; }          # dependency / scoped-pkg key
 _init_has_script(){ grep -qE "\"$2\"[[:space:]]*:" "$1" 2>/dev/null; } # a package.json/deno.json script
 _init_py_has()    { grep -qiE "(^|[^a-zA-Z0-9_.-])$1" "$dir/requirements.txt" "$dir/pyproject.toml" "$dir/Pipfile" 2>/dev/null; }
-# Quote a config value: single-quote if it contains $ or " (we never emit a literal single quote).
-_init_q()         { case "$1" in *[\$\"]*) printf "'%s'" "$1" ;; *) printf '"%s"' "$1" ;; esac; }
+# Quote a config value for the generated config (host-sourced pre-container): single-quote and escape
+# embedded quotes via the '\'' idiom, so every char ($, backtick, ", \, newline) is literal - no
+# evaluation. The 4 backslashes are load-bearing: the double-quoted string collapses them to the sed
+# program s/'/'\\''/g (don't "simplify" to 2 - that emits ''' and breaks values with a single quote).
+_init_q()         { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
 # A run command the project already declares (Procfile web line, or a Makefile/justfile run-ish target),
 # so the generic fallback can propose something real instead of 'bash'. Echoes the command; rc 1 if none.
 _init_runcmd_from_files() {
@@ -332,7 +335,8 @@ cmd_init() {
     elif [ "${SLUICE_YES:-}" != 1 ]; then
       rm -f "$out"; echo "[sluice] non-interactive: re-run with SLUICE_YES=1 to apply these changes."; return 0
     fi
-    mv "$out" "$cfg"; echo "[sluice] updated $cfg (allowlist + non-detected keys preserved)"; return 0
+    mv "$out" "$cfg"; chmod 0644 "$cfg" 2>/dev/null || true   # mktemp is 0600; the build sources it
+    echo "[sluice] updated $cfg (allowlist + non-detected keys preserved)"; return 0
   fi
 
   echo "[sluice] detected: $detected"

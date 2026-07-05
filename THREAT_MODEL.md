@@ -129,6 +129,15 @@ The guarantees below hold only while these do:
   with system files or leave persistence. (On SELinux-enforcing hosts the box runs
   `--security-opt label=disable` so it can read the project mount; that drops the SELinux layer, but
   the guarantees above are unaffected.)
+- **Host code execution from scaffolding an untrusted repo** -> `sluice init` reads the repo's
+  manifests (`Procfile`, `Makefile`/`justfile` targets, `package.json` scripts, ...) to propose a
+  run command and writes them into `sluice.config.sh`, which the launcher then **sources on the host**
+  (pre-container, before any sandbox exists). So every repo-derived value init emits is **shell-quoted**
+  (single-quoted, embedded quotes escaped) - inside single quotes a backtick, `$(...)`, `$var`, or `"`
+  is literal, so a hostile value (e.g. a `Procfile` web line carrying a backtick) is the literal string
+  when sourced, never executed. Running `sluice init` in an untrusted checkout does not run that repo's
+  code on your host. (You still author and review the config you ultimately run - the values init
+  proposes are advisory.)
 - **Supply-chain fetch vs. runtime** -> deps are pulled at build (pre-firewall); the
   *running* container is locked to the allowlist.
 - **Tampered sandbox core** -> the generic core (proxy, firewall, entrypoint, non-root user)
@@ -257,4 +266,6 @@ clean-PATH root execs (no uid-1000 PATH-shadow privesc), `host_verify_strict` (f
 validated worktree common-dir mount, case-insensitive + wildcard-coverage DoH filter, fail-closed egress
 audit, sanitized `doctor` output, policy deny over a covering allow wildcard, and the IPv6-closed
 disjunction; plus `learn` failing closed on an unreachable `SLUICE_POLICY_URL`, matching the run path.
+Hardened 2026-06-15: `sluice init` shell-quotes every repo-derived value it writes (the generated,
+host-sourced config no longer executes a hostile `Procfile`/manifest value at scaffold time).
 Revisit when the egress path, mount model, or runtime options change._

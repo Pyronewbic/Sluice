@@ -98,6 +98,23 @@ _rec() { local TAB; TAB="$(printf '\t')"; _persist_receipt "$(printf 'reached%s%
   assert_failure
 }
 
+@test "learn: an unreadable in-box audit fails closed, not a false 'nothing blocked'" {
+  running() { return 0; }; egress_rows() { :; }; _audit_readable() { return 1; }
+  last_run_offset() { echo 0; }
+  run cmd_learn
+  assert_failure
+  refute_output --partial "already allowed"
+  assert_output --partial "unavailable"
+}
+
+@test "learn: a genuinely empty audit that IS readable still reports the clean all-clear" {
+  running() { return 0; }; egress_rows() { :; }; _audit_readable() { return 0; }
+  last_run_offset() { echo 0; }
+  run cmd_learn
+  assert_success
+  assert_output --partial "already allowed"
+}
+
 # cmd_egress_verify is a sourced function (no box), so capture its --json stdout via `run` and pipe
 # $output to jq - bash -c can't see the sourced function.
 @test "egress --verify --json: an intact chain reports verified:true records:N, exit 0" {
