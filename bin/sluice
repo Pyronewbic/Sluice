@@ -1151,6 +1151,7 @@ EOF
   # COVERS a deny token would silently re-admit a denied host - a conflict refusal.
   local merged eff="" h conflict=""
   merged="$(printf '%s %s' "${SLUICE_ALLOW_DOMAINS:-}" "$allow" | tr ' ' '\n' | sed '/^$/d' | sort -u)"
+  set -f   # entries are not globs - keep a wildcard (e.g. *.s3.amazonaws.com) literal, no $PWD expansion (the case-based matchers below still glob-MATCH under set -f); spans all three split loops to the IPS loop
   for h in $merged; do
     if _policy_denied_host "$h" "$deny"; then continue
     elif _allow_covers_denied "$h" "$deny"; then conflict="$conflict $h"
@@ -1170,6 +1171,7 @@ EOF
     ipn=$((ipn+1)); ipp="${e%%:*}"; ipp="${ipp%%/*}"
     for d in $denyip; do if _ip_in_cidr "$ipp" "$d"; then refusals="$refusals""policy denies SLUICE_ALLOW_IPS '$e' (matches deny-ip $d)"$'\n'; fi; done
   done
+  set +f
   case "$maxips" in ''|*[!0-9]*) ;; *) if [ "$ipn" -gt "$maxips" ]; then refusals="$refusals""policy caps SLUICE_ALLOW_IPS at $maxips (your config has $ipn)"$'\n'; fi ;; esac
   _PEVAL_REFUSALS="$refusals"
   # source + counts for visibility (banner/run line / doctor).
@@ -1341,7 +1343,9 @@ cmd_doctor() {
 
   if [ -n "${SLUICE_STATE_DIRS:-}" ]; then
     local nsd=0 _sd
+    set -f   # dir names are not globs - count them, don't expand against $PWD
     for _sd in ${SLUICE_STATE_DIRS}; do nsd=$((nsd+1)); done
+    set +f
     _doc state "$nsd dir(s) persisted at $(_tilde "${XDG_STATE_HOME:-$HOME/.local/state}/sluice/$slug")"
   fi
 
@@ -1409,9 +1413,11 @@ cmd_doctor() {
   fi
 
   if [ -n "${SLUICE_ENV:-}" ]; then
+    set -f   # var names are not globs - keep them literal, no $PWD expansion
     for v in $SLUICE_ENV; do
       if [ -n "${!v:-}" ]; then _doc auth "$v ${C_GRN}set${C_RST}"; else _doc auth "$v ${C_RED}unset${C_RST} - export it on the host"; fi
     done
+    set +f
   fi
 
   if [ -n "$eng" ] && running; then
@@ -1496,14 +1502,16 @@ cmd_doctor_json() {
     [ -z "$blocked" ] && ! _audit_readable && egress_unavail=true
   fi
 
-  local nsd=0 _sd; for _sd in ${SLUICE_STATE_DIRS:-}; do nsd=$((nsd+1)); done
+  local nsd=0 _sd; set -f; for _sd in ${SLUICE_STATE_DIRS:-}; do nsd=$((nsd+1)); done; set +f   # dir names aren't globs
 
   local auth_json="[" first=1 v setv
+  set -f   # var names are not globs - keep them literal, no $PWD expansion
   for v in ${SLUICE_ENV:-}; do
     [ "$first" = 1 ] && first=0 || auth_json="$auth_json,"
     setv=false; [ -n "${!v:-}" ] && setv=true
     auth_json="$auth_json{\"var\":\"$(_json_esc "$v")\",\"set\":$setv}"
   done
+  set +f
   auth_json="$auth_json]"
 
   local mask_pats mask_hits mask_unm links_json
@@ -1687,8 +1695,8 @@ EOF
       [ "$j" -gt 0 ] && printf ','
       ac="${allows[$i]}"; [ -n "$ac" ] || ac=null              # null = un-rebuilt box (label absent), not 0
       lk=false; [ "${locks[$i]}" = locked ] && lk=true
-      # shellcheck disable=SC2086
-      pjson="$(printf '%s\n' ${ports_[$i]} | _json_arr)"
+      # tr-split (like overlays) keeps a glob metachar in the label literal - no pathname expansion against $PWD
+      pjson="$(printf '%s' "${ports_[$i]}" | tr ' \t' '\n\n' | _json_arr)"
       ojson="$(printf '%s' "${ovls[$i]}" | tr ' \t' '\n\n' | _json_arr)"
       bjson=""; if [ -n "$egress" ]; then
         if [ "${stats[$i]}" = running ]; then bjson=",\"blocked\":${blocks[$i]:-0}"; else bjson=',"blocked":null'; fi
