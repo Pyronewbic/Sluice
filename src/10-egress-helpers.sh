@@ -241,10 +241,14 @@ blocked_new() {
 # Reuses blocked_new wholesale: a subshell overrides the two globals it reads - $container (which
 # box's log to exec) and $SLUICE_ALLOW_DOMAINS (the box's live allowlist, read from the container).
 # base_domains() is still added by allowed_domains(), so base hosts never count as blocked.
+# Fail-closed: a zero is only trusted after _audit_readable confirms the exec path still works; an
+# unreadable box (e.g. pids exhausted) emits EMPTY (unknown) - ls renders ? / null, never a false 0.
 box_blocked_count() {
-  local al
+  local al n
   al="$(_root_exec "$1" cat /etc/squid/allowlist.txt 2>/dev/null | tr '\n' ' ' || true)"
-  ( container="$1"; SLUICE_ALLOW_DOMAINS="$al"; blocked_new 2>/dev/null | grep -c . ) || true
+  n="$( ( container="$1"; SLUICE_ALLOW_DOMAINS="$al"; blocked_new 2>/dev/null | grep -c . ) || true )"
+  [ "${n:-0}" -gt 0 ] || ( container="$1"; _audit_readable ) || return 0   # a 0 may be a FAILED read - confirm it
+  printf '%s\n' "$n"
 }
 
 # `sluice egress [--json]`: the box's egress audit record (reached vs. blocked)

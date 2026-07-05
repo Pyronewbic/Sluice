@@ -431,10 +431,14 @@ blocked_new() {
 # Reuses blocked_new wholesale: a subshell overrides the two globals it reads - $container (which
 # box's log to exec) and $SLUICE_ALLOW_DOMAINS (the box's live allowlist, read from the container).
 # base_domains() is still added by allowed_domains(), so base hosts never count as blocked.
+# Fail-closed: a zero is only trusted after _audit_readable confirms the exec path still works; an
+# unreadable box (e.g. pids exhausted) emits EMPTY (unknown) - ls renders ? / null, never a false 0.
 box_blocked_count() {
-  local al
+  local al n
   al="$(_root_exec "$1" cat /etc/squid/allowlist.txt 2>/dev/null | tr '\n' ' ' || true)"
-  ( container="$1"; SLUICE_ALLOW_DOMAINS="$al"; blocked_new 2>/dev/null | grep -c . ) || true
+  n="$( ( container="$1"; SLUICE_ALLOW_DOMAINS="$al"; blocked_new 2>/dev/null | grep -c . ) || true )"
+  [ "${n:-0}" -gt 0 ] || ( container="$1"; _audit_readable ) || return 0   # a 0 may be a FAILED read - confirm it
+  printf '%s\n' "$n"
 }
 
 # `sluice egress [--json]`: the box's egress audit record (reached vs. blocked)
@@ -1699,7 +1703,8 @@ EOF
       pjson="$(printf '%s' "${ports_[$i]}" | tr ' \t' '\n\n' | _json_arr)"
       ojson="$(printf '%s' "${ovls[$i]}" | tr ' \t' '\n\n' | _json_arr)"
       bjson=""; if [ -n "$egress" ]; then
-        if [ "${stats[$i]}" = running ]; then bjson=",\"blocked\":${blocks[$i]:-0}"; else bjson=',"blocked":null'; fi
+        # null = not running OR audit unreadable (unknown) - never a defaulted 0 over a failed read
+        if [ "${stats[$i]}" = running ] && [ -n "${blocks[$i]}" ]; then bjson=",\"blocked\":${blocks[$i]}"; else bjson=',"blocked":null'; fi
       fi
       printf '{"name":"%s","status":"%s","stack":"%s","path":"%s","description":"%s","current":%s,"orphan":%s,"allow_count":%s,"ports":%s,"overlay_dirs":%s,"locked":%s%s}' \
         "$(_json_esc "${names[$i]}")" "$(_json_esc "${stats[$i]}")" "$(_json_esc "${stacks[$i]}")" \
@@ -1722,7 +1727,8 @@ EOF
     dallow="${allows[$i]}"; [ -n "$dallow" ] || dallow="-"
     dport="${ports_[$i]}";  [ -n "$dport" ]  || dport="-"
     dlock="${locks[$i]}"
-    dblk="${blocks[$i]}";   [ -n "$dblk" ]   || dblk="-"
+    dblk="${blocks[$i]}"    # ? = running but audit unreadable (unknown); - = not running / not asked
+    if [ -z "$dblk" ]; then dblk="-"; [ -n "$egress" ] && [ "${stats[$i]}" = running ] && dblk="?"; fi
     mark=" "; [ "${curs[$i]}" = true ] && mark="*"
     vpaths[$i]="$vpath"; cpaths[$i]="$cpath"; dstacks[$i]="$dstack"; ddescs[$i]="$ddesc"; marks[$i]="$mark"
     dallows[$i]="$dallow"; dports[$i]="$dport"; dlocks[$i]="$dlock"; dblks[$i]="$dblk"

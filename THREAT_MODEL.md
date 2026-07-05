@@ -233,7 +233,8 @@ checks the chain). Precisely what that buys:
   cannot forge or erase a reached/blocked entry. The attestation is bounded by squid-log integrity,
   not by the workload behaving. If the in-box read itself can't run (e.g. the workload exhausts the
   pids cgroup so `exec` can't fork), the receipt records an explicit `unavailable` and `sluice egress`
-  exits non-zero (the `SLUICE_EGRESS_MAX_BYTES` gate fails closed) rather than reading as zero egress.
+  exits non-zero (the `SLUICE_EGRESS_MAX_BYTES` gate fails closed) rather than reading as zero egress;
+  `sluice ls --egress` likewise shows the count as unknown (`?` human, `null` JSON), never `0`.
 - **Tamper-evident, not tamper-proof.** The `prev`/`self` hash chain makes any edit, reorder, or
   deletion of a *past* record detectable by `--verify`; it does not stop a host with write access from
   rebuilding the whole chain. For non-repudiation, `--export` records into a store the producer can't
