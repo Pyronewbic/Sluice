@@ -538,3 +538,15 @@ assert d['config_error'] is False, d   # valid syntax: the parse check passed
   refute_output --partial "^["            # the raw ESC byte is stripped (cat -v renders a survivor as ^[)
   assert_output --partial "ev[31mil"      # only the control byte goes; the printable residue stays inert
 }
+
+@test "doctor: the egress-blocked branch is gated by _audit_readable (fail-closed, structural)" {
+  # an empty blocked set must consult _audit_readable before the green 'no blocked egress',
+  # so a failed in-box read is reported as unavailable, not a false all-clear.
+  run grep -c 'elif ! _audit_readable' "$ROOT/bin/sluice"
+  [ "$output" -ge 1 ]
+}
+
+@test "doctor --json: an unreadable egress audit emits blocked:null, not [] (structural)" {
+  run grep -c 'blocked_json=null' "$ROOT/bin/sluice"
+  [ "$output" -ge 1 ]
+}
