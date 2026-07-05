@@ -226,6 +226,10 @@ start() {
     "$SLUICE_PRELAUNCH"
   fi
 
+  # On rootless podman, map the host user onto the sluice uid so the box doesn't re-own the repo to a
+  # subuid (no-op on docker / rootful podman). Appends to RUNTIME_RUN_OPTS before runtime_run reads it.
+  resolve_podman_userns
+
   # route_localnet -> squid intercept; disable_ipv6 -> v4-only proxy (set at run; /proc/sys is ro).
   # cap-drop ALL then add only what the root entrypoint needs: chown the mounted dir (CHOWN/
   # DAC_OVERRIDE/FOWNER), drop squid to its uid (SETUID/SETGID), the firewall (NET_ADMIN/NET_RAW),

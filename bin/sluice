@@ -2242,6 +2242,29 @@ resolve_runner() {
   esac
 }
 
+# Rootless podman maps the host user to container-root, so the entrypoint's chown of the bind-mounted
+# repo to the uid-1000 sluice user lands host-side as a SUBUID - the host user then can't write their
+# own repo. keep-id:uid=1000,gid=1000 maps the host user straight onto the sluice uid: the mount reads
+# as uid 1000 in the box (writable, and the entrypoint chown then no-ops on it, so the host repo stays
+# host-owned), while container-internal overlay/state volumes are still chowned as before. Needs podman
+# >= 4.3 (the keep-id uid/gid options); older podman gets a warning + the recovery command. Appends to
+# RUNTIME_RUN_OPTS so it composes with the Kata opt. Docker and rootful podman are unaffected (no-op).
+# Call from the box-start path only, not the lenient doctor probe (avoids the extra calls + warning).
+resolve_podman_userns() {
+  [ "${RUNNER##*/}" = podman ] || return 0
+  [ "$(podman info --format '{{.Host.Security.Rootless}}' 2>/dev/null)" = true ] || return 0
+  local v maj min
+  v="$(podman version --format '{{.Client.Version}}' 2>/dev/null)"
+  maj="${v%%.*}"; min="${v#*.}"; min="${min%%.*}"
+  case "$maj" in ''|*[!0-9]*) maj=0 ;; esac
+  case "$min" in ''|*[!0-9]*) min=0 ;; esac
+  if [ "$maj" -gt 4 ] || { [ "$maj" -eq 4 ] && [ "$min" -ge 3 ]; }; then
+    RUNTIME_RUN_OPTS+=("--userns=keep-id:uid=1000,gid=1000")
+  else
+    echo "${E_YEL:-}[sluice] WARNING:${E_RST:-} rootless podman ${v:-<unknown>} lacks keep-id:uid= (needs >= 4.3); the box will chown the mounted repo to a subuid on the host. Recover write access with: podman unshare chown -R 0:0 \"\$PWD\"" >&2
+  fi
+}
+
 # SLUICE_RUNTIME=kata builds with $ENGINE but runs under nerdctl/containerd, which keeps its own image
 # store; cross the built image over. No-op when builder == runner. $1=force reloads even if present (after
 # a rebuild the runtime's copy is stale).
@@ -3320,6 +3343,10 @@ start() {
     echo "[sluice] running prelaunch hook: $SLUICE_PRELAUNCH"
     "$SLUICE_PRELAUNCH"
   fi
+
+  # On rootless podman, map the host user onto the sluice uid so the box doesn't re-own the repo to a
+  # subuid (no-op on docker / rootful podman). Appends to RUNTIME_RUN_OPTS before runtime_run reads it.
+  resolve_podman_userns
 
   # route_localnet -> squid intercept; disable_ipv6 -> v4-only proxy (set at run; /proc/sys is ro).
   # cap-drop ALL then add only what the root entrypoint needs: chown the mounted dir (CHOWN/
