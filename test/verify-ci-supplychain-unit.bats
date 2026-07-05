@@ -68,6 +68,17 @@ EOF
   assert_failure
 }
 
+@test "supplychain: every checkout sets persist-credentials: false (no artipacked, fleet-wide)" {
+  # zizmor's artipacked audit: a checkout persists the token in .git/config unless disabled. None of
+  # the workflows do authenticated git ops, so every checkout must opt out. Guards the required lane
+  # since the zizmor lane is only advisory. (Exempt a genuinely credential-needing checkout here if one
+  # is ever added.)
+  local co pc
+  co="$(grep -rh 'actions/checkout@' "$ROOT"/.github/workflows/*.yml | wc -l | tr -d ' ')"
+  pc="$(grep -rh 'persist-credentials: false' "$ROOT"/.github/workflows/*.yml | wc -l | tr -d ' ')"
+  [ "$co" = "$pc" ]
+}
+
 @test "supplychain: make lint-ci runs the same digest-pinned actionlint image as scans.yml" {
   local mk wf
   mk="$(grep -o 'rhysd/actionlint:[^ ]*' "$ROOT/Makefile" | head -1)"
