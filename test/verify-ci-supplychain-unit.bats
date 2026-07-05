@@ -46,3 +46,31 @@ EOF
   run grep -F "if: matrix.suite == 'lock'" "$wf"
   assert_success
 }
+
+@test "supplychain: every scans.yml job is advisory (continue-on-error, never a required gate)" {
+  local wf="$ROOT/.github/workflows/scans.yml"
+  [ "$(grep -c 'runs-on:' "$wf")" = 3 ]
+  [ "$(grep -c 'continue-on-error: true' "$wf")" = 3 ]
+}
+
+@test "supplychain: scans.yml stays read-only (no SARIF/security-events, no write grants)" {
+  local wf="$ROOT/.github/workflows/scans.yml"
+  run grep -F 'security-events' "$wf"
+  assert_failure
+  run grep -F ': write' "$wf"
+  assert_failure
+  run grep -F 'contents: read' "$wf"
+  assert_success
+}
+
+@test "supplychain: every workflow action ref is SHA-pinned (fleet-wide)" {
+  run bash -c "grep -h 'uses:' \"$ROOT\"/.github/workflows/*.yml | grep -Ev '@[0-9a-f]{40}'"
+  assert_failure
+}
+
+@test "supplychain: make lint-ci runs the same digest-pinned actionlint image as scans.yml" {
+  local mk wf
+  mk="$(grep -o 'rhysd/actionlint:[^ ]*' "$ROOT/Makefile" | head -1)"
+  wf="$(grep -o 'rhysd/actionlint:[^ ]*' "$ROOT/.github/workflows/scans.yml" | head -1)"
+  [ -n "$mk" ] && [ "$mk" = "$wf" ]
+}
