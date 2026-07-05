@@ -8,8 +8,10 @@ set -e
 # edit (e.g. `sluice learn`) needs no rebuild. Set-but-empty clears it; unset keeps the baked value.
 [ -n "${SLUICE_RUNTIME_ALLOW+x}" ] && SLUICE_ALLOW_DOMAINS="${SLUICE_RUNTIME_ALLOW}"
 # Same override semantics for the opt-in TLS-interception (bump) knobs (default off; see below).
-[ -n "${SLUICE_RUNTIME_BUMP+x}" ]      && SLUICE_BUMP_DOMAINS="${SLUICE_RUNTIME_BUMP}"
-[ -n "${SLUICE_RUNTIME_BUMP_URLS+x}" ] && SLUICE_BUMP_URLS="${SLUICE_RUNTIME_BUMP_URLS}"
+[ -n "${SLUICE_RUNTIME_BUMP+x}" ]          && SLUICE_BUMP_DOMAINS="${SLUICE_RUNTIME_BUMP}"
+[ -n "${SLUICE_RUNTIME_BUMP_URLS+x}" ]     && SLUICE_BUMP_URLS="${SLUICE_RUNTIME_BUMP_URLS}"
+[ -n "${SLUICE_RUNTIME_BUMP_METHODS+x}" ]  && SLUICE_BUMP_METHODS="${SLUICE_RUNTIME_BUMP_METHODS}"
+[ -n "${SLUICE_RUNTIME_BUMP_MAX_BODY+x}" ] && SLUICE_BUMP_MAX_BODY="${SLUICE_RUNTIME_BUMP_MAX_BODY}"
 # Word-split the config lists (allowlist/bump/dns/state/overlay) on whitespace only, never pathname-
 # expand them against / (CWD here): a glob char in an allowlisted domain must not mangle the list.
 # Nothing below relies on globbing, so this stays on for the rest of boot.
@@ -98,6 +100,15 @@ printf '%s\n' $dns_up > /run/sluice-dns-upstream   # init-firewall allows these 
     echo "address=/#/192.0.2.1"     # sink for non-allowlisted names (TEST-NET-1, never routed)
     echo "servers-file=/run/dnsmasq-servers.conf"
   fi
+  # SLUICE_DNS_AUDIT: log every query to a host-side-readable file so the receipt can surface DNS volume
+  # + tunnel patterns (many unique labels under one parent = exfil-as-DNS-labels). dnsmasq runs as root
+  # so it can write /var/log/squid (root/squid-owned; uid 1000 can't tamper); log-async batches the
+  # writes off the resolver hot path. Detective only - resolution scoping is unchanged.
+  if [ "${SLUICE_DNS_AUDIT:-}" = 1 ]; then
+    echo "log-queries=extra"
+    echo "log-facility=/var/log/squid/dns.log"
+    echo "log-async=25"
+  fi
 } > /run/dnsmasq-sluice.conf       # /run (not /etc) so it works under a read-only rootfs
 [ "${SLUICE_DNS_OPEN:-}" = 1 ] || [ "${SLUICE_AUDIT:-}" = 1 ] || /usr/local/bin/sluice-dns-allow
 dnsmasq --conf-file=/run/dnsmasq-sluice.conf
@@ -149,6 +160,33 @@ if [ -n "${SLUICE_BUMP_DOMAINS:-}" ] && [ "${SLUICE_AUDIT:-}" != 1 ]; then
     [ -s /etc/squid/bump-urls.txt ] \
       && sed -i 's#^http_access allow allowed_host#http_access deny bump_dom !bump_url\nhttp_access allow allowed_host#' /etc/squid.conf
   fi
+  # SLUICE_BUMP_METHODS: restrict the decrypted (bumped) host to an HTTP method allowlist - deny e.g.
+  # POST/PUT uploads to it. Because bump_dom is dstdomain it also covers plaintext HTTP to that host.
+  # Re-validate the charset in-box (defense in depth; the launcher validates too - these are sed'd in).
+  # Idempotent: skip if already applied (a container restart re-runs this entrypoint).
+  if [ -n "${SLUICE_BUMP_METHODS:-}" ] && ! grep -q '^acl bump_method ' /etc/squid.conf; then
+    _bm=""
+    for _m in ${SLUICE_BUMP_METHODS}; do
+      case "$_m" in *[!A-Za-z]*) echo "[sluice] WARN: ignoring invalid SLUICE_BUMP_METHODS token '$_m'" >&2; continue ;; esac
+      _bm="$_bm $(printf '%s' "$_m" | tr 'a-z' 'A-Z')"
+    done
+    _bm="${_bm# }"
+    if [ -n "$_bm" ]; then
+      sed -i -e "/^acl bump_url url_regex/a acl bump_method method $_bm" \
+             -e 's#^http_access allow allowed_host#http_access deny bump_dom !bump_method\nhttp_access allow allowed_host#' /etc/squid.conf
+      echo "[sluice] bump method allowlist for the decrypted host(s): $_bm" >&2
+    fi
+  fi
+  # SLUICE_BUMP_MAX_BODY: cap request-body bytes (POST/PUT). A global directive, so it also bounds plain
+  # HTTP bodies; spliced tunnels are opaque and unaffected. squid returns 413 over the cap. Per-REQUEST,
+  # not cumulative (THREAT_MODEL). Numeric re-validated in-box; idempotent on restart.
+  case "${SLUICE_BUMP_MAX_BODY:-}" in
+    ''|*[!0-9]*) ;;
+    *) if ! grep -q '^request_body_max_size ' /etc/squid.conf; then
+         printf 'request_body_max_size %s bytes\n' "$SLUICE_BUMP_MAX_BODY" >> /etc/squid.conf
+         echo "[sluice] bump request-body cap: $SLUICE_BUMP_MAX_BODY bytes (per request)" >&2
+       fi ;;
+  esac
 else
   # Throwaway splice cert, generated per-container (so the published base image carries no key).
   # We splice (never forge), so it is never presented - it only lets squid bind the ssl-bump port.

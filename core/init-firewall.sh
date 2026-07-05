@@ -33,6 +33,21 @@ _ip_entry_too_broad() {
   return 1
 }
 
+# xt_quota may be absent on some kernels (Docker Desktop's LinuxKit, a Kata guest). Probe it in a
+# throwaway chain and FAIL CLOSED: if a byte cap was requested but the module can't enforce it, refuse to
+# boot rather than run without the cap the user asked for. Idempotent (called from the hard-cap + the
+# allow-ips budget paths); the throwaway chain never survives.
+_require_xt_quota() {
+  iptables -N SLUICE-QPROBE 2>/dev/null || iptables -F SLUICE-QPROBE 2>/dev/null || true
+  if iptables -A SLUICE-QPROBE -m quota --quota 1 -j RETURN 2>/dev/null; then
+    iptables -F SLUICE-QPROBE 2>/dev/null || true; iptables -X SLUICE-QPROBE 2>/dev/null || true
+    return 0
+  fi
+  iptables -F SLUICE-QPROBE 2>/dev/null || true; iptables -X SLUICE-QPROBE 2>/dev/null || true
+  echo "[firewall] FAIL: an egress byte cap (SLUICE_EGRESS_HARD_CAP_BYTES / SLUICE_ALLOW_IPS_MAX_BYTES) was requested but this kernel lacks xt_quota - refusing to boot without the requested cap." >&2
+  exit 1
+}
+
 SQUID_UID="$(id -u squid)"
 HTTP_PORT=3129
 HTTPS_PORT=3130
@@ -65,7 +80,19 @@ iptables -A OUTPUT -d 127.0.0.11 -m owner ! --uid-owner 0 -j DROP
 iptables -A OUTPUT -p tcp -d 127.0.0.1 --dport 3128 -m owner ! --uid-owner "$SQUID_UID" -j REJECT --reject-with tcp-reset
 iptables -A OUTPUT -o lo -j ACCEPT                                     # loopback
 iptables -A OUTPUT -d 127.0.0.0/8 -j ACCEPT                            # REDIRECT'd pkts (dst rewritten to localhost -> squid)
-iptables -A OUTPUT -m owner --uid-owner "$SQUID_UID" -j ACCEPT         # squid's own egress (enforces the allowlist)
+# squid's own egress (the only uid allowed out; enforces the allowlist). SLUICE_EGRESS_HARD_CAP_BYTES:
+# an optional PREVENTIVE per-boot ceiling on ALL proxied egress (bounds laundering by volume, unlike the
+# detective SLUICE_EGRESS_MAX_BYTES). Metered with xt_quota: ACCEPT while under budget, then a uid-owner
+# DROP once spent - so even an already-established squid flow hard-stops (per-packet match). This pair
+# sits before the ESTABLISHED,RELATED accept below, or an in-flight flow would ride that accept past the cap.
+_hardcap="${SLUICE_EGRESS_HARD_CAP_BYTES:-}"; case "$_hardcap" in ''|*[!0-9]*) _hardcap="" ;; esac
+if [ -n "$_hardcap" ]; then
+  _require_xt_quota
+  iptables -A OUTPUT -m owner --uid-owner "$SQUID_UID" -m quota --quota "$_hardcap" -j ACCEPT
+  iptables -A OUTPUT -m owner --uid-owner "$SQUID_UID" -j DROP
+else
+  iptables -A OUTPUT -m owner --uid-owner "$SQUID_UID" -j ACCEPT
+fi
 # DNS to the cache's real upstreams, dnsmasq (root) ONLY - so an app can't bypass the allowlist-scoped
 # resolver by talking to the upstream directly. The entrypoint saved them to /run/sluice-dns-upstream;
 # fall back to resolv.conf. Match IPv4 only.
@@ -75,10 +102,17 @@ for ns in $(awk '{ for (i=1;i<=NF;i++) if ($i ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+
   iptables -A OUTPUT -d "$ns" -p udp --dport 53 -m owner --uid-owner 0 -j ACCEPT
   iptables -A OUTPUT -d "$ns" -p tcp --dport 53 -m owner --uid-owner 0 -j ACCEPT
 done
-iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
-# SLUICE_ALLOW_IPS: reviewed fixed IPs/CIDRs get direct egress (escape hatch for non-HTTP). Each
-# entry is ip[:port[/proto]] - a bare ip/cidr opens EVERY port (legacy), ip:5432 scopes to one tcp
-# port, ip:5432/udp picks the proto. We are IPv4-only, so the single ':' splits host from port cleanly.
+# SLUICE_ALLOW_IPS: reviewed fixed IPs/CIDRs get direct egress (escape hatch for non-HTTP). Each entry
+# is ip[:port[/proto]] - a bare ip/cidr opens EVERY port (legacy), ip:5432 scopes to one tcp port,
+# ip:5432/udp picks the proto. IPv4-only, so the single ':' splits host from port cleanly.
+# Route every entry through the SLUICE-ALLOWIPS user chain instead of a bare ACCEPT so (a) its per-entry
+# rule counters are visible to the receipt (allowips_rows) and (b) an optional shared byte budget
+# (SLUICE_ALLOW_IPS_MAX_BYTES) can cap the lot. The jumps are emitted BEFORE the ESTABLISHED,RELATED
+# accept below: the -d match is per-packet, so a long-lived direct-IP flow keeps traversing the chain and
+# every packet is metered; after the state accept, only the connection-opening packet would ever reach it
+# (a multi-GB exfil would meter as ~60 bytes - the ordering bug this chain fixes).
+_allowips_budget="${SLUICE_ALLOW_IPS_MAX_BYTES:-}"; case "$_allowips_budget" in ''|*[!0-9]*) _allowips_budget="" ;; esac
+_have_allowips=""
 for entry in ${SLUICE_ALLOW_IPS:-}; do
   # Skip+warn an IPv6 literal (the single-colon split below is IPv4-only) - feeding iptables a broken
   # -d would abort the whole firewall under set -e, fail-closing the box on one malformed entry.
@@ -93,14 +127,30 @@ for entry in ${SLUICE_ALLOW_IPS:-}; do
       # The floor/0.0.0.0 refusal applies to the HOST part too - a port scopes the egress but doesn't
       # narrow the dst, so 0.0.0.0/1:443 would still open port 443 to half the internet, direct.
       _ip_entry_too_broad "$ippart" && continue
-      iptables -A OUTPUT -d "$ippart" -p "$proto" --dport "$port" -j ACCEPT ;;
+      [ -n "$_have_allowips" ] || { iptables -N SLUICE-ALLOWIPS; _have_allowips=1; }
+      iptables -A OUTPUT -d "$ippart" -p "$proto" --dport "$port" -j SLUICE-ALLOWIPS ;;
     *)
       # Bare entry = ACCEPT every port to that dst. Refuse a too-broad CIDR (below the floor, or any
       # 0.0.0.0/N) so a bypassed launcher check can't open all direct egress; a /32 or a single IP is fine.
       _ip_entry_too_broad "$entry" && continue
-      iptables -A OUTPUT -d "$entry" -j ACCEPT ;;
+      [ -n "$_have_allowips" ] || { iptables -N SLUICE-ALLOWIPS; _have_allowips=1; }
+      iptables -A OUTPUT -d "$entry" -j SLUICE-ALLOWIPS ;;
   esac
 done
+# Chain body (added once, after the jumps): a shared preventive quota, else a plain accept. On budget
+# exhaustion the DROP severs even established direct-IP flows mid-transfer (fail closed; documented).
+if [ -n "$_have_allowips" ]; then
+  if [ -n "$_allowips_budget" ]; then
+    _require_xt_quota
+    iptables -A SLUICE-ALLOWIPS -m quota --quota "$_allowips_budget" -j ACCEPT
+    iptables -A SLUICE-ALLOWIPS -j DROP
+  else
+    iptables -A SLUICE-ALLOWIPS -j ACCEPT
+  fi
+fi
+# ESTABLISHED,RELATED: accept return traffic. AFTER the ALLOW_IPS jumps above, so per-packet direct-IP
+# metering isn't short-circuited by this state match.
+iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
 iptables -P INPUT   DROP
 iptables -P FORWARD DROP
 iptables -P OUTPUT  DROP
@@ -124,6 +174,23 @@ case "$(iptables -S OUTPUT 2>/dev/null | head -1)" in
   '-P OUTPUT DROP') ;;
   *) echo "[firewall] FAIL: OUTPUT policy is not DROP - egress not default-closed" >&2; exit 1 ;;
 esac
+# Hard cap: prove the uid-owner DROP that enforces it survived (else exhaustion silently un-caps egress).
+# Shape only - never the quota byte value ('iptables -S' prints the counting-down REMAINING quota).
+if [ -n "${_hardcap:-}" ]; then
+  iptables -S OUTPUT 2>/dev/null | grep -q -- "--uid-owner ${SQUID_UID} -j DROP" \
+    || { echo "[firewall] FAIL: SLUICE_EGRESS_HARD_CAP_BYTES set but the uid-owner DROP is missing from OUTPUT" >&2; exit 1; }
+fi
+# ALLOW_IPS: prove the SLUICE-ALLOWIPS jumps precede the ESTABLISHED,RELATED accept - if they fell after
+# it, a long-lived direct-IP flow would ride the state accept and never be metered. Rule-order shape check.
+if [ -n "${_have_allowips:-}" ]; then
+  _fwout="$(iptables -S OUTPUT 2>/dev/null || true)"
+  _jln="$(printf '%s\n' "$_fwout" | grep -n -- '-j SLUICE-ALLOWIPS' | head -1 | cut -d: -f1 || true)"
+  _eln="$(printf '%s\n' "$_fwout" | grep -nE -- '--state (ESTABLISHED,RELATED|RELATED,ESTABLISHED)' | tail -1 | cut -d: -f1 || true)"
+  if [ -z "$_jln" ] || { [ -n "$_eln" ] && [ "$_jln" -gt "$_eln" ]; }; then
+    echo "[firewall] FAIL: SLUICE-ALLOWIPS jumps missing or after the ESTABLISHED accept - direct-IP egress would be unmetered" >&2
+    exit 1
+  fi
+fi
 # Prove IPv6 egress is actually closed, INDEPENDENT of whether ip6tables is usable - a bare skip would
 # rest v6 closure on an unverified --sysctl. Closed if the v6 stack is absent, OR disable_ipv6 took, OR
 # ip6tables OUTPUT policy is DROP. Mirrors the disjunction in test/verify-security-egress-bypass.bats.

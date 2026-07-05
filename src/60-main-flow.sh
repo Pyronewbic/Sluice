@@ -63,6 +63,28 @@ if [ "${1:-}" = prune ]; then
   case "${2:-}" in ""|--orphans) cmd_prune "${2:-}"; exit $? ;; *) die "usage: sluice prune [--orphans]" ;; esac
 fi
 
+# `sluice egress --verify --all` / `--export --all`: fleet-wide audit over EVERY box's hash chain.
+# Dispatched here, before find_config, so it needs neither a project config nor a running engine and
+# reaches orphaned boxes (their chains outlive the box). Bare `egress --all` defaults to --verify.
+# `-b ... egress --all` was already rejected in src/45.
+if [ "${1:-}" = egress ]; then
+  case " $* " in
+    *" --all "*)
+      _eg_mode="verify"; _eg_json=""
+      for _eg_a in "$@"; do
+        case "$_eg_a" in
+          egress|--all|--verify) ;;
+          --export) _eg_mode="export" ;;
+          --json)   _eg_json="--json" ;;
+          *)        die "usage: sluice egress [--verify | --export] --all [--json]" ;;
+        esac
+      done
+      if [ "$_eg_mode" = export ]; then cmd_egress_export_all; else cmd_egress_verify_all "$_eg_json"; fi
+      exit $?
+      ;;
+  esac
+fi
+
 # Package-registry hosts for the stack detected in $PWD (a manifest sniff mirroring cmd_init's
 # per-stack allowlists - kept lean here, full detection lives in cmd_init). Always the full registry
 # set: an agent installs deps at RUNTIME inside the box, so the init prefetch shortcut doesn't apply.
@@ -320,6 +342,59 @@ validate_allow_ips() {
   set +f
 }
 case "${1:-run-default}" in run-default|run|shell|build|rebuild|update) validate_allow_ips ;; esac
+
+# SLUICE_EGRESS_HOST_BUDGETS: "host=bytes .wildcard=bytes ..." - a detective per-host tx budget (over
+# any host's cap, `sluice egress` exits non-zero). Validate strictly and fail CLOSED: a malformed token
+# dies rather than silently no-op. (SLUICE_EGRESS_MAX_BYTES is silently ignored when malformed - src/20;
+# this stricter contract is intentional and noted in docs/configuration.md: a silently-void budget is
+# worse than a stop.)
+validate_host_budgets() {
+  local tok host bytes
+  set -f
+  for tok in ${SLUICE_EGRESS_HOST_BUDGETS:-}; do
+    case "$tok" in
+      *=*) host="${tok%%=*}"; bytes="${tok#*=}" ;;
+      *)   set +f; die "SLUICE_EGRESS_HOST_BUDGETS entry '$tok' must be host=bytes (e.g. .s3.amazonaws.com=1048576)" ;;
+    esac
+    case "$host"  in '') set +f; die "SLUICE_EGRESS_HOST_BUDGETS entry '$tok' has an empty host" ;;
+                     *[!A-Za-z0-9.-]*) set +f; die "SLUICE_EGRESS_HOST_BUDGETS host '$host' has invalid characters" ;; esac
+    case "$bytes" in ''|*[!0-9]*) set +f; die "SLUICE_EGRESS_HOST_BUDGETS '$tok': '$bytes' is not a byte count" ;; esac
+  done
+  set +f
+}
+case "${1:-run-default}" in run-default|run|shell|build|rebuild|update) validate_host_budgets ;; esac
+
+# SLUICE_EGRESS_HARD_CAP_BYTES: a PREVENTIVE in-box byte ceiling (xt_quota). Numeric and >= 1 MiB - boot
+# deny/allow probes + TLS handshakes consume the quota, so a sub-1MiB cap would brick the box at boot.
+# SLUICE_ALLOW_IPS_MAX_BYTES: a shared direct-IP budget (any numeric size). Both fail closed.
+validate_egress_hard_caps() {
+  case "${SLUICE_EGRESS_HARD_CAP_BYTES:-}" in
+    '') ;;
+    *[!0-9]*) die "SLUICE_EGRESS_HARD_CAP_BYTES must be a byte count (got '${SLUICE_EGRESS_HARD_CAP_BYTES}')" ;;
+    *) [ "$SLUICE_EGRESS_HARD_CAP_BYTES" -ge 1048576 ] || die "SLUICE_EGRESS_HARD_CAP_BYTES must be >= 1048576 (1 MiB) - boot probes + TLS handshakes consume the budget; a smaller cap bricks the box at boot" ;;
+  esac
+  case "${SLUICE_ALLOW_IPS_MAX_BYTES:-}" in
+    '') ;;
+    *[!0-9]*) die "SLUICE_ALLOW_IPS_MAX_BYTES must be a byte count (got '${SLUICE_ALLOW_IPS_MAX_BYTES}')" ;;
+  esac
+}
+case "${1:-run-default}" in run-default|run|shell|build|rebuild|update) validate_egress_hard_caps ;; esac
+
+# SLUICE_BUMP_METHODS / SLUICE_BUMP_MAX_BODY are sed'd into squid.conf in-box (H5), so their charset is
+# security-critical (injection). Validate host-side; the entrypoint re-validates (defense in depth).
+validate_bump_controls() {
+  local _m
+  set -f
+  for _m in ${SLUICE_BUMP_METHODS:-}; do
+    case "$_m" in *[!A-Za-z]*) set +f; die "SLUICE_BUMP_METHODS token '$_m' must be letters only (an HTTP method, e.g. GET HEAD POST)" ;; esac
+  done
+  set +f
+  case "${SLUICE_BUMP_MAX_BODY:-}" in
+    '') ;;
+    *[!0-9]*) die "SLUICE_BUMP_MAX_BODY must be a byte count (got '${SLUICE_BUMP_MAX_BODY}')" ;;
+  esac
+}
+case "${1:-run-default}" in run-default|run|shell|build|rebuild|update) validate_bump_controls ;; esac
 
 # build: assemble a temp context (core + this project's config) and build
 # Verify a published base image's cosign signature (keyless/OIDC). Soft by default: warn if

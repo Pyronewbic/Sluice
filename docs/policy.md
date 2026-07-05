@@ -36,6 +36,8 @@ forbid SLUICE_ALLOW_DOH
 forbid SLUICE_BUMP_DOMAINS
 forbid-laundering                    # refuse any allowlisted host an attacker could also write to
 max-allow-ips 2                      # cap the number of SLUICE_ALLOW_IPS entries
+max-hard-cap-bytes 10485760          # mandate a preventive egress ceiling: refuse if the box sets no
+                                     #   SLUICE_EGRESS_HARD_CAP_BYTES, or one larger than this
 
 # policy-level
 strict-unknown                       # make an unknown directive a hard refusal, not a warning
@@ -56,8 +58,11 @@ config (and any `sluice learn` edits) - so policy wins:
   Wildcard entries (e.g. `*.s3.amazonaws.com`) are matched **literally**: the effective list is
   computed independently of the invocation directory, so a glob-shaped host is never expanded against
   the working directory's filenames.
-- **Ceilings** (`forbid`/`deny-ip`/`max-allow-ips`/`forbid-laundering`): a violation **refuses to
-  run** (exit non-zero), naming the offending knob/host. `SLUICE_ALLOW_IPS` is refused rather than
+- **Ceilings** (`forbid`/`deny-ip`/`max-allow-ips`/`forbid-laundering`/`max-hard-cap-bytes`): a
+  violation **refuses to run** (exit non-zero), naming the offending knob/host. `max-hard-cap-bytes N`
+  mandates a preventive volume ceiling - a box that sets no `SLUICE_EGRESS_HARD_CAP_BYTES`, or one
+  above `N`, is refused, so a developer can't opt out of the bound. (A verb-with-arg directive, so a
+  pre-directive client warns-and-ignores it rather than mis-reading it as an allowlist host.) `SLUICE_ALLOW_IPS` is refused rather than
   silently trimmed because the firewall reads the baked list - a host-side trim wouldn't reach a
   running box, so a hard refuse is the honest contract.
 

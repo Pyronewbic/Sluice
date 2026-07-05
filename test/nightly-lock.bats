@@ -78,6 +78,18 @@ CFG
   else
     echo absent > "$WORK/scanner"
   fi
+
+  # 6. --pin: a replay manifest (base @sha256 digest + exact versions) that also refreshes sluice.lock
+  # from the same built image, so the two agree; --check must then stay in sync.
+  ( cd "$WORK/lock" && "$SLUICE" lock --pin ) >/tmp/verify-lock-pin.log 2>&1 || true
+  cp "$WORK/lock/sluice.pin" "$WORK/pin.txt" 2>/dev/null || true
+  rc=0; ( cd "$WORK/lock" && "$SLUICE" lock --check ) >/dev/null 2>&1 || rc=$?; echo "$rc" > "$WORK/checkpin.rc"
+
+  # 7. SLUICE_PIN=1: a VERIFIED pinned replay build - rebuild converging on sluice.pin (pinned base
+  # digest + exact versions), which build() checks against sluice.lock and fails closed on drift.
+  rc=0; ( cd "$WORK/lock" && SLUICE_PIN=1 "$SLUICE" build ) >/tmp/verify-pin-build.log 2>&1 || rc=$?; echo "$rc" > "$WORK/pinbuild.rc"
+  grep -q "pinned build verified" /tmp/verify-pin-build.log && echo yes > "$WORK/pinverified" || echo no > "$WORK/pinverified"
+  rc=0; ( cd "$WORK/lock" && SLUICE_PIN=1 "$SLUICE" lock --check ) >/dev/null 2>&1 || rc=$?; echo "$rc" > "$WORK/pincheck.rc"
 }
 
 teardown_file() {
@@ -105,6 +117,32 @@ teardown_file() {
 }
 @test "lock --diff: read-only, exit 0 in sync" { [ "$(cat "$WORK/diff1.rc")" = 0 ]; }
 @test "lock --check --json: in_sync=true when clean" { grep -q '"in_sync":true' "$WORK/checkjson1.txt"; }
+
+# --- lock --pin: the replay manifest -------------------------------------------------------------
+@test "lock --pin: writes sluice.pin with an @sha256-pinned base" {
+  grep -qE '^base  .*@sha256:[0-9a-f]+' "$WORK/pin.txt"
+}
+@test "lock --pin: pins the same versions as sluice.lock (ripgrep apk name+version)" {
+  local lockver pinver
+  lockver="$(awk '$1=="apk" && $2=="ripgrep"{print $3; exit}' "$WORK/lock/sluice.lock")"
+  pinver="$( awk '$1=="apk" && $2=="ripgrep"{print $3; exit}' "$WORK/pin.txt")"
+  [ -n "$lockver" ]
+  [ "$lockver" = "$pinver" ]
+}
+@test "lock --pin: carries the multi-ecosystem coordinates (npm cowsay, pip requests)" {
+  grep -qE '^npm +cowsay ' "$WORK/pin.txt"
+  grep -qE '^pip +requests ' "$WORK/pin.txt"
+}
+@test "lock --pin: refreshed sluice.lock stays in sync (--check exit 0)" {
+  [ "$(cat "$WORK/checkpin.rc")" = 0 ]
+}
+@test "SLUICE_PIN=1: a pinned replay build succeeds and is verified against sluice.lock" {
+  [ "$(cat "$WORK/pinbuild.rc")" = 0 ]
+  [ "$(cat "$WORK/pinverified")" = yes ]
+}
+@test "SLUICE_PIN=1: the pinned image stays in sync (lock --check exit 0)" {
+  [ "$(cat "$WORK/pincheck.rc")" = 0 ]
+}
 
 @test "lock --sbom: CycloneDX 1.6 + sluice tool metadata (jq)" {
   command -v jq >/dev/null || skip "jq absent"

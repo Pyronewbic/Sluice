@@ -25,11 +25,38 @@ All three report forms take `--json`.
 
 <p align="center"><img src="../assets/lock-demo.gif" width="700" alt="sluice lock --check reports the inventory in sync; after a dependency is added and the box rebuilt, lock --check catches the drift (classified: + apk tree, exit 1); a CycloneDX SBOM then carries the new package with its purl and SHA-1 integrity hash; finally lock --scan --fail-on high runs that SBOM through a host grype and gates the build on the lodash CVEs (non-zero exit)"></p>
 
-### Audit, not reproducibility
+### Reproducibility, in tiers (be honest)
 
-Wolfi apk is a rolling repo, so the same config builds different versions on different days.
-`sluice.lock` is a drift/audit artifact - it tells you exactly what changed between builds; it
-does not pin a bit-for-bit rebuild. The lock header says so.
+Wolfi apk is a rolling repo, so the same config builds different versions on different days. sluice
+offers three honest tiers - pick the one you need:
+
+| Tier | Command | What it guarantees |
+|---|---|---|
+| **Audit / drift** (default) | `sluice lock` | Records exactly what got built; `--check`/`--enforce` gate on any change since. **Not** a rebuild guarantee - the lock header says so. |
+| **Verified replay** | `sluice lock --pin` + `SLUICE_PIN=1` | Rebuilds from the recorded base **digest** and exact package versions, then **verifies** the result matches `sluice.lock` (fails closed on drift). Inventory-identical, **not** bit-for-bit. |
+| never claimed | — | Bit-for-bit reproducibility; replay of an apk version Wolfi has aged out (rolling repo); or `SLUICE_SETUP_CMDS` side effects outside the six inventoried ecosystems. |
+
+The default `sluice.lock` disclaimer stays true for the audit tier; `SLUICE_PIN=1` earns the stronger
+(but still bounded) replay claim by verification, not by assertion.
+
+## `sluice lock --pin`: a replay manifest
+
+`sluice lock --pin` writes a committable `./sluice.pin`: the base image pinned by **`@sha256` digest**
+plus every apk/npm/pip/gem/go/cargo name and version - the coordinates a `SLUICE_PIN=1` build replays to
+converge on those exact versions (the replay build itself lands next; the pin is the artifact it reads).
+
+```bash
+sluice lock --pin        # write ./sluice.pin (also refreshes ./sluice.lock from the same image)
+```
+
+`--pin` reads one built image, so it refreshes `sluice.lock` in the same pass - the two can never
+disagree. It fails **closed** two ways: a hollow inventory (the masked-read case, like `lock`) refuses to
+write, and a base that cannot be resolved to a digest refuses too - a pin that cannot freeze its base is
+worse than none (it pulls the base once to resolve the digest if the local engine has none yet).
+
+**Honest scope.** Pinning narrows, it does not fully reproduce: an apk pin **fails closed** once Wolfi
+stops serving that exact version (a rolling repo garbage-collects old versions), and the pin header says
+so. It is a stronger guarantee than `sluice.lock`'s drift audit, not a bit-for-bit reproducibility claim.
 
 ## SBOM
 

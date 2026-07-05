@@ -50,6 +50,16 @@ build() {
     [ -f "$PROJECT_DIR/$_pf" ] && cp "$PROJECT_DIR/$_pf" "$tmp/prefetch/" 2>/dev/null || true
   done
   set +f
+  # Pinned replay (SLUICE_PIN=1): the Dockerfile always COPY's pin/, so keep a .keep there; drop the real
+  # sluice.pin in ONLY when pin mode is active (so an env-only SLUICE_PIN=1 still crosses into the build).
+  # _SLUICE_PIN_SKIP is an internal, non-contract flag the `update` path sets to re-resolve fresh first.
+  mkdir -p "$tmp/pin"; : > "$tmp/pin/.keep"
+  local _pin_active=""
+  if [ "${SLUICE_PIN:-}" = 1 ] && [ "${_SLUICE_PIN_SKIP:-}" != 1 ]; then
+    [ -f "$PROJECT_DIR/sluice.pin" ] || { rm -rf "$tmp"; die "SLUICE_PIN=1 but no sluice.pin - run 'sluice lock --pin' first"; }
+    cp "$PROJECT_DIR/sluice.pin" "$tmp/pin/sluice.pin"
+    _pin_active=1
+  fi
   # Self-describing labels (read by `sluice ls`; not part of config_hash, so no spurious rebuild).
   local args=(--label "sluice.confighash=$(config_hash)"
     --label "sluice.project=$PROJECT_DIR"
@@ -61,6 +71,20 @@ build() {
   if [ -n "${SLUICE_BASE_IMAGE:-}" ]; then
     verify_base "$SLUICE_BASE_IMAGE"
     args+=(--build-arg "BASE_IMAGE=$SLUICE_BASE_IMAGE")     # project layer FROM the signed base
+  fi
+  # Pin mode: build FROM the exact base digest recorded in sluice.pin and turn on the replay legs.
+  if [ -n "$_pin_active" ]; then
+    args+=(--build-arg SLUICE_PIN=1)
+    local _pinbase; _pinbase="$(awk '$1=="base"{print $2; exit}' "$PROJECT_DIR/sluice.pin")"
+    case "$_pinbase" in *@sha256:*) ;; *) rm -rf "$tmp"; die "sluice.pin has no @sha256 base digest - re-run 'sluice lock --pin'" ;; esac
+    if [ -n "${SLUICE_BASE_IMAGE:-}" ]; then
+      # Signed-base build: the pinned base must be the same repo as the configured one (else re-pin).
+      local _pbrepo="${_pinbase%@*}" _birepo="${SLUICE_BASE_IMAGE%@*}"; _birepo="${_birepo%:*}"; _pbrepo="${_pbrepo%:*}"
+      [ "$_pbrepo" = "$_birepo" ] || { rm -rf "$tmp"; die "config base ($SLUICE_BASE_IMAGE) changed since the pin ($_pinbase) - re-run 'sluice lock --pin'"; }
+      args+=(--build-arg "BASE_IMAGE=$_pinbase")   # FROM the pinned digest (verify_base already ran above)
+    else
+      args+=(--build-arg "WOLFI_BASE=$_pinbase")   # local build: pin the wolfi base by digest
+    fi
   fi
   # Quiet the engine's build transcript (layer/apk/npm chatter) to a per-box log; on failure replay
   # the tail so the error is visible. The full transcript is always one `cat` away at the logged path.
@@ -80,7 +104,20 @@ build() {
   if [ -z "$_ok" ]; then
     echo "[sluice] ${E_YEL}build failed${E_RST} - last lines of $(_tilde "$_blog"):" >&2
     tail -n 40 "$_blog" >&2 2>/dev/null || true
+    [ -n "$_pin_active" ] && echo "[sluice] ${E_YEL}note${E_RST}: pinned build (SLUICE_PIN=1) - a pinned version may no longer be served (Wolfi is rolling); 'sluice update' re-resolves + re-pins." >&2
     die "image build failed (transient registry/network error? re-run, or set SLUICE_BUILD_RETRIES=N to auto-retry; full log: $_blog)"
+  fi
+  # Pinned replay: the CLAIM is earned by VERIFICATION, not by the replay legs alone. Assert the built
+  # image's inventory matches sluice.lock (write_pin refreshed it from the same pinned closure); die on
+  # any drift so a partial replay can never pass as a verified pin.
+  if [ -n "$_pin_active" ]; then
+    local _pdrift; _pdrift="$(classify_drift "$(lock_drift 2>/dev/null || true)" 2>/dev/null || true)"
+    if [ -n "$_pdrift" ]; then
+      echo "[sluice] ${E_RED}pinned build did NOT match sluice.lock${E_RST} - replay drift:" >&2
+      printf '%s\n' "$_pdrift" | render_drift_human err >&2
+      die "pinned replay verification failed - the built image drifted from sluice.lock (a pinned version may be unavailable; 'sluice update' re-resolves + re-pins)"
+    fi
+    echo "[sluice] ${E_GRN}pinned build verified${E_RST}: inventory matches sluice.lock" >&2
   fi
   "$RUNNER" rm -f -v "$container" >/dev/null 2>&1 || true   # rebuilt image -> fresh container
   runtime_sync_image force
@@ -264,6 +301,9 @@ start() {
   # filtering (SLUICE_BUMP_URLS); everything else splices. Passed like the allowlist (live edits, no
   # rebuild). When on, the box mints a per-container CA; the CA-trust env below points clients at it.
   run_args+=(-e "SLUICE_RUNTIME_BUMP=${SLUICE_BUMP_DOMAINS:-}" -e "SLUICE_RUNTIME_BUMP_URLS=${SLUICE_BUMP_URLS:-}")
+  # Bumped-lane upload controls (opt-in, only meaningful with SLUICE_BUMP_DOMAINS): a method allowlist +
+  # a request-body cap, passed like the other bump knobs (applied at container start, no image rebuild).
+  run_args+=(-e "SLUICE_RUNTIME_BUMP_METHODS=${SLUICE_BUMP_METHODS:-}" -e "SLUICE_RUNTIME_BUMP_MAX_BODY=${SLUICE_BUMP_MAX_BODY:-}")
   if [ -n "${SLUICE_BUMP_DOMAINS:-}" ]; then
     run_args+=(-e "NODE_EXTRA_CA_CERTS=/etc/squid/ssl/squid-cert.pem" \
                -e "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt" \

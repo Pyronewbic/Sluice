@@ -188,10 +188,14 @@ weaknesses** in [`THREAT_MODEL.md`](THREAT_MODEL.md):
   (`SLUICE_SECCOMP`), immutable rootfs (`SLUICE_READONLY_ROOT`), a read-only protected
   workspace with `sluice diff`/`apply` (`SLUICE_WORKSPACE=overlay`), and an own-kernel
   micro-VM runtime (`SLUICE_RUNTIME=kata`) - see [docs/hardening.md](docs/hardening.md).
+- **Egress volume bounds**: a **preventive** in-box byte cap that stops bytes mid-flight
+  (`SLUICE_EGRESS_HARD_CAP_BYTES`, and `SLUICE_ALLOW_IPS_MAX_BYTES` for the direct-IP lane),
+  plus detective per-host budgets and an opt-in DNS-tunnel audit - see [docs/hardening.md](docs/hardening.md).
 - **Supply chain**: the sandbox builds on Chainguard's `wolfi-base`; an opt-in
   cosign-signed, multi-arch (amd64 + arm64) base image with an SBOM attestation replaces
-  the local core build (`SLUICE_BASE_IMAGE`, enforced by `SLUICE_REQUIRE_SIGNED=1`), and
-  `sluice lock` records what's inside - see [docs/supply-chain.md](docs/supply-chain.md).
+  the local core build (`SLUICE_BASE_IMAGE`, enforced by `SLUICE_REQUIRE_SIGNED=1`),
+  `sluice lock` records what's inside, and `sluice lock --pin` + `SLUICE_PIN=1` builds a
+  **verified** pinned replay - see [docs/supply-chain.md](docs/supply-chain.md).
 - **Centralized policy**: an org can enforce a deny-capable egress policy (deny hosts, forbid
   loosening knobs, cap `SLUICE_ALLOW_IPS`) that a developer's local config can't override - see
   [docs/policy.md](docs/policy.md).

@@ -90,6 +90,10 @@ The guarantees below hold only while these do:
   endpoints** (`core/doh-endpoints.txt`) are denied *even if allowlisted* - otherwise an agent could
   tunnel exfil as DNS-over-HTTPS to an allowed resolver and bypass the SNI filter. `SLUICE_ALLOW_DOH=1`
   re-allows a DoH resolver; `SLUICE_DNS_OPEN=1` restores forward-all resolution (both weaken this).
+  DNS-label exfil to an *allowlisted* parent (whose queries *do* forward) isn't blocked by the sink;
+  `SLUICE_DNS_AUDIT=1` **detects** it - logging queries and flagging a tunnel pattern (many unique labels
+  under one parent) in the receipt. Detection, not prevention: it surfaces the pattern for review, it
+  does not stop the queries.
 - **Inbound exposure of published ports** -> `SLUICE_PORTS` publishes on host loopback only
   (`127.0.0.1`), so only host-local processes can reach the app - never the LAN; the in-box
   firewall opens a matching inbound ACCEPT for just those ports.
@@ -139,7 +143,10 @@ The guarantees below hold only while these do:
   code on your host. (You still author and review the config you ultimately run - the values init
   proposes are advisory.)
 - **Supply-chain fetch vs. runtime** -> deps are pulled at build (pre-firewall); the
-  *running* container is locked to the allowlist.
+  *running* container is locked to the allowlist. `sluice lock` records what was pulled; `sluice lock
+  --pin` + `SLUICE_PIN=1` goes further - a **verified** replay from the recorded base digest + exact
+  versions, checked against `sluice.lock` and failing closed on drift (inventory-identical, not
+  bit-for-bit; see [docs/supply-chain.md](docs/supply-chain.md)).
 - **Tampered sandbox core** -> the generic core (proxy, firewall, entrypoint, non-root user)
   can be pulled as a **cosign-signed base image** from GHCR (opt-in via `SLUICE_BASE_IMAGE`);
   `sluice` verifies the keyless signature - and the SBOM attestation alongside it - before
@@ -162,12 +169,21 @@ The guarantees below hold only while these do:
    silences it, `SLUICE_STRICT_LAUNDERING=1` refuses to run). The flag matches the **leading-dot
    wildcard** form too (`.storage.googleapis.com`, what `sluice learn` writes), not just the bare host,
    so a wildcard allowlist doesn't slip a known launderer past the gate or a `forbid-laundering` policy.
+   Volume through an allowed host can now be **bounded**: preventively with `SLUICE_EGRESS_HARD_CAP_BYTES`
+   (an in-box `xt_quota` DROP on all proxied egress, so bytes are stopped mid-flight, not just gated
+   after) and detectively with `SLUICE_EGRESS_MAX_BYTES` (total) / `SLUICE_EGRESS_HOST_BUDGETS`
+   (per-host). A cap does not *inspect* the laundered request - it caps how much can leave.
 3. **Exfil through `SLUICE_ALLOW_IPS`.** Reviewed fixed IPs get *direct* egress (the escape hatch for
    non-HTTP services like a database) - bypassing the proxy, so unfiltered by hostname. Scope each
    entry to one port with `ip:port` (a bare ip/cidr opens *every* port); keep the list minimal and specific.
    It is **IPv4-only** and floored at **/8**: an IPv6 literal, any `0.0.0.0/N`, and a prefix shorter than
    `/8` (e.g. the two-CIDR `0.0.0.0/1 128.0.0.0/1` cover) are **refused** host-side, and the in-box
    firewall independently refuses the same so a bypassed launcher check can't open all direct egress.
+   This lane is no longer invisible: each entry routes through an accountable `SLUICE-ALLOWIPS` iptables
+   chain, so its per-entry byte counters appear in the egress receipt (`allow_ips[]`) alongside the
+   firewall-dropped total (`fw_dropped`), and `SLUICE_ALLOW_IPS_MAX_BYTES` sets a preventive shared
+   volume budget across all direct-IP egress (over it, the flows are severed). Still unfiltered by
+   hostname - metering and a byte cap are the bound, not content inspection.
 4. **A squid vulnerability or a loose allowlist.** The egress policy rests on squid +
    the allowlist file. A squid CVE or an over-broad `SLUICE_ALLOW_DOMAINS` is the trust anchor
    to guard - including the `.domain` wildcards `sluice learn` can write (a leading-dot entry
@@ -220,7 +236,11 @@ container (per-run, never in the published base image; blast radius is the box i
 hosts can't be bumped and will fail TLS, so list only hosts you control or that don't pin; (3) you are
 decrypting your own traffic to that host - the box's logs/egress receipt gain full URLs, so treat them as
 sensitive. It narrows laundering for the listed host (path-level filtering) but does not eliminate it:
-data hidden in an *allowed* path is still opaque.
+data hidden in an *allowed* path is still opaque. On the bumped lane, `SLUICE_BUMP_METHODS` restricts the
+host to an HTTP-method allowlist (deny uploads) and `SLUICE_BUMP_MAX_BODY` caps request-body bytes - but
+`SLUICE_BUMP_MAX_BODY` is **per request**: an attacker can loop many small POSTs, so it bounds a single
+payload, not cumulative exfil. Pair it with a byte budget (`SLUICE_EGRESS_HARD_CAP_BYTES` / `_MAX_BYTES`)
+for a cumulative bound.
 
 ## Egress receipts: what they attest (and don't)
 
@@ -252,7 +272,9 @@ sharp edge is **allowed-host laundering**: because we splice (never decrypt), da
 to an *allowed* host isn't inspected. Keep `SLUICE_ALLOW_DOMAINS`/`SLUICE_ALLOW_IPS` minimal (the
 latter port-scoped) and never allow a host an attacker can also write to - `sluice` flags such a host
 at run, a per-run **egress receipt** (hosts reached + bytes, in the state dir) makes after-the-fact
-audit possible, and `SLUICE_EGRESS_MAX_BYTES` can gate CI on volume. An org can enforce a
+audit possible, and `SLUICE_EGRESS_MAX_BYTES` (whole-box) plus `SLUICE_EGRESS_HOST_BUDGETS` (per-host)
+can gate CI on volume. These volume gates are **detective** - they surface and fail CI after the fact;
+they do not stop bytes leaving mid-flight. An org can enforce a
 deny-capable [central policy](docs/policy.md) that a developer's local config cannot loosen; that
 policy is tamper-resistant only via its root-owned deployment, not by sluice itself (signing: v2.1).
 
@@ -269,4 +291,8 @@ audit, sanitized `doctor` output, policy deny over a covering allow wildcard, an
 disjunction; plus `learn` failing closed on an unreachable `SLUICE_POLICY_URL`, matching the run path.
 Hardened 2026-06-15: `sluice init` shell-quotes every repo-derived value it writes (the generated,
 host-sourced config no longer executes a hostile `Procfile`/manifest value at scaffold time).
-Revisit when the egress path, mount model, or runtime options change._
+Hardened post-1.0: preventive egress volume caps (`SLUICE_EGRESS_HARD_CAP_BYTES` + the direct-IP
+`SLUICE_ALLOW_IPS_MAX_BYTES`, xt_quota, fail-closed if absent); the accountable `SLUICE-ALLOWIPS` chain +
+`fw_dropped` visibility; bumped-lane upload controls (`SLUICE_BUMP_METHODS` / `SLUICE_BUMP_MAX_BODY`,
+per-request); the opt-in DNS-tunnel audit (`SLUICE_DNS_AUDIT`); and verified pinned replay
+(`sluice lock --pin` + `SLUICE_PIN=1`). Revisit when the egress path, mount model, or runtime options change._

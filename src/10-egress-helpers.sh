@@ -41,7 +41,9 @@ _collapsible() {
 config_hash() {
   { printf 'base=%s\n' "${SLUICE_BASE_IMAGE:-}"; grep -vE '^[[:space:]]*SLUICE_ALLOW_DOMAINS=' "$PROJECT_CONFIG"; \
     find "$CORE" -type f | LC_ALL=C sort | while read -r f; do cat "$f"; done; \
-    for f in ${SLUICE_PREFETCH_FILES:-}; do [ -f "$PROJECT_DIR/$f" ] && cat "$PROJECT_DIR/$f"; done; } \
+    for f in ${SLUICE_PREFETCH_FILES:-}; do [ -f "$PROJECT_DIR/$f" ] && cat "$PROJECT_DIR/$f"; done; \
+    printf 'pin=%s\n' "${SLUICE_PIN:-}"; \
+    if [ "${SLUICE_PIN:-}" = 1 ] && [ -f "$PROJECT_DIR/sluice.pin" ]; then cat "$PROJECT_DIR/sluice.pin"; fi; } \
     | shasum | awk '{print $1}' | cut -c1-12
 }
 
@@ -165,6 +167,140 @@ egress_tx_total() {
       for (i=1;i<=NF;i++) if ($i ~ /^tx=/) tx=substr($i,4)+0;
       total += tx;
     } END { print total+0 }'
+}
+
+# Bytes SENT OUT keyed by reached host: "<host>\t<tx>". Same exfil-direction measure as egress_tx_total
+# (tx only; blocked requests never left the proxy), grouped by host for the SLUICE_EGRESS_HOST_BUDGETS
+# per-host gate. Offset-aware via _squid_log (scoped to the run for the receipt). Mirrors egress_rows'
+# host + hostname-charset parsing.
+egress_tx_by_host() {
+  _squid_log | awk '
+    { sni=""; tx=0; status=$3; url=$5;
+      if (status ~ /NONE_NONE/ || status ~ /TCP_DENIED/ || status ~ /\/000/) next;   # blocked: did not leave
+      for (i=1;i<=NF;i++) { if ($i ~ /^ssl_sni=/) sni=substr($i,9); else if ($i ~ /^tx=/) tx=substr($i,4)+0; }
+      host="";
+      if (sni != "" && sni != "-") host=sni;
+      else if (url ~ /^http:\/\//) { h=url; sub(/^http:\/\//,"",h); sub(/\/.*/,"",h); sub(/:.*/,"",h); host=h }
+      if (host == "" || host ~ /^[0-9.]+$/) next;
+      if (host !~ /^\.?[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$/) next;   # drop non-hostname chars (SNI/Host can carry $(),",ESC)
+      tot[host] += tx;
+    }
+    END { for (h in tot) printf "%s\t%d\n", h, tot[h] }'
+}
+
+# Resolve a host to its SLUICE_EGRESS_HOST_BUDGETS cap in bytes (empty = no budget for this host).
+# Tokens are "host=bytes" (exact) or ".wildcard=bytes" (.x matches x + *.x, squid dstdomain style).
+# Exact match wins outright; among wildcards the longest (most specific) wins. set -f so the unquoted
+# split can't glob a value.
+_host_budget_for() {
+  local host="$1" tok thost tbytes bare best="" bestlen=-1
+  set -f
+  for tok in ${SLUICE_EGRESS_HOST_BUDGETS:-}; do
+    case "$tok" in *=*) ;; *) continue ;; esac
+    thost="${tok%%=*}"; tbytes="${tok#*=}"
+    case "$tbytes" in ''|*[!0-9]*) continue ;; esac
+    if [ "$thost" = "$host" ]; then best="$tbytes"; break; fi   # exact beats any wildcard
+    case "$thost" in
+      .*) bare="${thost#.}"
+          if [ "$host" = "$bare" ] || case "$host" in *"$thost") true ;; *) false ;; esac; then
+            [ "${#thost}" -gt "$bestlen" ] && { best="$tbytes"; bestlen="${#thost}"; }
+          fi ;;
+    esac
+  done
+  set +f
+  printf '%s' "$best"
+}
+
+# Per-entry SLUICE_ALLOW_IPS accounting: read the OUTPUT chain's counters (the direct-egress jumps route
+# through SLUICE-ALLOWIPS), emitting "<entry>\t<packets>\t<bytes>" per entry - the first visibility into
+# the direct-IP escape hatch, which bypasses squid and was invisible to the receipt. Root-side iptables
+# read (NET_ADMIN kept; /sbin on _ROOT_PATH). Empty read is gated by _audit_readable at the call site.
+# Note: these count ATTEMPTED wire bytes (headers included; packets a budget DROP later ate are counted);
+# entries on :80/:443 are dead (the NAT REDIRECT wins) and show 0.
+allowips_rows() {
+  _root_exec "$container" iptables -nvxL OUTPUT 2>/dev/null | awk '
+    $3=="SLUICE-ALLOWIPS" {
+      dst=$9; port="";
+      for (i=10;i<=NF;i++) if ($i ~ /^dpt:/) port=substr($i,5);
+      entry=(port=="") ? dst : dst":"port;
+      printf "%s\t%d\t%d\n", entry, $1, $2;
+    }'
+}
+
+# Firewall-dropped total: parse the OUTPUT chain's policy-DROP counter ("Chain OUTPUT (policy DROP N
+# packets, M bytes)") - the first visibility into non-HTTP blocked egress attempts. Emits "<packets>\t<bytes>".
+fw_dropped() {
+  _root_exec "$container" iptables -nvxL OUTPUT 2>/dev/null | awk '
+    /^Chain OUTPUT / {
+      p=0; b=0;
+      for (i=1;i<=NF;i++) { if ($i ~ /^packets,?$/) p=$(i-1); if ($i ~ /^bytes\)?$/) b=$(i-1); }
+      printf "%d\t%d\n", p, b; exit;
+    }'
+}
+
+# DNS query audit (SLUICE_DNS_AUDIT=1): read dnsmasq's query log and group by immediate parent domain,
+# emitting "<parent>\t<queries>\t<unique_names>". A DNS tunnel concentrates MANY unique leftmost labels
+# under one parent (exfil as DNS labels), so a high unique-name count per parent is the signal. Queried
+# names are attacker-controlled bytes -> the same hostname charset gate as SNI (drops $(),",ESC). Reuses
+# the _SQUID_LOG_CAP DoS ceiling. Empty read gated by _audit_readable at the call site.
+dns_rows() {
+  _root_exec "$container" sh -c "tail -c $_SQUID_LOG_CAP /var/log/squid/dns.log" 2>/dev/null | awk '
+    /query\[/ {
+      name="";
+      for (i=1;i<=NF;i++) if ($i ~ /^query\[/) { name=$(i+1); break }
+      if (name=="" || name !~ /^[A-Za-z0-9._-]+$/) next;   # non-hostname bytes: skip (RCE/escape guard)
+      n=split(name, L, ".");
+      if (n<=2) parent=name; else { parent=L[2]; for (j=3;j<=n;j++) parent=parent"."L[j] }
+      cnt[parent]++;
+      key=parent SUBSEP name;
+      if (!(key in seen)) { seen[key]=1; uniq[parent]++ }
+    }
+    END { for (p in cnt) printf "%s\t%d\t%d\n", p, cnt[p], uniq[p] }'
+}
+
+# Packets the SLUICE_ALLOW_IPS shared budget DROP'd (SLUICE_ALLOW_IPS_MAX_BYTES exhausted mid-run). A
+# non-zero count means the box hit the direct-IP cap during the run -> `sluice egress` fails the gate.
+# Empty when the chain/budget isn't present (no SLUICE-ALLOWIPS DROP rule).
+allowips_dropped() {
+  _root_exec "$container" iptables -nvxL SLUICE-ALLOWIPS 2>/dev/null | awk '
+    $3=="DROP" { print $1+0; found=1; exit } END { if (!found) print "" }'
+}
+
+# ",\"allow_ips\":[...],\"fw_dropped\":{...}" for the receipt + `sluice egress --json`, or "" when
+# SLUICE_ALLOW_IPS is unset. One iptables read each for the per-entry counters and the policy-DROP total.
+_allowips_json_fields() {
+  [ -n "${SLUICE_ALLOW_IPS:-}" ] || { printf ''; return 0; }
+  local TAB e p b aij="" first=1 fwd fp fb; TAB="$(printf '\t')"
+  while IFS="$TAB" read -r e p b; do
+    [ -n "$e" ] || continue
+    [ "$first" = 1 ] && first=0 || aij="$aij,"
+    aij="$aij{\"entry\":\"$(_json_esc "$e")\",\"packets\":${p:-0},\"bytes\":${b:-0}}"
+  done <<EOF
+$(allowips_rows 2>/dev/null || true)
+EOF
+  fwd="$(fw_dropped 2>/dev/null || true)"; fp="${fwd%%"$TAB"*}"; fb="${fwd#*"$TAB"}"
+  case "$fp" in ''|*[!0-9]*) fp=0 ;; esac
+  case "$fb" in ''|*[!0-9]*) fb=0 ;; esac
+  printf ',"allow_ips":[%s],"fw_dropped":{"packets":%s,"bytes":%s}' "$aij" "$fp" "$fb"
+}
+
+# ",\"dns\":{...}" when SLUICE_DNS_AUDIT=1, else "". Sums dns_rows for totals + flags tunnel parents
+# (unique names >= SLUICE_DNS_TUNNEL_THRESHOLD, default 500).
+_dns_json_fields() {
+  [ "${SLUICE_DNS_AUDIT:-}" = 1 ] || { printf ''; return 0; }
+  local TAB p q u tq=0 tu=0 fl="" ffirst=1 thr; TAB="$(printf '\t')"
+  thr="${SLUICE_DNS_TUNNEL_THRESHOLD:-500}"; case "$thr" in ''|*[!0-9]*) thr=500 ;; esac
+  while IFS="$TAB" read -r p q u; do
+    [ -n "$p" ] || continue
+    tq=$((tq + q)); tu=$((tu + u))
+    if [ "$u" -ge "$thr" ]; then
+      [ "$ffirst" = 1 ] && ffirst=0 || fl="$fl,"
+      fl="$fl{\"parent\":\"$(_json_esc "$p")\",\"unique\":$u}"
+    fi
+  done <<EOF
+$(dns_rows 2>/dev/null || true)
+EOF
+  printf ',"dns":{"queries":%s,"unique":%s,"flagged":[%s]}' "$tq" "$tu" "$fl"
 }
 
 # The proxy-log byte offset captured at the start of the last `sluice` run (written to /run by the run

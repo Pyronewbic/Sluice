@@ -102,6 +102,15 @@ assert d['mask'] == {'patterns': [], 'masked': [], 'unmasked_secrets': []}, d['m
 "
 }
 
+# The versioned-data-contract stamp: `doctor --json` carries a schema id so a consumer can key on it
+# (fields are only ADDED within /v1; a removal/rename bumps the suffix - docs/operations.md contracts).
+@test "doctor --json: carries the sluice.doctor/v1 schema stamp" {
+  printf 'SLUICE_RUN_CMD="bash"\n' > "$WORK/sluice.config.sh"
+  run bash -c "cd '$WORK' && '$SLUICE' doctor --json 2>/dev/null"
+  assert_success
+  echo "$output" | python3 -c "import sys,json; d=json.load(sys.stdin); assert d['schema']=='sluice.doctor/v1', d.get('schema')"
+}
+
 # --- dangling-symlink check ---------------------------------------------------------------------
 
 @test "doctor: warns on a symlink that resolves outside the mounted scope" {

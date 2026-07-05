@@ -230,7 +230,7 @@ _allow_covers_denied() {
 #   _PEVAL_SRC        policy source label;  _PEVAL_SUMMARY  "N allow, N deny, N forbid"
 #   _PEVAL_UNKNOWNS   unknown directive tokens;  _PEVAL_STRICT  1 if strict-unknown
 policy_evaluate() {
-  local body allow="" deny="" denyip="" forbid="" maxips="" launder=0 strict=0 rsbase=0 unknowns="" line verb arg
+  local body allow="" deny="" denyip="" forbid="" maxips="" maxhardcap="" launder=0 strict=0 rsbase=0 unknowns="" line verb arg
   body="$(_policy_raw)"
   while IFS= read -r line; do
     line="${line%%#*}"; line="$(printf '%s' "$line" | awk '{$1=$1};1')"; [ -n "$line" ] || continue
@@ -242,6 +242,7 @@ policy_evaluate() {
       forbid)              forbid="$forbid $arg" ;;
       forbid-laundering)   launder=1 ;;
       max-allow-ips)       maxips="$arg" ;;
+      max-hard-cap-bytes)  maxhardcap="$arg" ;;
       strict-unknown)      strict=1 ;;
       require-signed-base) rsbase=1 ;;
       *) if [ -z "$arg" ] && printf '%s' "$verb" | grep -qE '^\.?[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$'; then allow="$allow $verb"
@@ -292,6 +293,16 @@ EOF
   done
   set +f
   case "$maxips" in ''|*[!0-9]*) ;; *) if [ "$ipn" -gt "$maxips" ]; then refusals="$refusals""policy caps SLUICE_ALLOW_IPS at $maxips (your config has $ipn)"$'\n'; fi ;; esac
+  # (7) max-hard-cap-bytes N: the org mandates a PREVENTIVE egress ceiling <= N. Refuse if the box sets
+  # none, sets a non-numeric one, or exceeds N - so a developer can't opt out of the volume bound.
+  case "$maxhardcap" in
+    ''|*[!0-9]*) ;;
+    *) case "${SLUICE_EGRESS_HARD_CAP_BYTES:-}" in
+         '')       refusals="$refusals""policy requires SLUICE_EGRESS_HARD_CAP_BYTES <= $maxhardcap (your config sets none)"$'\n' ;;
+         *[!0-9]*) refusals="$refusals""policy requires a numeric SLUICE_EGRESS_HARD_CAP_BYTES <= $maxhardcap"$'\n' ;;
+         *)        [ "$SLUICE_EGRESS_HARD_CAP_BYTES" -gt "$maxhardcap" ] && refusals="$refusals""policy caps SLUICE_EGRESS_HARD_CAP_BYTES at $maxhardcap (your config sets $SLUICE_EGRESS_HARD_CAP_BYTES)"$'\n' ;;
+       esac ;;
+  esac
   _PEVAL_REFUSALS="$refusals"
   # source + counts for visibility (banner/run line / doctor).
   _PEVAL_SRC="$([ -f /etc/sluice/policy.conf ] && echo /etc/sluice/policy.conf || { [ -f "$HOME/.config/sluice/policy.conf" ] && echo "$HOME/.config/sluice/policy.conf" || echo "${SLUICE_POLICY_URL:-}"; })"
@@ -460,6 +471,14 @@ cmd_doctor() {
     _doc lock "${C_DIM}none${C_RST} - run 'sluice lock' to record installed versions"
   fi
 
+  # Pinned replay (SLUICE_PIN=1 + sluice.pin): show the pin state next to the lock rows.
+  if [ -f "$PROJECT_DIR/sluice.pin" ]; then
+    if [ "${SLUICE_PIN:-}" = 1 ]; then _doc pin "${C_GRN}SLUICE_PIN=1${C_RST} - build replays sluice.pin (verified against sluice.lock)"
+    else _doc pin "${C_DIM}sluice.pin present${C_RST} - set SLUICE_PIN=1 to build from it (pinned replay)"; fi
+  elif [ "${SLUICE_PIN:-}" = 1 ]; then
+    _attn=$((_attn+1)); _doc pin "${C_RED}SLUICE_PIN=1 but no sluice.pin${C_RST} - run 'sluice lock --pin' first"
+  fi
+
   if [ -n "${SLUICE_STATE_DIRS:-}" ]; then
     local nsd=0 _sd
     set -f   # dir names are not globs - count them, don't expand against $PWD
@@ -479,9 +498,16 @@ cmd_doctor() {
   [ -n "${SLUICE_RUNTIME:-}" ]          && _hard="$_hard runtime=$SLUICE_RUNTIME"
   [ -n "${SLUICE_MEMORY:-}" ]           && _hard="$_hard memory=$SLUICE_MEMORY"
   [ -n "${SLUICE_BUMP_DOMAINS:-}" ]     && _hard="$_hard tls-bump"
+  [ -n "${SLUICE_EGRESS_HARD_CAP_BYTES:-}" ] && _hard="$_hard hard-cap=$SLUICE_EGRESS_HARD_CAP_BYTES"
+  [ -n "${SLUICE_ALLOW_IPS_MAX_BYTES:-}" ]   && _hard="$_hard allow-ips-budget=$SLUICE_ALLOW_IPS_MAX_BYTES"
+  [ "${SLUICE_DNS_AUDIT:-}" = 1 ]       && _hard="$_hard dns-audit"
   # Always show a harden row: opt-ins when on, else the effective default posture the run path applies.
   if [ -n "$_hard" ]; then _doc harden "${_hard# }"
   else _doc harden "${C_DIM}defaults (seccomp=default, root rw, workspace=bind)${C_RST}"; fi
+  # Bump upload controls are a no-op without a bumped host to filter - flag the misconfig.
+  if [ -z "${SLUICE_BUMP_DOMAINS:-}" ] && { [ -n "${SLUICE_BUMP_METHODS:-}" ] || [ -n "${SLUICE_BUMP_MAX_BODY:-}" ]; }; then
+    _attn=$((_attn+1)); _doc "" "${C_YEL}note${C_RST}: SLUICE_BUMP_METHODS/SLUICE_BUMP_MAX_BODY set but SLUICE_BUMP_DOMAINS is empty - the bump controls are a no-op (nothing is decrypted to filter)"
+  fi
 
   [ -n "${SLUICE_PORTS:-}" ] && _doc ports "$SLUICE_PORTS ${C_DIM}(published on 127.0.0.1)${C_RST}"
   # Under a managed policy, the live allowlist is (local + allow) - deny: show what would ACTUALLY be
@@ -647,10 +673,14 @@ cmd_doctor_json() {
   [ "${SLUICE_READONLY_ROOT:-}" = 1 ]   && _ro=true
   [ "${SLUICE_WORKSPACE:-}" = overlay ] && _ws=true
   [ -n "${SLUICE_BUMP_DOMAINS:-}" ]     && _bump=true
+  local _pinned=false; [ "${SLUICE_PIN:-}" = 1 ] && _pinned=true
+  local _dnsaudit=false; [ "${SLUICE_DNS_AUDIT:-}" = 1 ] && _dnsaudit=true
   local hardening_json
-  hardening_json="$(printf '{"seccomp":"%s","readonly_root":%s,"workspace_overlay":%s,"runtime":"%s","memory":"%s","pids_limit":"%s","tls_bump":%s}' \
+  hardening_json="$(printf '{"seccomp":"%s","readonly_root":%s,"workspace_overlay":%s,"runtime":"%s","memory":"%s","pids_limit":"%s","tls_bump":%s,"hard_cap_bytes":"%s","allow_ips_max_bytes":"%s","dns_audit":%s,"bump_methods":"%s","bump_max_body":"%s","pinned":%s}' \
     "$(_json_esc "${SLUICE_SECCOMP:-default}")" "$_ro" "$_ws" "$(_json_esc "${SLUICE_RUNTIME:-}")" \
-    "$(_json_esc "${SLUICE_MEMORY:-}")" "$(_json_esc "${SLUICE_PIDS_LIMIT:-4096}")" "$_bump")"
+    "$(_json_esc "${SLUICE_MEMORY:-}")" "$(_json_esc "${SLUICE_PIDS_LIMIT:-4096}")" "$_bump" \
+    "$(_json_esc "${SLUICE_EGRESS_HARD_CAP_BYTES:-}")" "$(_json_esc "${SLUICE_ALLOW_IPS_MAX_BYTES:-}")" "$_dnsaudit" \
+    "$(_json_esc "${SLUICE_BUMP_METHODS:-}")" "$(_json_esc "${SLUICE_BUMP_MAX_BODY:-}")" "$_pinned")"
 
   # Exfil-surface risk: allowlisted hosts that are writable laundering channels or DoH resolvers.
   local _risky="" _doh="" _h _allowdoh=false
@@ -706,7 +736,7 @@ cmd_doctor_json() {
   blocked_json="$(printf '%s' "$blocked"                  | tr ' \t' '\n\n' | _json_arr)"
   [ "$egress_unavail" = true ] && blocked_json=null
 
-  printf '{"engine":"%s","engine_found":%s,"daemon":%s,"config":"%s","config_error":%s,"project_dir":"%s","name":"%s","desc":"%s","image":{"tag":"%s","built":%s,"stale":%s},"lock":"%s","allowlist":%s,"base":%s,"ports":%s,"allow_ips":%s,"base_image":"%s","policy_url":"%s","policy":%s,"state_dirs":%s,"overlay_dirs":%s,"mounts":%s,"auth":%s,"hardening":%s,"mask":{"patterns":%s,"masked":%s,"unmasked_secrets":%s},"risk":%s,"broken_symlinks":%s,"egress":{"running":%s,"blocked":%s}}\n' \
+  printf '{"schema":"sluice.doctor/v1","engine":"%s","engine_found":%s,"daemon":%s,"config":"%s","config_error":%s,"project_dir":"%s","name":"%s","desc":"%s","image":{"tag":"%s","built":%s,"stale":%s},"lock":"%s","allowlist":%s,"base":%s,"ports":%s,"allow_ips":%s,"base_image":"%s","policy_url":"%s","policy":%s,"state_dirs":%s,"overlay_dirs":%s,"mounts":%s,"auth":%s,"hardening":%s,"mask":{"patterns":%s,"masked":%s,"unmasked_secrets":%s},"risk":%s,"broken_symlinks":%s,"egress":{"running":%s,"blocked":%s}}\n' \
     "$(_json_esc "$engine_ver")" "$engine_found" "$daemon" "$(_json_esc "$PROJECT_CONFIG")" "$config_error" "$(_json_esc "$PROJECT_DIR")" "$(_json_esc "$tag")" "$(_json_esc "${SLUICE_DESC:-}")" \
     "$(_json_esc "$tag")" "$img_built" "$img_stale" "$lock" \
     "$allow_json" "$(base_domains | tr ' ' '\n' | _json_arr)" \
@@ -714,6 +744,23 @@ cmd_doctor_json() {
     "$(_json_esc "${SLUICE_POLICY_URL:-}")" "$policy_json" "$nsd" "$overlays_json" "$mounts_json" "$auth_json" "$hardening_json" \
     "$mask_pats" "$mask_hits" "$mask_unm" "$risk_json" "$links_json" \
     "$running_b" "$blocked_json"
+}
+
+# Verbatim-embed a box's latest egress-receipt.json into `ls --json` (a fleet<->audit join, so a
+# dashboard reads posture + last egress in one call), or `null`. The file is sluice's own single-line
+# JSON (_persist_receipt, src/80), so a guarded raw embed needs no parsing and stays valid JSON: it must
+# be one line, open with the known schema, close with `}`, and carry no control byte - else null. Fail
+# closed on anything malformed so `ls --json` never emits broken JSON. Its integrity is attested by
+# `egress --verify`, not by ls (documented in docs/operations.md).
+_last_receipt_json() {
+  local f="$1/egress-receipt.json" line nl
+  [ -f "$f" ] || { printf 'null'; return 0; }
+  nl="$(wc -l < "$f" 2>/dev/null | tr -d ' ')"; case "$nl" in ''|*[!0-9]*) nl=2 ;; esac
+  [ "$nl" -le 1 ] || { printf 'null'; return 0; }           # multi-line = not our single-line receipt
+  line="$(head -1 "$f" 2>/dev/null)"
+  case "$line" in '{"schema":"sluice.egress/v1"'*'}') ;; *) printf 'null'; return 0 ;; esac
+  printf '%s' "$line" | LC_ALL=C grep -q '[[:cntrl:]]' && { printf 'null'; return 0; }
+  printf '%s' "$line"
 }
 
 # `sluice ls`: a derived, read-only table of every built sluice box on this machine
@@ -750,8 +797,8 @@ cmd_ls() {
 
   # Gather labels + container state into parallel arrays, applying filters as we go. (Kept as a plain
   # while-loop, NOT a $(...) capture: a case pattern's ) inside command substitution mis-parses on bash 3.2.)
-  local names=() stats=() projs=() stacks=() descs=() curs=() orphs=() allows=() ports_=() locks=() blocks=() ovls=()
-  local name proj stack desc status cur orphan allowcount portslbl lock blocked ovl
+  local names=() stats=() projs=() stacks=() descs=() curs=() orphs=() allows=() ports_=() locks=() blocks=() ovls=() chashes=()
+  local name proj stack desc status cur orphan allowcount portslbl lock blocked ovl chash
   while IFS= read -r name; do
     [ -n "$name" ] || continue
     proj="$( "$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.project" }}' "$name" 2>/dev/null || true)"
@@ -760,12 +807,14 @@ cmd_ls() {
     allowcount="$("$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.allowcount" }}' "$name" 2>/dev/null || true)"
     portslbl="$(  "$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.ports" }}'      "$name" 2>/dev/null || true)"
     ovl="$(       "$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.overlays" }}'   "$name" 2>/dev/null || true)"
+    chash="$(     "$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.confighash" }}' "$name" 2>/dev/null || true)"
     case "$proj"       in "<no value>") proj=""       ;; esac
     case "$stack"      in "<no value>") stack=""      ;; esac
     case "$desc"       in "<no value>") desc=""       ;; esac
     case "$allowcount" in "<no value>") allowcount="" ;; esac
     case "$portslbl"   in "<no value>") portslbl=""   ;; esac
     case "$ovl"        in "<no value>") ovl=""        ;; esac
+    case "$chash"      in "<no value>") chash=""      ;; esac
     orphan=false; [ -n "$proj" ] && [ ! -d "$proj" ] && orphan=true
     if   "$RUNNER" ps    --filter "name=$name" --filter status=running --format '{{.Names}}' 2>/dev/null | grep -qx "$name"; then status=running
     elif "$RUNNER" ps -a --filter "name=$name" --format '{{.Names}}' 2>/dev/null | grep -qx "$name"; then status=stopped
@@ -778,7 +827,7 @@ cmd_ls() {
     lock="-"; [ -n "$proj" ] && [ -f "$proj/sluice.lock" ] && lock=locked
     blocked=""; [ -n "$egress" ] && [ "$status" = running ] && blocked="$(box_blocked_count "$name")"   # opt-in: execs into the box
     names+=("$name"); stats+=("$status"); projs+=("$proj"); stacks+=("$stack"); descs+=("$desc"); curs+=("$cur"); orphs+=("$orphan")
-    allows+=("$allowcount"); ports_+=("$portslbl"); locks+=("$lock"); blocks+=("$blocked"); ovls+=("$ovl")
+    allows+=("$allowcount"); ports_+=("$portslbl"); locks+=("$lock"); blocks+=("$blocked"); ovls+=("$ovl"); chashes+=("$chash")
   done <<EOF
 $imgs
 EOF
@@ -806,7 +855,7 @@ EOF
 $sorted
 EOF
 
-  local i j ac lk pjson ojson bjson
+  local i j ac lk pjson ojson bjson _slug _sdir _lr _chjson
   if [ "$mode" = --json ]; then
     printf '['
     for j in "${!order[@]}"; do
@@ -817,14 +866,20 @@ EOF
       # tr-split (like overlays) keeps a glob metachar in the label literal - no pathname expansion against $PWD
       pjson="$(printf '%s' "${ports_[$i]}" | tr ' \t' '\n\n' | _json_arr)"
       ojson="$(printf '%s' "${ovls[$i]}" | tr ' \t' '\n\n' | _json_arr)"
+      # confighash (null on an un-rebuilt/pre-posture image) + state_dir + last egress receipt (a
+      # fleet<->audit join): all pure file/label reads, so the ls "nothing sourced here" invariant holds.
+      _chjson=null; [ -n "${chashes[$i]}" ] && _chjson="\"$(_json_esc "${chashes[$i]}")\""
+      _slug="${names[$i]#sluice-}"
+      _sdir="${XDG_STATE_HOME:-$HOME/.local/state}/sluice/$_slug"
+      _lr="$(_last_receipt_json "$_sdir")"
       bjson=""; if [ -n "$egress" ]; then
         # null = not running OR audit unreadable (unknown) - never a defaulted 0 over a failed read
         if [ "${stats[$i]}" = running ] && [ -n "${blocks[$i]}" ]; then bjson=",\"blocked\":${blocks[$i]}"; else bjson=',"blocked":null'; fi
       fi
-      printf '{"name":"%s","status":"%s","stack":"%s","path":"%s","description":"%s","current":%s,"orphan":%s,"allow_count":%s,"ports":%s,"overlay_dirs":%s,"locked":%s%s}' \
+      printf '{"schema":"sluice.box/v1","name":"%s","status":"%s","stack":"%s","path":"%s","description":"%s","current":%s,"orphan":%s,"allow_count":%s,"ports":%s,"overlay_dirs":%s,"locked":%s,"confighash":%s,"state_dir":"%s","last_receipt":%s%s}' \
         "$(_json_esc "${names[$i]}")" "$(_json_esc "${stats[$i]}")" "$(_json_esc "${stacks[$i]}")" \
         "$(_json_esc "${projs[$i]}")" "$(_json_esc "${descs[$i]}")" "${curs[$i]}" "${orphs[$i]}" \
-        "$ac" "$pjson" "$ojson" "$lk" "$bjson"
+        "$ac" "$pjson" "$ojson" "$lk" "$_chjson" "$(_json_esc "$_sdir")" "$_lr" "$bjson"
     done
     printf ']\n'; return 0
   fi

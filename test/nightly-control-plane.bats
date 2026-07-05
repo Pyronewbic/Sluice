@@ -33,6 +33,8 @@ CFG
   ( cd "$WORK/a" && "$SLUICE" doctor --json ) > "$WORK/doctor.json" 2>/dev/null || true
   ( cd "$WORK/a" && "$SLUICE" egress --json ) > "$WORK/egress.json" 2>/dev/null || true
   "$SLUICE" ls --egress --json > "$WORK/ls-egress.json" 2>/dev/null || true
+  # Fleet-wide audit from a neutral cwd (no config): every box's chain in one pass.
+  "$SLUICE" egress --verify --all --json > "$WORK/fleet-verify.json" 2>/dev/null || true
 }
 
 teardown_file() {
@@ -85,6 +87,35 @@ _pyjson() { python3 -c "$1"; }   # exits non-zero (fails the @test) if the asser
 @test "ls --egress: box A shows a live blocked-host count" {
   python3 -m json.tool < "$WORK/ls-egress.json" >/dev/null
   _pyjson "import sys,json; d=json.load(open('$WORK/ls-egress.json')); m=[x for x in d if x['name']=='sluice-control-a']; sys.exit(0 if m and isinstance(m[0].get('blocked'), int) and m[0]['blocked']>=1 else 1)"
+}
+
+# --- versioned contracts + fleet-wide audit (M1) ---
+@test "ls --json: box A carries the schema stamp, a confighash, and a joined last_receipt" {
+  _pyjson "
+import json,sys
+d=json.load(open('$WORK/ls.json'))
+a=[x for x in d if x['name']=='sluice-control-a'][0]
+assert a['schema']=='sluice.box/v1', a.get('schema')
+assert a['confighash'], a.get('confighash')
+lr=a['last_receipt']
+assert lr is not None and lr['schema']=='sluice.egress/v1', lr
+assert lr['confighash']==a['confighash'], (lr.get('confighash'), a['confighash'])
+"
+}
+@test "doctor --json: carries the sluice.doctor/v1 schema stamp" {
+  _pyjson "import json,sys; d=json.load(open('$WORK/doctor.json')); sys.exit(0 if d.get('schema')=='sluice.doctor/v1' else 1)"
+}
+@test "egress --verify --all: A's chain appears and verifies from a neutral cwd" {
+  python3 -m json.tool < "$WORK/fleet-verify.json" >/dev/null
+  _pyjson "
+import json,sys
+d=json.load(open('$WORK/fleet-verify.json'))
+assert d['schema']=='sluice.fleet-verify/v1', d.get('schema')
+boxes={b['slug']:b for b in d['boxes']}
+assert 'control-a' in boxes, list(boxes)
+assert boxes['control-a']['verified'] is True, boxes['control-a']
+assert boxes['control-a']['records']>=1, boxes['control-a']
+"
 }
 
 # --- orphan flagging + -b/--box targeting (mutating; ordered) ---

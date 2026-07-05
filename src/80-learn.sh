@@ -25,6 +25,11 @@ EOF
   _inner="$(printf '"schema":"sluice.egress/v1","run":"%s","ts":"%s","box":"%s","status":"%s","confighash":"%s","allowlist":%s,"totals":{"reached":%s,"blocked":%s,"bytes":%s},"hosts":[%s]' \
     "$_run" "$_ts" "$(_json_esc "$container")" "$rstatus" "$(config_hash 2>/dev/null || true)" \
     "$(allowed_domains | tr ' ' '\n' | _json_arr)" "${_reached:-0}" "${_blocked:-0}" "${_tot:-0}" "$_hj")"
+  # Additive M2 sections, inserted BEFORE the trailing prev/self chain fields (the receipt-line invariant):
+  # direct-IP (SLUICE_ALLOW_IPS) counters + firewall-dropped total, and the DNS audit summary. Empty
+  # strings when the knobs are off, so an unchanged box keeps a byte-identical record. Only on a readable
+  # box (a down box has no counters to read).
+  if [ "$rstatus" = ok ]; then _inner="$_inner$(_allowips_json_fields)$(_dns_json_fields)"; fi
   printf '{%s}\n' "$_inner" > "$_dir/egress-receipt.json" 2>/dev/null || true
   # prev = the previous record's self (genesis = 64 zeros). Guard the read: a first-run tail on the
   # not-yet-existing log exits non-zero, which under the launcher's set -e/pipefail would abort here.
@@ -84,6 +89,29 @@ show_egress_receipt() {
 
   _persist_receipt "$rows" ok   # latest snapshot + append to the hash-chained audit log
 
+  # SLUICE_ALLOW_IPS direct-egress (bypasses squid) + firewall-drop visibility; a busted shared budget flags loud.
+  if [ -n "${SLUICE_ALLOW_IPS:-}" ]; then
+    local _re _rp _rb; allowips_rows 2>/dev/null | while IFS="$TAB" read -r _re _rp _rb; do
+      [ -n "$_re" ] || continue
+      printf '  %sdirect-ip%s %s  %s pkt  %s\n' "$dim" "$rst" "$_re" "$_rp" "$(_human_bytes "${_rb:-0}")" >&2
+    done
+    if [ -n "${SLUICE_ALLOW_IPS_MAX_BYTES:-}" ]; then
+      local _rad; _rad="$(allowips_dropped 2>/dev/null || true)"; case "$_rad" in ''|*[!0-9]*) _rad=0 ;; esac
+      [ "$_rad" -gt 0 ] && printf '%s[sluice] direct-ip budget exceeded:%s %s pkt dropped - `sluice egress` will fail CI.\n' "$red" "$rst" "$_rad" >&2
+    fi
+  fi
+  # DNS audit tunnel-pattern flags (SLUICE_DNS_AUDIT=1).
+  if [ "${SLUICE_DNS_AUDIT:-}" = 1 ]; then
+    local _sp _sq _su _stq=0 _stu=0 _sthr; _sthr="${SLUICE_DNS_TUNNEL_THRESHOLD:-500}"; case "$_sthr" in ''|*[!0-9]*) _sthr=500 ;; esac
+    while IFS="$TAB" read -r _sp _sq _su; do
+      [ -n "$_sp" ] || continue; _stq=$((_stq + _sq)); _stu=$((_stu + _su))
+      [ "$_su" -ge "$_sthr" ] && printf '%s[sluice] possible DNS-tunnel pattern%s under %s (%s unique names)\n' "$red" "$rst" "$_sp" "$_su" >&2
+    done <<EOF
+$(dns_rows 2>/dev/null || true)
+EOF
+    printf '  %sdns: %s queries, %s unique names%s\n' "$dim" "$_stq" "$_stu" "$rst" >&2
+  fi
+
   # SLUICE_EGRESS_MAX_BYTES: loud warning when this run sent more than the cap (bounds laundering
   # through an allowed host). `sluice egress` is the CI gate (exits non-zero); the receipt just nudges.
   case "${SLUICE_EGRESS_MAX_BYTES:-}" in
@@ -93,6 +121,20 @@ show_egress_receipt() {
          printf '%s[sluice] egress budget exceeded:%s %s sent > %s cap - `sluice egress` will fail CI.\n' \
            "$red" "$rst" "$(_human_bytes "$_tx")" "$(_human_bytes "$SLUICE_EGRESS_MAX_BYTES")" >&2 ;;
   esac
+
+  # SLUICE_EGRESS_HOST_BUDGETS: a run-scoped nudge per reached host over its own cap (`sluice egress`
+  # is the CI gate that exits non-zero). Mirrors the total-budget warning above.
+  if [ -n "${SLUICE_EGRESS_HOST_BUDGETS:-}" ]; then
+    local _hbh _hbtx _hbcap
+    egress_tx_by_host 2>/dev/null | while IFS="$TAB" read -r _hbh _hbtx; do
+      [ -n "$_hbh" ] || continue
+      _hbcap="$(_host_budget_for "$_hbh")"; [ -n "$_hbcap" ] || continue
+      case "$_hbtx" in ''|*[!0-9]*) _hbtx=0 ;; esac
+      [ "$_hbtx" -gt "$_hbcap" ] && \
+        printf '%s[sluice] host budget exceeded:%s %s sent %s > %s cap - `sluice egress` will fail CI.\n' \
+          "$red" "$rst" "$_hbh" "$(_human_bytes "$_hbtx")" "$(_human_bytes "$_hbcap")" >&2
+    done
+  fi
 }
 
 # Write/replace the SLUICE_ALLOW_DOMAINS line in the project config (interactive + --apply share this).
