@@ -164,3 +164,17 @@ to map your host user straight onto the sluice uid: the repo stays writable in t
 you on the host. This needs **podman >= 4.3**. On older podman sluice warns and falls back to the plain
 chown, which re-owns the repo to a subuid; restore your write access with
 `podman unshare chown -R 0:0 "$PWD"`.
+
+## Rootless podman: other caveats
+
+Rootless podman can't do a few things docker does; `sluice doctor` flags the ones your config triggers.
+
+- **Resource caps may not apply.** `--pids-limit` / `SLUICE_MEMORY` enforce only when the host has
+  cgroups v2 with systemd delegation. Without it podman silently ignores them, so the fork-bomb / RAM
+  cap is off. Enable [rootless cgroup delegation](https://rootlesscontaine.rs/getting-started/common/cgroup2/)
+  or run under docker if you rely on those caps.
+- **Host ports < 1024 won't bind.** `SLUICE_PORTS` entries below 1024 can't be published rootless
+  (`sysctl net.ipv4.ip_unprivileged_port_start=<n>` on the host, or map to a high port).
+- **Netfilter modules must be loaded.** The in-box firewall uses `xt_owner`, `xt_state`, and
+  `nat`/`REDIRECT`; a rootless user namespace can't autoload kernel modules, so on a podman-only host
+  where they aren't already loaded the box fails to boot. Preload them (`modprobe`) once on the host.

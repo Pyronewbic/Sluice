@@ -23,7 +23,7 @@ UNIT_BATS     := test/init-detection.bats test/verify-init-quoting.bats test/ver
                  test/verify-pin-unit.bats test/verify-hardcap-unit.bats \
                  test/verify-allowips-rows-unit.bats test/verify-dnsaudit-unit.bats \
                  test/verify-bump-knobs-unit.bats test/verify-replay-unit.bats \
-                 test/verify-podman-userns-unit.bats
+                 test/verify-podman-userns-unit.bats test/verify-build-hash-unit.bats
 ACCEPT_BATS   := test/acceptance.bats test/acceptance-bump.bats test/verify-run-default.bats
 SECURITY_BATS := $(wildcard test/verify-security-*.bats)
 ENGINE_BATS   := $(ACCEPT_BATS) $(SECURITY_BATS)

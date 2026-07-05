@@ -439,6 +439,20 @@ cmd_doctor() {
     [ "$_nl" -gt 10 ] && _doc "" "${C_DIM}(+ $((_nl - 10)) more)${C_RST}"
   fi
 
+  # Rootless podman can't enforce some knobs the way docker does - surface the caveats (see hardening.md).
+  if [ -n "$eng" ] && _rootless_podman; then
+    _doc podman "${C_DIM}rootless - pids/memory caps need cgroups-v2 + systemd delegation; needs netfilter modules loaded${C_RST}"
+    { [ -n "${SLUICE_PIDS_LIMIT:-}" ] || [ -n "${SLUICE_MEMORY:-}" ]; } && { _attn=$((_attn+1)); _doc "" "${C_YEL}a pids/memory cap is set but may silently not apply under rootless podman${C_RST}"; }
+    local _dp
+    set -f   # split the ports list on whitespace, not glob it against $PWD
+    for _dp in ${SLUICE_PORTS:-}; do
+      set +f
+      case "$_dp" in ''|*[!0-9]*) ;; *) [ "$_dp" -lt 1024 ] && { _attn=$((_attn+1)); _doc ports "${C_YEL}rootless podman can't publish host port $_dp (<1024)${C_RST}"; } ;; esac
+      set -f
+    done
+    set +f
+  fi
+
   if [ -n "$eng" ]; then
     if _with_timeout 5 "$eng" image inspect "$tag" >/dev/null 2>&1; then
       if [ "$(_with_timeout 5 "$eng" image inspect -f '{{ index .Config.Labels "sluice.confighash" }}' "$tag" 2>/dev/null || true)" = "$(config_hash)" ]; then
@@ -736,8 +750,11 @@ cmd_doctor_json() {
   blocked_json="$(printf '%s' "$blocked"                  | tr ' \t' '\n\n' | _json_arr)"
   [ "$egress_unavail" = true ] && blocked_json=null
 
-  printf '{"schema":"sluice.doctor/v1","engine":"%s","engine_found":%s,"daemon":%s,"config":"%s","config_error":%s,"project_dir":"%s","name":"%s","desc":"%s","image":{"tag":"%s","built":%s,"stale":%s},"lock":"%s","allowlist":%s,"base":%s,"ports":%s,"allow_ips":%s,"base_image":"%s","policy_url":"%s","policy":%s,"state_dirs":%s,"overlay_dirs":%s,"mounts":%s,"auth":%s,"hardening":%s,"mask":{"patterns":%s,"masked":%s,"unmasked_secrets":%s},"risk":%s,"broken_symlinks":%s,"egress":{"running":%s,"blocked":%s}}\n' \
-    "$(_json_esc "$engine_ver")" "$engine_found" "$daemon" "$(_json_esc "$PROJECT_CONFIG")" "$config_error" "$(_json_esc "$PROJECT_DIR")" "$(_json_esc "$tag")" "$(_json_esc "${SLUICE_DESC:-}")" \
+  # rootless podman can't enforce pids/memory caps or bind ports <1024 the way docker does (additive field).
+  local rootless_podman=false; [ -n "$eng" ] && _rootless_podman && rootless_podman=true
+
+  printf '{"schema":"sluice.doctor/v1","engine":"%s","engine_found":%s,"daemon":%s,"rootless_podman":%s,"config":"%s","config_error":%s,"project_dir":"%s","name":"%s","desc":"%s","image":{"tag":"%s","built":%s,"stale":%s},"lock":"%s","allowlist":%s,"base":%s,"ports":%s,"allow_ips":%s,"base_image":"%s","policy_url":"%s","policy":%s,"state_dirs":%s,"overlay_dirs":%s,"mounts":%s,"auth":%s,"hardening":%s,"mask":{"patterns":%s,"masked":%s,"unmasked_secrets":%s},"risk":%s,"broken_symlinks":%s,"egress":{"running":%s,"blocked":%s}}\n' \
+    "$(_json_esc "$engine_ver")" "$engine_found" "$daemon" "$rootless_podman" "$(_json_esc "$PROJECT_CONFIG")" "$config_error" "$(_json_esc "$PROJECT_DIR")" "$(_json_esc "$tag")" "$(_json_esc "${SLUICE_DESC:-}")" \
     "$(_json_esc "$tag")" "$img_built" "$img_stale" "$lock" \
     "$allow_json" "$(base_domains | tr ' ' '\n' | _json_arr)" \
     "$ports_json" "$ips_json" "$(_json_esc "${SLUICE_BASE_IMAGE:-}")" \
@@ -781,7 +798,10 @@ cmd_ls() {
     shift
   done
 
-  imgs="$("$ENGINE" image ls --filter label=sluice.confighash --format '{{.Repository}}' 2>/dev/null | grep -v '^<none>$' | sort -u || true)"   # grep exits 1 on no-match; tolerate it so the empty-state branch is reachable under set -e
+  # sed strips podman's localhost/ prefix so the name matches the canonical sluice-<slug> everywhere
+  # downstream (ps filter, box_blocked_count, the ${#sluice-} slug); grep exits 1 on no-match, tolerated
+  # so the empty-state branch stays reachable under set -e.
+  imgs="$("$ENGINE" image ls --filter label=sluice.confighash --format '{{.Repository}}' 2>/dev/null | sed 's,^localhost/,,' | grep -v '^<none>$' | sort -u || true)"
   if [ -z "$imgs" ]; then
     if ! "$ENGINE" info >/dev/null 2>&1; then   # binary exists (dispatch checked), so empty == daemon down
       [ "$mode" = --json ] && { echo '[]'; return 0; }

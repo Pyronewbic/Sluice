@@ -105,6 +105,28 @@ _stub_engine_one_box() {
   rm -rf "$XDG_STATE_HOME"
 }
 
+@test "ls --json: podman's localhost/ image prefix is stripped so name + state_dir stay canonical" {
+  _stub_engine_one_box
+  eng() {
+    case "$*" in
+      "image ls --filter label=sluice.confighash --format {{.Repository}}") printf 'localhost/sluice-api\n' ;;
+      "info") return 0 ;;
+      *"sluice.project"*)    printf '/nonexistent/proj\n' ;;
+      *"sluice.confighash"*) printf 'abc123def456\n' ;;
+      *) : ;;
+    esac
+  }
+  run cmd_ls --json
+  assert_success
+  jq -e '.[0].name=="sluice-api"' <<<"$output"                 # not localhost/sluice-api
+  jq -e '.[0].state_dir|endswith("/sluice/api")' <<<"$output"  # not /sluice/localhost/sluice-api
+  rm -rf "$XDG_STATE_HOME"
+}
+
+@test "ls/prune: both image-ls seeds strip podman's localhost/ prefix (structural)" {
+  [ "$(grep -cF "sed 's,^localhost/,,'" "$BIN")" -ge 2 ]
+}
+
 @test "ls --json: a pre-posture image without a confighash label yields confighash:null" {
   _stub_engine_one_box
   eng() {

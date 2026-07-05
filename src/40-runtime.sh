@@ -101,9 +101,10 @@ resolve_runner() {
 # >= 4.3 (the keep-id uid/gid options); older podman gets a warning + the recovery command. Appends to
 # RUNTIME_RUN_OPTS so it composes with the Kata opt. Docker and rootful podman are unaffected (no-op).
 # Call from the box-start path only, not the lenient doctor probe (avoids the extra calls + warning).
+# True iff $RUNNER is rootless podman (basename-strip so a full path still matches). One `podman info`.
+_rootless_podman() { [ "${RUNNER##*/}" = podman ] && [ "$(podman info --format '{{.Host.Security.Rootless}}' 2>/dev/null)" = true ]; }
 resolve_podman_userns() {
-  [ "${RUNNER##*/}" = podman ] || return 0
-  [ "$(podman info --format '{{.Host.Security.Rootless}}' 2>/dev/null)" = true ] || return 0
+  _rootless_podman || return 0
   local v maj min
   v="$(podman version --format '{{.Client.Version}}' 2>/dev/null)"
   maj="${v%%.*}"; min="${v#*.}"; min="${min%%.*}"
