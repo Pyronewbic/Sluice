@@ -818,7 +818,8 @@ EOF
       pjson="$(printf '%s' "${ports_[$i]}" | tr ' \t' '\n\n' | _json_arr)"
       ojson="$(printf '%s' "${ovls[$i]}" | tr ' \t' '\n\n' | _json_arr)"
       bjson=""; if [ -n "$egress" ]; then
-        if [ "${stats[$i]}" = running ]; then bjson=",\"blocked\":${blocks[$i]:-0}"; else bjson=',"blocked":null'; fi
+        # null = not running OR audit unreadable (unknown) - never a defaulted 0 over a failed read
+        if [ "${stats[$i]}" = running ] && [ -n "${blocks[$i]}" ]; then bjson=",\"blocked\":${blocks[$i]}"; else bjson=',"blocked":null'; fi
       fi
       printf '{"name":"%s","status":"%s","stack":"%s","path":"%s","description":"%s","current":%s,"orphan":%s,"allow_count":%s,"ports":%s,"overlay_dirs":%s,"locked":%s%s}' \
         "$(_json_esc "${names[$i]}")" "$(_json_esc "${stats[$i]}")" "$(_json_esc "${stacks[$i]}")" \
@@ -841,7 +842,8 @@ EOF
     dallow="${allows[$i]}"; [ -n "$dallow" ] || dallow="-"
     dport="${ports_[$i]}";  [ -n "$dport" ]  || dport="-"
     dlock="${locks[$i]}"
-    dblk="${blocks[$i]}";   [ -n "$dblk" ]   || dblk="-"
+    dblk="${blocks[$i]}"    # ? = running but audit unreadable (unknown); - = not running / not asked
+    if [ -z "$dblk" ]; then dblk="-"; [ -n "$egress" ] && [ "${stats[$i]}" = running ] && dblk="?"; fi
     mark=" "; [ "${curs[$i]}" = true ] && mark="*"
     vpaths[$i]="$vpath"; cpaths[$i]="$cpath"; dstacks[$i]="$dstack"; ddescs[$i]="$ddesc"; marks[$i]="$mark"
     dallows[$i]="$dallow"; dports[$i]="$dport"; dlocks[$i]="$dlock"; dblks[$i]="$dblk"
