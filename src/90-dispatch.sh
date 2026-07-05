@@ -55,7 +55,22 @@ case "${1:-run-default}" in
       *)         die "usage: sluice lock [--check [--json] | --diff [--json] | --enforce [--json] | --sbom [--format cyclonedx|spdx] | --scan [--json] [--fail-on <sev>] | --pin]" ;;
     esac
     ;;
-  update)  build --no-cache; write_lock; echo "${E_DIM}[sluice]${E_RST} updated - the box is down; run 'sluice' to start it (or 'sluice rebuild' to rebuild + start)." >&2; exit 0 ;;
+  update)
+    # Re-resolve packages to latest. _SLUICE_PIN_SKIP=1 (transient, function-scoped) skips pin mode for
+    # THIS build so it re-resolves fresh instead of replaying the old pin, then refresh both artifacts.
+    _SLUICE_PIN_SKIP=1 build --no-cache
+    write_lock
+    if [ "${SLUICE_PIN:-}" = 1 ]; then
+      # A pinning project: re-pin to the fresh versions, then one more PINNED build (cache-warm, replay
+      # legs no-op) so `update` ends with a verified pinned image (else 'lock --enforce' would fail after
+      # a sanctioned update).
+      write_pin
+      build
+      echo "${E_DIM}[sluice]${E_RST} re-resolved and re-pinned - the box is down; run 'sluice' to start it." >&2
+    else
+      echo "${E_DIM}[sluice]${E_RST} updated - the box is down; run 'sluice' to start it (or 'sluice rebuild' to rebuild + start)." >&2
+    fi
+    exit 0 ;;
   shell)
     # run_in (not exec_in) so the EXIT trap fires the receipt after the interactive session - the
     # "every run ends with a receipt" promise holds for `shell` too, not just run-default.

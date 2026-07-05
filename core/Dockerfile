@@ -6,9 +6,12 @@
 # BASE_IMAGE (global, used in the project FROM) defaults to the local `base` stage; override it
 # with a published ghcr.io/.../sluice-base:<ver> ref (via SLUICE_BASE_IMAGE) to skip rebuilding.
 ARG BASE_IMAGE=base
+# WOLFI_BASE (the local `base` stage's FROM) defaults to the rolling wolfi ref; SLUICE_PIN=1 overrides it
+# with the @sha256 digest recorded in sluice.pin, so a replay build starts from the exact base image.
+ARG WOLFI_BASE=cgr.dev/chainguard/wolfi-base
 
 # ============ base: generic sluice core (published + cosign-signed) =====================
-FROM cgr.dev/chainguard/wolfi-base AS base
+FROM ${WOLFI_BASE} AS base
 
 # Add the full Wolfi OS repo (+ signing key) so SLUICE_EXTRA_PKGS can pull anything Wolfi ships.
 RUN apk add --no-cache curl \
@@ -52,7 +55,8 @@ COPY init-firewall.sh /usr/local/bin/init-firewall.sh
 COPY entrypoint.sh    /usr/local/bin/entrypoint.sh
 COPY smoke-test.sh    /usr/local/bin/smoke-test.sh
 COPY dns-allow.sh     /usr/local/bin/sluice-dns-allow
-RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh /usr/local/bin/smoke-test.sh /usr/local/bin/sluice-dns-allow
+COPY replay.sh        /usr/local/bin/sluice-replay
+RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh /usr/local/bin/smoke-test.sh /usr/local/bin/sluice-dns-allow /usr/local/bin/sluice-replay
 
 # Defense in depth: strip setuid/setgid from EVERY base binary. shadow ships chfn/chsh/passwd/gpasswd/
 # chage/expiry setuid-root, but the box runs as root at boot and execs sessions as uid 1000, which
@@ -98,5 +102,18 @@ RUN . /usr/local/share/sluice.config.sh \
 COPY --chown=sluice:sluice prefetch/ /home/sluice/.sluice-prefetch/
 RUN . /usr/local/share/sluice.config.sh \
     && if [ -n "${SLUICE_PREFETCH_CMD:-}" ]; then cd /home/sluice/.sluice-prefetch && sh -eux -c "$SLUICE_PREFETCH_CMD"; fi
+USER root
+WORKDIR /
+
+# --- SLUICE_PIN=1: pinned replay. Converge the installed package versions onto sluice.pin (copied into
+#     the build context by build() only in pin mode; else it's a lone .keep). Two guarded legs at the END
+#     so a NORMAL build (SLUICE_PIN unset) runs neither and keeps every earlier layer's cache. The pin is
+#     the build-arg, never the baked config, so an env-only SLUICE_PIN=1 crosses into the build. ---
+ARG SLUICE_PIN=""
+COPY pin/ /usr/local/share/sluice-pin/
+RUN if [ "${SLUICE_PIN}" = 1 ]; then SLUICE_PIN=1 /usr/local/bin/sluice-replay root; fi
+USER sluice
+WORKDIR /home/sluice
+RUN if [ "${SLUICE_PIN}" = 1 ]; then SLUICE_PIN=1 /usr/local/bin/sluice-replay user; fi
 USER root
 WORKDIR /

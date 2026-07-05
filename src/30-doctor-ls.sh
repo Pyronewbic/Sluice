@@ -230,7 +230,7 @@ _allow_covers_denied() {
 #   _PEVAL_SRC        policy source label;  _PEVAL_SUMMARY  "N allow, N deny, N forbid"
 #   _PEVAL_UNKNOWNS   unknown directive tokens;  _PEVAL_STRICT  1 if strict-unknown
 policy_evaluate() {
-  local body allow="" deny="" denyip="" forbid="" maxips="" launder=0 strict=0 rsbase=0 unknowns="" line verb arg
+  local body allow="" deny="" denyip="" forbid="" maxips="" maxhardcap="" launder=0 strict=0 rsbase=0 unknowns="" line verb arg
   body="$(_policy_raw)"
   while IFS= read -r line; do
     line="${line%%#*}"; line="$(printf '%s' "$line" | awk '{$1=$1};1')"; [ -n "$line" ] || continue
@@ -242,6 +242,7 @@ policy_evaluate() {
       forbid)              forbid="$forbid $arg" ;;
       forbid-laundering)   launder=1 ;;
       max-allow-ips)       maxips="$arg" ;;
+      max-hard-cap-bytes)  maxhardcap="$arg" ;;
       strict-unknown)      strict=1 ;;
       require-signed-base) rsbase=1 ;;
       *) if [ -z "$arg" ] && printf '%s' "$verb" | grep -qE '^\.?[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$'; then allow="$allow $verb"
@@ -292,6 +293,16 @@ EOF
   done
   set +f
   case "$maxips" in ''|*[!0-9]*) ;; *) if [ "$ipn" -gt "$maxips" ]; then refusals="$refusals""policy caps SLUICE_ALLOW_IPS at $maxips (your config has $ipn)"$'\n'; fi ;; esac
+  # (7) max-hard-cap-bytes N: the org mandates a PREVENTIVE egress ceiling <= N. Refuse if the box sets
+  # none, sets a non-numeric one, or exceeds N - so a developer can't opt out of the volume bound.
+  case "$maxhardcap" in
+    ''|*[!0-9]*) ;;
+    *) case "${SLUICE_EGRESS_HARD_CAP_BYTES:-}" in
+         '')       refusals="$refusals""policy requires SLUICE_EGRESS_HARD_CAP_BYTES <= $maxhardcap (your config sets none)"$'\n' ;;
+         *[!0-9]*) refusals="$refusals""policy requires a numeric SLUICE_EGRESS_HARD_CAP_BYTES <= $maxhardcap"$'\n' ;;
+         *)        [ "$SLUICE_EGRESS_HARD_CAP_BYTES" -gt "$maxhardcap" ] && refusals="$refusals""policy caps SLUICE_EGRESS_HARD_CAP_BYTES at $maxhardcap (your config sets $SLUICE_EGRESS_HARD_CAP_BYTES)"$'\n' ;;
+       esac ;;
+  esac
   _PEVAL_REFUSALS="$refusals"
   # source + counts for visibility (banner/run line / doctor).
   _PEVAL_SRC="$([ -f /etc/sluice/policy.conf ] && echo /etc/sluice/policy.conf || { [ -f "$HOME/.config/sluice/policy.conf" ] && echo "$HOME/.config/sluice/policy.conf" || echo "${SLUICE_POLICY_URL:-}"; })"
@@ -460,6 +471,14 @@ cmd_doctor() {
     _doc lock "${C_DIM}none${C_RST} - run 'sluice lock' to record installed versions"
   fi
 
+  # Pinned replay (SLUICE_PIN=1 + sluice.pin): show the pin state next to the lock rows.
+  if [ -f "$PROJECT_DIR/sluice.pin" ]; then
+    if [ "${SLUICE_PIN:-}" = 1 ]; then _doc pin "${C_GRN}SLUICE_PIN=1${C_RST} - build replays sluice.pin (verified against sluice.lock)"
+    else _doc pin "${C_DIM}sluice.pin present${C_RST} - set SLUICE_PIN=1 to build from it (pinned replay)"; fi
+  elif [ "${SLUICE_PIN:-}" = 1 ]; then
+    _attn=$((_attn+1)); _doc pin "${C_RED}SLUICE_PIN=1 but no sluice.pin${C_RST} - run 'sluice lock --pin' first"
+  fi
+
   if [ -n "${SLUICE_STATE_DIRS:-}" ]; then
     local nsd=0 _sd
     set -f   # dir names are not globs - count them, don't expand against $PWD
@@ -479,9 +498,16 @@ cmd_doctor() {
   [ -n "${SLUICE_RUNTIME:-}" ]          && _hard="$_hard runtime=$SLUICE_RUNTIME"
   [ -n "${SLUICE_MEMORY:-}" ]           && _hard="$_hard memory=$SLUICE_MEMORY"
   [ -n "${SLUICE_BUMP_DOMAINS:-}" ]     && _hard="$_hard tls-bump"
+  [ -n "${SLUICE_EGRESS_HARD_CAP_BYTES:-}" ] && _hard="$_hard hard-cap=$SLUICE_EGRESS_HARD_CAP_BYTES"
+  [ -n "${SLUICE_ALLOW_IPS_MAX_BYTES:-}" ]   && _hard="$_hard allow-ips-budget=$SLUICE_ALLOW_IPS_MAX_BYTES"
+  [ "${SLUICE_DNS_AUDIT:-}" = 1 ]       && _hard="$_hard dns-audit"
   # Always show a harden row: opt-ins when on, else the effective default posture the run path applies.
   if [ -n "$_hard" ]; then _doc harden "${_hard# }"
   else _doc harden "${C_DIM}defaults (seccomp=default, root rw, workspace=bind)${C_RST}"; fi
+  # Bump upload controls are a no-op without a bumped host to filter - flag the misconfig.
+  if [ -z "${SLUICE_BUMP_DOMAINS:-}" ] && { [ -n "${SLUICE_BUMP_METHODS:-}" ] || [ -n "${SLUICE_BUMP_MAX_BODY:-}" ]; }; then
+    _attn=$((_attn+1)); _doc "" "${C_YEL}note${C_RST}: SLUICE_BUMP_METHODS/SLUICE_BUMP_MAX_BODY set but SLUICE_BUMP_DOMAINS is empty - the bump controls are a no-op (nothing is decrypted to filter)"
+  fi
 
   [ -n "${SLUICE_PORTS:-}" ] && _doc ports "$SLUICE_PORTS ${C_DIM}(published on 127.0.0.1)${C_RST}"
   # Under a managed policy, the live allowlist is (local + allow) - deny: show what would ACTUALLY be
@@ -647,10 +673,14 @@ cmd_doctor_json() {
   [ "${SLUICE_READONLY_ROOT:-}" = 1 ]   && _ro=true
   [ "${SLUICE_WORKSPACE:-}" = overlay ] && _ws=true
   [ -n "${SLUICE_BUMP_DOMAINS:-}" ]     && _bump=true
+  local _pinned=false; [ "${SLUICE_PIN:-}" = 1 ] && _pinned=true
+  local _dnsaudit=false; [ "${SLUICE_DNS_AUDIT:-}" = 1 ] && _dnsaudit=true
   local hardening_json
-  hardening_json="$(printf '{"seccomp":"%s","readonly_root":%s,"workspace_overlay":%s,"runtime":"%s","memory":"%s","pids_limit":"%s","tls_bump":%s}' \
+  hardening_json="$(printf '{"seccomp":"%s","readonly_root":%s,"workspace_overlay":%s,"runtime":"%s","memory":"%s","pids_limit":"%s","tls_bump":%s,"hard_cap_bytes":"%s","allow_ips_max_bytes":"%s","dns_audit":%s,"bump_methods":"%s","bump_max_body":"%s","pinned":%s}' \
     "$(_json_esc "${SLUICE_SECCOMP:-default}")" "$_ro" "$_ws" "$(_json_esc "${SLUICE_RUNTIME:-}")" \
-    "$(_json_esc "${SLUICE_MEMORY:-}")" "$(_json_esc "${SLUICE_PIDS_LIMIT:-4096}")" "$_bump")"
+    "$(_json_esc "${SLUICE_MEMORY:-}")" "$(_json_esc "${SLUICE_PIDS_LIMIT:-4096}")" "$_bump" \
+    "$(_json_esc "${SLUICE_EGRESS_HARD_CAP_BYTES:-}")" "$(_json_esc "${SLUICE_ALLOW_IPS_MAX_BYTES:-}")" "$_dnsaudit" \
+    "$(_json_esc "${SLUICE_BUMP_METHODS:-}")" "$(_json_esc "${SLUICE_BUMP_MAX_BODY:-}")" "$_pinned")"
 
   # Exfil-surface risk: allowlisted hosts that are writable laundering channels or DoH resolvers.
   local _risky="" _doh="" _h _allowdoh=false

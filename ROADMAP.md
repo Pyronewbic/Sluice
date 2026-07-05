@@ -101,8 +101,12 @@ rough effort (S/M/L) and the gap each closes.
   cross-dir `-b/--box` targeting, `prune --orphans`, `doctor`/`egress --json`, a deny-capable central
   [policy](docs/policy.md)). The SaaS aggregator/dashboard + fleet `ls` + signed policy bundles +
   credential brokering wait on adoption pull - the monetization (open-core), not first.
-- **Supply-chain depth - M.** APKINDEX-snapshot pinning + full pinned-version replay (CycloneDX + cosign
-  SBOM attestation + cargo inventory + SPDX output + `lock --enforce` strict gate shipped).
+- **Supply-chain depth - M - pinned replay LANDED.** `sluice lock --pin` writes a `sluice.pin` (base
+  @sha256 digest + exact apk/npm/pip/gem/go/cargo versions); `SLUICE_PIN=1` replays it into a build that
+  is **verified** against `sluice.lock` (fails closed on drift) - inventory-identical, not bit-for-bit
+  (Wolfi apk is rolling; an aged-out version fails closed, and `sluice update` re-resolves + re-pins).
+  (CycloneDX + cosign SBOM attestation + cargo inventory + SPDX output + `lock --enforce` strict gate
+  shipped earlier.) Remaining depth: a full APKINDEX snapshot for offline replay of aged-out versions.
 
 **Deferred (on real demand / not now):** Windows/WSL2, GPU passthrough, further stack detection beyond
 the current 11 (the generic base + `SLUICE_EXTRA_PKGS`/`SLUICE_RUN_CMD`, or a Procfile/Makefile run target,

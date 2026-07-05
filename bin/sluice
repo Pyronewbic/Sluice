@@ -132,6 +132,7 @@ Env: SLUICE_ENGINE  SLUICE_RUNTIME=kata  SLUICE_NO_BANNER  SLUICE_YES  SLUICE_NO
      SLUICE_SECCOMP=hardened|browser|audit (extra syscall filter; hardened >= engine default)
      SLUICE_READONLY_ROOT=1 (immutable rootfs; tmpfs + anon-volume the writable paths)
      SLUICE_WORKSPACE=overlay (host repo read-only; box edits a copy - see 'diff'/'apply')
+     SLUICE_EGRESS_HARD_CAP_BYTES=N (preventive in-box egress cap)  SLUICE_PIN=1 (verified pinned replay)
      Config knobs (sluice.config.sh): see sluice.config.example.sh + docs/configuration.md
 Docs: https://github.com/Pyronewbic/Sluice
 EOF
@@ -233,7 +234,9 @@ _collapsible() {
 config_hash() {
   { printf 'base=%s\n' "${SLUICE_BASE_IMAGE:-}"; grep -vE '^[[:space:]]*SLUICE_ALLOW_DOMAINS=' "$PROJECT_CONFIG"; \
     find "$CORE" -type f | LC_ALL=C sort | while read -r f; do cat "$f"; done; \
-    for f in ${SLUICE_PREFETCH_FILES:-}; do [ -f "$PROJECT_DIR/$f" ] && cat "$PROJECT_DIR/$f"; done; } \
+    for f in ${SLUICE_PREFETCH_FILES:-}; do [ -f "$PROJECT_DIR/$f" ] && cat "$PROJECT_DIR/$f"; done; \
+    printf 'pin=%s\n' "${SLUICE_PIN:-}"; \
+    if [ "${SLUICE_PIN:-}" = 1 ] && [ -f "$PROJECT_DIR/sluice.pin" ]; then cat "$PROJECT_DIR/sluice.pin"; fi; } \
     | shasum | awk '{print $1}' | cut -c1-12
 }
 
@@ -401,6 +404,98 @@ _host_budget_for() {
   printf '%s' "$best"
 }
 
+# Per-entry SLUICE_ALLOW_IPS accounting: read the OUTPUT chain's counters (the direct-egress jumps route
+# through SLUICE-ALLOWIPS), emitting "<entry>\t<packets>\t<bytes>" per entry - the first visibility into
+# the direct-IP escape hatch, which bypasses squid and was invisible to the receipt. Root-side iptables
+# read (NET_ADMIN kept; /sbin on _ROOT_PATH). Empty read is gated by _audit_readable at the call site.
+# Note: these count ATTEMPTED wire bytes (headers included; packets a budget DROP later ate are counted);
+# entries on :80/:443 are dead (the NAT REDIRECT wins) and show 0.
+allowips_rows() {
+  _root_exec "$container" iptables -nvxL OUTPUT 2>/dev/null | awk '
+    $3=="SLUICE-ALLOWIPS" {
+      dst=$9; port="";
+      for (i=10;i<=NF;i++) if ($i ~ /^dpt:/) port=substr($i,5);
+      entry=(port=="") ? dst : dst":"port;
+      printf "%s\t%d\t%d\n", entry, $1, $2;
+    }'
+}
+
+# Firewall-dropped total: parse the OUTPUT chain's policy-DROP counter ("Chain OUTPUT (policy DROP N
+# packets, M bytes)") - the first visibility into non-HTTP blocked egress attempts. Emits "<packets>\t<bytes>".
+fw_dropped() {
+  _root_exec "$container" iptables -nvxL OUTPUT 2>/dev/null | awk '
+    /^Chain OUTPUT / {
+      p=0; b=0;
+      for (i=1;i<=NF;i++) { if ($i ~ /^packets,?$/) p=$(i-1); if ($i ~ /^bytes\)?$/) b=$(i-1); }
+      printf "%d\t%d\n", p, b; exit;
+    }'
+}
+
+# DNS query audit (SLUICE_DNS_AUDIT=1): read dnsmasq's query log and group by immediate parent domain,
+# emitting "<parent>\t<queries>\t<unique_names>". A DNS tunnel concentrates MANY unique leftmost labels
+# under one parent (exfil as DNS labels), so a high unique-name count per parent is the signal. Queried
+# names are attacker-controlled bytes -> the same hostname charset gate as SNI (drops $(),",ESC). Reuses
+# the _SQUID_LOG_CAP DoS ceiling. Empty read gated by _audit_readable at the call site.
+dns_rows() {
+  _root_exec "$container" sh -c "tail -c $_SQUID_LOG_CAP /var/log/squid/dns.log" 2>/dev/null | awk '
+    /query\[/ {
+      name="";
+      for (i=1;i<=NF;i++) if ($i ~ /^query\[/) { name=$(i+1); break }
+      if (name=="" || name !~ /^[A-Za-z0-9._-]+$/) next;   # non-hostname bytes: skip (RCE/escape guard)
+      n=split(name, L, ".");
+      if (n<=2) parent=name; else { parent=L[2]; for (j=3;j<=n;j++) parent=parent"."L[j] }
+      cnt[parent]++;
+      key=parent SUBSEP name;
+      if (!(key in seen)) { seen[key]=1; uniq[parent]++ }
+    }
+    END { for (p in cnt) printf "%s\t%d\t%d\n", p, cnt[p], uniq[p] }'
+}
+
+# Packets the SLUICE_ALLOW_IPS shared budget DROP'd (SLUICE_ALLOW_IPS_MAX_BYTES exhausted mid-run). A
+# non-zero count means the box hit the direct-IP cap during the run -> `sluice egress` fails the gate.
+# Empty when the chain/budget isn't present (no SLUICE-ALLOWIPS DROP rule).
+allowips_dropped() {
+  _root_exec "$container" iptables -nvxL SLUICE-ALLOWIPS 2>/dev/null | awk '
+    $3=="DROP" { print $1+0; found=1; exit } END { if (!found) print "" }'
+}
+
+# ",\"allow_ips\":[...],\"fw_dropped\":{...}" for the receipt + `sluice egress --json`, or "" when
+# SLUICE_ALLOW_IPS is unset. One iptables read each for the per-entry counters and the policy-DROP total.
+_allowips_json_fields() {
+  [ -n "${SLUICE_ALLOW_IPS:-}" ] || { printf ''; return 0; }
+  local TAB e p b aij="" first=1 fwd fp fb; TAB="$(printf '\t')"
+  while IFS="$TAB" read -r e p b; do
+    [ -n "$e" ] || continue
+    [ "$first" = 1 ] && first=0 || aij="$aij,"
+    aij="$aij{\"entry\":\"$(_json_esc "$e")\",\"packets\":${p:-0},\"bytes\":${b:-0}}"
+  done <<EOF
+$(allowips_rows 2>/dev/null || true)
+EOF
+  fwd="$(fw_dropped 2>/dev/null || true)"; fp="${fwd%%"$TAB"*}"; fb="${fwd#*"$TAB"}"
+  case "$fp" in ''|*[!0-9]*) fp=0 ;; esac
+  case "$fb" in ''|*[!0-9]*) fb=0 ;; esac
+  printf ',"allow_ips":[%s],"fw_dropped":{"packets":%s,"bytes":%s}' "$aij" "$fp" "$fb"
+}
+
+# ",\"dns\":{...}" when SLUICE_DNS_AUDIT=1, else "". Sums dns_rows for totals + flags tunnel parents
+# (unique names >= SLUICE_DNS_TUNNEL_THRESHOLD, default 500).
+_dns_json_fields() {
+  [ "${SLUICE_DNS_AUDIT:-}" = 1 ] || { printf ''; return 0; }
+  local TAB p q u tq=0 tu=0 fl="" ffirst=1 thr; TAB="$(printf '\t')"
+  thr="${SLUICE_DNS_TUNNEL_THRESHOLD:-500}"; case "$thr" in ''|*[!0-9]*) thr=500 ;; esac
+  while IFS="$TAB" read -r p q u; do
+    [ -n "$p" ] || continue
+    tq=$((tq + q)); tu=$((tu + u))
+    if [ "$u" -ge "$thr" ]; then
+      [ "$ffirst" = 1 ] && ffirst=0 || fl="$fl,"
+      fl="$fl{\"parent\":\"$(_json_esc "$p")\",\"unique\":$u}"
+    fi
+  done <<EOF
+$(dns_rows 2>/dev/null || true)
+EOF
+  printf ',"dns":{"queries":%s,"unique":%s,"flagged":[%s]}' "$tq" "$tu" "$fl"
+}
+
 # The proxy-log byte offset captured at the start of the last `sluice` run (written to /run by the run
 # arms). Lets `sluice learn` scope to that run instead of the whole boot; empty if no run / box rebooted.
 # `|| true` on the cat: a missing offset file -> empty offset (callers' full-log fallback), never a
@@ -528,6 +623,12 @@ $hb_tx_table
 EOF
   fi
   [ "$hb_over" = 1 ] && over=1
+  # SLUICE_ALLOW_IPS_MAX_BYTES: the shared direct-IP budget DROPs packets once exhausted; a non-zero
+  # DROP counter means the run hit the cap -> fail the gate (bounds direct-IP exfil by volume).
+  if [ -n "${SLUICE_ALLOW_IPS:-}" ] && [ -n "${SLUICE_ALLOW_IPS_MAX_BYTES:-}" ]; then
+    local _aid; _aid="$(allowips_dropped 2>/dev/null || true)"; case "$_aid" in ''|*[!0-9]*) _aid=0 ;; esac
+    [ "$_aid" -gt 0 ] && over=1
+  fi
   if [ "$mode" = --json ]; then
     # Back-compat host arrays + a detailed hosts array (class/requests/bytes) for the control plane.
     local allowed blocked hosts_json="" first=1 cls host cnt byt over_json=false
@@ -553,10 +654,11 @@ $rows
 EOF
     # window=boot: unlike the at-exit receipt (run-scoped), this command reads the whole-boot egress
     # window - so does its SLUICE_EGRESS_MAX_BYTES gate. Surfaced for the control plane (see docs/operations.md).
-    printf '{"schema":"sluice.egress/v1","box":"%s","window":"boot","allowed":%s,"blocked":%s,"tx_bytes":%s,"budget":%s,"over_budget":%s,"hosts":[%s]}\n' \
+    local _aipf _dnsf; _aipf="$(_allowips_json_fields)"; _dnsf="$(_dns_json_fields)"
+    printf '{"schema":"sluice.egress/v1","box":"%s","window":"boot","allowed":%s,"blocked":%s,"tx_bytes":%s,"budget":%s,"over_budget":%s,"hosts":[%s]%s%s}\n' \
       "$(_json_esc "$container")" \
       "$(printf '%s\n' "$allowed" | _json_arr)" "$(printf '%s\n' "$blocked" | _json_arr)" \
-      "$tx" "${cap:-null}" "$over_json" "$hosts_json"
+      "$tx" "${cap:-null}" "$over_json" "$hosts_json" "$_aipf" "$_dnsf"
     return "$over"
   fi
   if [ -n "$rows" ]; then
@@ -590,6 +692,32 @@ EOF
       case "$hb_tx" in ''|*[!0-9]*) hb_tx=0 ;; esac
       [ "$hb_tx" -gt "$hb_cap" ] && echo "  ${C_RED}host budget EXCEEDED${C_RST}: $hb_host sent $(_human_bytes "$hb_tx") > $(_human_bytes "$hb_cap") cap (SLUICE_EGRESS_HOST_BUDGETS)"
     done
+  fi
+  # SLUICE_ALLOW_IPS direct-egress accounting (the escape hatch that bypasses squid - now metered).
+  if [ -n "${SLUICE_ALLOW_IPS:-}" ]; then
+    local _e _p _b _fwd _fp _fb
+    allowips_rows 2>/dev/null | while IFS="$TAB" read -r _e _p _b; do
+      [ -n "$_e" ] || continue
+      echo "  ${C_DIM}direct-ip${C_RST} $_e  $_p pkt  $(_human_bytes "${_b:-0}")"
+    done
+    _fwd="$(fw_dropped 2>/dev/null || true)"; _fp="${_fwd%%"$TAB"*}"; _fb="${_fwd#*"$TAB"}"
+    case "$_fp" in ''|*[!0-9]*) _fp=0 ;; esac
+    [ "$_fp" -gt 0 ] && echo "  ${C_DIM}firewall dropped $_fp non-HTTP/off-allowlist packet(s)${C_RST}"
+    if [ -n "${SLUICE_ALLOW_IPS_MAX_BYTES:-}" ]; then
+      local _aid2; _aid2="$(allowips_dropped 2>/dev/null || true)"; case "$_aid2" in ''|*[!0-9]*) _aid2=0 ;; esac
+      [ "$_aid2" -gt 0 ] && echo "  ${C_RED}direct-ip budget EXCEEDED${C_RST}: $_aid2 pkt dropped (SLUICE_ALLOW_IPS_MAX_BYTES)"
+    fi
+  fi
+  # DNS query audit (SLUICE_DNS_AUDIT=1): volume + tunnel-pattern flags.
+  if [ "${SLUICE_DNS_AUDIT:-}" = 1 ]; then
+    local _dp _dq _du _dtq=0 _dtu=0 _thr; _thr="${SLUICE_DNS_TUNNEL_THRESHOLD:-500}"; case "$_thr" in ''|*[!0-9]*) _thr=500 ;; esac
+    while IFS="$TAB" read -r _dp _dq _du; do
+      [ -n "$_dp" ] || continue; _dtq=$((_dtq + _dq)); _dtu=$((_dtu + _du))
+      [ "$_du" -ge "$_thr" ] && echo "  ${C_RED}possible DNS-tunnel pattern${C_RST} under $_dp ($_du unique names)"
+    done <<EOF
+$(dns_rows 2>/dev/null || true)
+EOF
+    echo "  ${C_DIM}dns: $_dtq queries, $_dtu unique names${C_RST}"
   fi
   # C2: make the tamper-evident audit log discoverable (has-rows human path only; the empty case stays quiet).
   [ -n "$rows" ] && echo "  ${C_DIM}audit log: sluice egress --export | --verify${C_RST}"
@@ -1317,7 +1445,7 @@ _allow_covers_denied() {
 #   _PEVAL_SRC        policy source label;  _PEVAL_SUMMARY  "N allow, N deny, N forbid"
 #   _PEVAL_UNKNOWNS   unknown directive tokens;  _PEVAL_STRICT  1 if strict-unknown
 policy_evaluate() {
-  local body allow="" deny="" denyip="" forbid="" maxips="" launder=0 strict=0 rsbase=0 unknowns="" line verb arg
+  local body allow="" deny="" denyip="" forbid="" maxips="" maxhardcap="" launder=0 strict=0 rsbase=0 unknowns="" line verb arg
   body="$(_policy_raw)"
   while IFS= read -r line; do
     line="${line%%#*}"; line="$(printf '%s' "$line" | awk '{$1=$1};1')"; [ -n "$line" ] || continue
@@ -1329,6 +1457,7 @@ policy_evaluate() {
       forbid)              forbid="$forbid $arg" ;;
       forbid-laundering)   launder=1 ;;
       max-allow-ips)       maxips="$arg" ;;
+      max-hard-cap-bytes)  maxhardcap="$arg" ;;
       strict-unknown)      strict=1 ;;
       require-signed-base) rsbase=1 ;;
       *) if [ -z "$arg" ] && printf '%s' "$verb" | grep -qE '^\.?[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$'; then allow="$allow $verb"
@@ -1379,6 +1508,16 @@ EOF
   done
   set +f
   case "$maxips" in ''|*[!0-9]*) ;; *) if [ "$ipn" -gt "$maxips" ]; then refusals="$refusals""policy caps SLUICE_ALLOW_IPS at $maxips (your config has $ipn)"$'\n'; fi ;; esac
+  # (7) max-hard-cap-bytes N: the org mandates a PREVENTIVE egress ceiling <= N. Refuse if the box sets
+  # none, sets a non-numeric one, or exceeds N - so a developer can't opt out of the volume bound.
+  case "$maxhardcap" in
+    ''|*[!0-9]*) ;;
+    *) case "${SLUICE_EGRESS_HARD_CAP_BYTES:-}" in
+         '')       refusals="$refusals""policy requires SLUICE_EGRESS_HARD_CAP_BYTES <= $maxhardcap (your config sets none)"$'\n' ;;
+         *[!0-9]*) refusals="$refusals""policy requires a numeric SLUICE_EGRESS_HARD_CAP_BYTES <= $maxhardcap"$'\n' ;;
+         *)        [ "$SLUICE_EGRESS_HARD_CAP_BYTES" -gt "$maxhardcap" ] && refusals="$refusals""policy caps SLUICE_EGRESS_HARD_CAP_BYTES at $maxhardcap (your config sets $SLUICE_EGRESS_HARD_CAP_BYTES)"$'\n' ;;
+       esac ;;
+  esac
   _PEVAL_REFUSALS="$refusals"
   # source + counts for visibility (banner/run line / doctor).
   _PEVAL_SRC="$([ -f /etc/sluice/policy.conf ] && echo /etc/sluice/policy.conf || { [ -f "$HOME/.config/sluice/policy.conf" ] && echo "$HOME/.config/sluice/policy.conf" || echo "${SLUICE_POLICY_URL:-}"; })"
@@ -1547,6 +1686,14 @@ cmd_doctor() {
     _doc lock "${C_DIM}none${C_RST} - run 'sluice lock' to record installed versions"
   fi
 
+  # Pinned replay (SLUICE_PIN=1 + sluice.pin): show the pin state next to the lock rows.
+  if [ -f "$PROJECT_DIR/sluice.pin" ]; then
+    if [ "${SLUICE_PIN:-}" = 1 ]; then _doc pin "${C_GRN}SLUICE_PIN=1${C_RST} - build replays sluice.pin (verified against sluice.lock)"
+    else _doc pin "${C_DIM}sluice.pin present${C_RST} - set SLUICE_PIN=1 to build from it (pinned replay)"; fi
+  elif [ "${SLUICE_PIN:-}" = 1 ]; then
+    _attn=$((_attn+1)); _doc pin "${C_RED}SLUICE_PIN=1 but no sluice.pin${C_RST} - run 'sluice lock --pin' first"
+  fi
+
   if [ -n "${SLUICE_STATE_DIRS:-}" ]; then
     local nsd=0 _sd
     set -f   # dir names are not globs - count them, don't expand against $PWD
@@ -1566,9 +1713,16 @@ cmd_doctor() {
   [ -n "${SLUICE_RUNTIME:-}" ]          && _hard="$_hard runtime=$SLUICE_RUNTIME"
   [ -n "${SLUICE_MEMORY:-}" ]           && _hard="$_hard memory=$SLUICE_MEMORY"
   [ -n "${SLUICE_BUMP_DOMAINS:-}" ]     && _hard="$_hard tls-bump"
+  [ -n "${SLUICE_EGRESS_HARD_CAP_BYTES:-}" ] && _hard="$_hard hard-cap=$SLUICE_EGRESS_HARD_CAP_BYTES"
+  [ -n "${SLUICE_ALLOW_IPS_MAX_BYTES:-}" ]   && _hard="$_hard allow-ips-budget=$SLUICE_ALLOW_IPS_MAX_BYTES"
+  [ "${SLUICE_DNS_AUDIT:-}" = 1 ]       && _hard="$_hard dns-audit"
   # Always show a harden row: opt-ins when on, else the effective default posture the run path applies.
   if [ -n "$_hard" ]; then _doc harden "${_hard# }"
   else _doc harden "${C_DIM}defaults (seccomp=default, root rw, workspace=bind)${C_RST}"; fi
+  # Bump upload controls are a no-op without a bumped host to filter - flag the misconfig.
+  if [ -z "${SLUICE_BUMP_DOMAINS:-}" ] && { [ -n "${SLUICE_BUMP_METHODS:-}" ] || [ -n "${SLUICE_BUMP_MAX_BODY:-}" ]; }; then
+    _attn=$((_attn+1)); _doc "" "${C_YEL}note${C_RST}: SLUICE_BUMP_METHODS/SLUICE_BUMP_MAX_BODY set but SLUICE_BUMP_DOMAINS is empty - the bump controls are a no-op (nothing is decrypted to filter)"
+  fi
 
   [ -n "${SLUICE_PORTS:-}" ] && _doc ports "$SLUICE_PORTS ${C_DIM}(published on 127.0.0.1)${C_RST}"
   # Under a managed policy, the live allowlist is (local + allow) - deny: show what would ACTUALLY be
@@ -1734,10 +1888,14 @@ cmd_doctor_json() {
   [ "${SLUICE_READONLY_ROOT:-}" = 1 ]   && _ro=true
   [ "${SLUICE_WORKSPACE:-}" = overlay ] && _ws=true
   [ -n "${SLUICE_BUMP_DOMAINS:-}" ]     && _bump=true
+  local _pinned=false; [ "${SLUICE_PIN:-}" = 1 ] && _pinned=true
+  local _dnsaudit=false; [ "${SLUICE_DNS_AUDIT:-}" = 1 ] && _dnsaudit=true
   local hardening_json
-  hardening_json="$(printf '{"seccomp":"%s","readonly_root":%s,"workspace_overlay":%s,"runtime":"%s","memory":"%s","pids_limit":"%s","tls_bump":%s}' \
+  hardening_json="$(printf '{"seccomp":"%s","readonly_root":%s,"workspace_overlay":%s,"runtime":"%s","memory":"%s","pids_limit":"%s","tls_bump":%s,"hard_cap_bytes":"%s","allow_ips_max_bytes":"%s","dns_audit":%s,"bump_methods":"%s","bump_max_body":"%s","pinned":%s}' \
     "$(_json_esc "${SLUICE_SECCOMP:-default}")" "$_ro" "$_ws" "$(_json_esc "${SLUICE_RUNTIME:-}")" \
-    "$(_json_esc "${SLUICE_MEMORY:-}")" "$(_json_esc "${SLUICE_PIDS_LIMIT:-4096}")" "$_bump")"
+    "$(_json_esc "${SLUICE_MEMORY:-}")" "$(_json_esc "${SLUICE_PIDS_LIMIT:-4096}")" "$_bump" \
+    "$(_json_esc "${SLUICE_EGRESS_HARD_CAP_BYTES:-}")" "$(_json_esc "${SLUICE_ALLOW_IPS_MAX_BYTES:-}")" "$_dnsaudit" \
+    "$(_json_esc "${SLUICE_BUMP_METHODS:-}")" "$(_json_esc "${SLUICE_BUMP_MAX_BODY:-}")" "$_pinned")"
 
   # Exfil-surface risk: allowlisted hosts that are writable laundering channels or DoH resolvers.
   local _risky="" _doh="" _h _allowdoh=false
@@ -2900,6 +3058,38 @@ validate_host_budgets() {
 }
 case "${1:-run-default}" in run-default|run|shell|build|rebuild|update) validate_host_budgets ;; esac
 
+# SLUICE_EGRESS_HARD_CAP_BYTES: a PREVENTIVE in-box byte ceiling (xt_quota). Numeric and >= 1 MiB - boot
+# deny/allow probes + TLS handshakes consume the quota, so a sub-1MiB cap would brick the box at boot.
+# SLUICE_ALLOW_IPS_MAX_BYTES: a shared direct-IP budget (any numeric size). Both fail closed.
+validate_egress_hard_caps() {
+  case "${SLUICE_EGRESS_HARD_CAP_BYTES:-}" in
+    '') ;;
+    *[!0-9]*) die "SLUICE_EGRESS_HARD_CAP_BYTES must be a byte count (got '${SLUICE_EGRESS_HARD_CAP_BYTES}')" ;;
+    *) [ "$SLUICE_EGRESS_HARD_CAP_BYTES" -ge 1048576 ] || die "SLUICE_EGRESS_HARD_CAP_BYTES must be >= 1048576 (1 MiB) - boot probes + TLS handshakes consume the budget; a smaller cap bricks the box at boot" ;;
+  esac
+  case "${SLUICE_ALLOW_IPS_MAX_BYTES:-}" in
+    '') ;;
+    *[!0-9]*) die "SLUICE_ALLOW_IPS_MAX_BYTES must be a byte count (got '${SLUICE_ALLOW_IPS_MAX_BYTES}')" ;;
+  esac
+}
+case "${1:-run-default}" in run-default|run|shell|build|rebuild|update) validate_egress_hard_caps ;; esac
+
+# SLUICE_BUMP_METHODS / SLUICE_BUMP_MAX_BODY are sed'd into squid.conf in-box (H5), so their charset is
+# security-critical (injection). Validate host-side; the entrypoint re-validates (defense in depth).
+validate_bump_controls() {
+  local _m
+  set -f
+  for _m in ${SLUICE_BUMP_METHODS:-}; do
+    case "$_m" in *[!A-Za-z]*) set +f; die "SLUICE_BUMP_METHODS token '$_m' must be letters only (an HTTP method, e.g. GET HEAD POST)" ;; esac
+  done
+  set +f
+  case "${SLUICE_BUMP_MAX_BODY:-}" in
+    '') ;;
+    *[!0-9]*) die "SLUICE_BUMP_MAX_BODY must be a byte count (got '${SLUICE_BUMP_MAX_BODY}')" ;;
+  esac
+}
+case "${1:-run-default}" in run-default|run|shell|build|rebuild|update) validate_bump_controls ;; esac
+
 # build: assemble a temp context (core + this project's config) and build
 # Verify a published base image's cosign signature (keyless/OIDC). Soft by default: warn if
 # cosign is absent or the image is unsigned; SLUICE_REQUIRE_SIGNED=1 makes either case fatal.
@@ -2955,6 +3145,16 @@ build() {
     [ -f "$PROJECT_DIR/$_pf" ] && cp "$PROJECT_DIR/$_pf" "$tmp/prefetch/" 2>/dev/null || true
   done
   set +f
+  # Pinned replay (SLUICE_PIN=1): the Dockerfile always COPY's pin/, so keep a .keep there; drop the real
+  # sluice.pin in ONLY when pin mode is active (so an env-only SLUICE_PIN=1 still crosses into the build).
+  # _SLUICE_PIN_SKIP is an internal, non-contract flag the `update` path sets to re-resolve fresh first.
+  mkdir -p "$tmp/pin"; : > "$tmp/pin/.keep"
+  local _pin_active=""
+  if [ "${SLUICE_PIN:-}" = 1 ] && [ "${_SLUICE_PIN_SKIP:-}" != 1 ]; then
+    [ -f "$PROJECT_DIR/sluice.pin" ] || { rm -rf "$tmp"; die "SLUICE_PIN=1 but no sluice.pin - run 'sluice lock --pin' first"; }
+    cp "$PROJECT_DIR/sluice.pin" "$tmp/pin/sluice.pin"
+    _pin_active=1
+  fi
   # Self-describing labels (read by `sluice ls`; not part of config_hash, so no spurious rebuild).
   local args=(--label "sluice.confighash=$(config_hash)"
     --label "sluice.project=$PROJECT_DIR"
@@ -2966,6 +3166,20 @@ build() {
   if [ -n "${SLUICE_BASE_IMAGE:-}" ]; then
     verify_base "$SLUICE_BASE_IMAGE"
     args+=(--build-arg "BASE_IMAGE=$SLUICE_BASE_IMAGE")     # project layer FROM the signed base
+  fi
+  # Pin mode: build FROM the exact base digest recorded in sluice.pin and turn on the replay legs.
+  if [ -n "$_pin_active" ]; then
+    args+=(--build-arg SLUICE_PIN=1)
+    local _pinbase; _pinbase="$(awk '$1=="base"{print $2; exit}' "$PROJECT_DIR/sluice.pin")"
+    case "$_pinbase" in *@sha256:*) ;; *) rm -rf "$tmp"; die "sluice.pin has no @sha256 base digest - re-run 'sluice lock --pin'" ;; esac
+    if [ -n "${SLUICE_BASE_IMAGE:-}" ]; then
+      # Signed-base build: the pinned base must be the same repo as the configured one (else re-pin).
+      local _pbrepo="${_pinbase%@*}" _birepo="${SLUICE_BASE_IMAGE%@*}"; _birepo="${_birepo%:*}"; _pbrepo="${_pbrepo%:*}"
+      [ "$_pbrepo" = "$_birepo" ] || { rm -rf "$tmp"; die "config base ($SLUICE_BASE_IMAGE) changed since the pin ($_pinbase) - re-run 'sluice lock --pin'"; }
+      args+=(--build-arg "BASE_IMAGE=$_pinbase")   # FROM the pinned digest (verify_base already ran above)
+    else
+      args+=(--build-arg "WOLFI_BASE=$_pinbase")   # local build: pin the wolfi base by digest
+    fi
   fi
   # Quiet the engine's build transcript (layer/apk/npm chatter) to a per-box log; on failure replay
   # the tail so the error is visible. The full transcript is always one `cat` away at the logged path.
@@ -2985,7 +3199,20 @@ build() {
   if [ -z "$_ok" ]; then
     echo "[sluice] ${E_YEL}build failed${E_RST} - last lines of $(_tilde "$_blog"):" >&2
     tail -n 40 "$_blog" >&2 2>/dev/null || true
+    [ -n "$_pin_active" ] && echo "[sluice] ${E_YEL}note${E_RST}: pinned build (SLUICE_PIN=1) - a pinned version may no longer be served (Wolfi is rolling); 'sluice update' re-resolves + re-pins." >&2
     die "image build failed (transient registry/network error? re-run, or set SLUICE_BUILD_RETRIES=N to auto-retry; full log: $_blog)"
+  fi
+  # Pinned replay: the CLAIM is earned by VERIFICATION, not by the replay legs alone. Assert the built
+  # image's inventory matches sluice.lock (write_pin refreshed it from the same pinned closure); die on
+  # any drift so a partial replay can never pass as a verified pin.
+  if [ -n "$_pin_active" ]; then
+    local _pdrift; _pdrift="$(classify_drift "$(lock_drift 2>/dev/null || true)" 2>/dev/null || true)"
+    if [ -n "$_pdrift" ]; then
+      echo "[sluice] ${E_RED}pinned build did NOT match sluice.lock${E_RST} - replay drift:" >&2
+      printf '%s\n' "$_pdrift" | render_drift_human err >&2
+      die "pinned replay verification failed - the built image drifted from sluice.lock (a pinned version may be unavailable; 'sluice update' re-resolves + re-pins)"
+    fi
+    echo "[sluice] ${E_GRN}pinned build verified${E_RST}: inventory matches sluice.lock" >&2
   fi
   "$RUNNER" rm -f -v "$container" >/dev/null 2>&1 || true   # rebuilt image -> fresh container
   runtime_sync_image force
@@ -3169,6 +3396,9 @@ start() {
   # filtering (SLUICE_BUMP_URLS); everything else splices. Passed like the allowlist (live edits, no
   # rebuild). When on, the box mints a per-container CA; the CA-trust env below points clients at it.
   run_args+=(-e "SLUICE_RUNTIME_BUMP=${SLUICE_BUMP_DOMAINS:-}" -e "SLUICE_RUNTIME_BUMP_URLS=${SLUICE_BUMP_URLS:-}")
+  # Bumped-lane upload controls (opt-in, only meaningful with SLUICE_BUMP_DOMAINS): a method allowlist +
+  # a request-body cap, passed like the other bump knobs (applied at container start, no image rebuild).
+  run_args+=(-e "SLUICE_RUNTIME_BUMP_METHODS=${SLUICE_BUMP_METHODS:-}" -e "SLUICE_RUNTIME_BUMP_MAX_BODY=${SLUICE_BUMP_MAX_BODY:-}")
   if [ -n "${SLUICE_BUMP_DOMAINS:-}" ]; then
     run_args+=(-e "NODE_EXTRA_CA_CERTS=/etc/squid/ssl/squid-cert.pem" \
                -e "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt" \
@@ -3385,6 +3615,11 @@ EOF
   _inner="$(printf '"schema":"sluice.egress/v1","run":"%s","ts":"%s","box":"%s","status":"%s","confighash":"%s","allowlist":%s,"totals":{"reached":%s,"blocked":%s,"bytes":%s},"hosts":[%s]' \
     "$_run" "$_ts" "$(_json_esc "$container")" "$rstatus" "$(config_hash 2>/dev/null || true)" \
     "$(allowed_domains | tr ' ' '\n' | _json_arr)" "${_reached:-0}" "${_blocked:-0}" "${_tot:-0}" "$_hj")"
+  # Additive M2 sections, inserted BEFORE the trailing prev/self chain fields (the receipt-line invariant):
+  # direct-IP (SLUICE_ALLOW_IPS) counters + firewall-dropped total, and the DNS audit summary. Empty
+  # strings when the knobs are off, so an unchanged box keeps a byte-identical record. Only on a readable
+  # box (a down box has no counters to read).
+  if [ "$rstatus" = ok ]; then _inner="$_inner$(_allowips_json_fields)$(_dns_json_fields)"; fi
   printf '{%s}\n' "$_inner" > "$_dir/egress-receipt.json" 2>/dev/null || true
   # prev = the previous record's self (genesis = 64 zeros). Guard the read: a first-run tail on the
   # not-yet-existing log exits non-zero, which under the launcher's set -e/pipefail would abort here.
@@ -3443,6 +3678,29 @@ show_egress_receipt() {
     }' >&2
 
   _persist_receipt "$rows" ok   # latest snapshot + append to the hash-chained audit log
+
+  # SLUICE_ALLOW_IPS direct-egress (bypasses squid) + firewall-drop visibility; a busted shared budget flags loud.
+  if [ -n "${SLUICE_ALLOW_IPS:-}" ]; then
+    local _re _rp _rb; allowips_rows 2>/dev/null | while IFS="$TAB" read -r _re _rp _rb; do
+      [ -n "$_re" ] || continue
+      printf '  %sdirect-ip%s %s  %s pkt  %s\n' "$dim" "$rst" "$_re" "$_rp" "$(_human_bytes "${_rb:-0}")" >&2
+    done
+    if [ -n "${SLUICE_ALLOW_IPS_MAX_BYTES:-}" ]; then
+      local _rad; _rad="$(allowips_dropped 2>/dev/null || true)"; case "$_rad" in ''|*[!0-9]*) _rad=0 ;; esac
+      [ "$_rad" -gt 0 ] && printf '%s[sluice] direct-ip budget exceeded:%s %s pkt dropped - `sluice egress` will fail CI.\n' "$red" "$rst" "$_rad" >&2
+    fi
+  fi
+  # DNS audit tunnel-pattern flags (SLUICE_DNS_AUDIT=1).
+  if [ "${SLUICE_DNS_AUDIT:-}" = 1 ]; then
+    local _sp _sq _su _stq=0 _stu=0 _sthr; _sthr="${SLUICE_DNS_TUNNEL_THRESHOLD:-500}"; case "$_sthr" in ''|*[!0-9]*) _sthr=500 ;; esac
+    while IFS="$TAB" read -r _sp _sq _su; do
+      [ -n "$_sp" ] || continue; _stq=$((_stq + _sq)); _stu=$((_stu + _su))
+      [ "$_su" -ge "$_sthr" ] && printf '%s[sluice] possible DNS-tunnel pattern%s under %s (%s unique names)\n' "$red" "$rst" "$_sp" "$_su" >&2
+    done <<EOF
+$(dns_rows 2>/dev/null || true)
+EOF
+    printf '  %sdns: %s queries, %s unique names%s\n' "$dim" "$_stq" "$_stu" "$rst" >&2
+  fi
 
   # SLUICE_EGRESS_MAX_BYTES: loud warning when this run sent more than the cap (bounds laundering
   # through an allowed host). `sluice egress` is the CI gate (exits non-zero); the receipt just nudges.
@@ -3788,7 +4046,22 @@ case "${1:-run-default}" in
       *)         die "usage: sluice lock [--check [--json] | --diff [--json] | --enforce [--json] | --sbom [--format cyclonedx|spdx] | --scan [--json] [--fail-on <sev>] | --pin]" ;;
     esac
     ;;
-  update)  build --no-cache; write_lock; echo "${E_DIM}[sluice]${E_RST} updated - the box is down; run 'sluice' to start it (or 'sluice rebuild' to rebuild + start)." >&2; exit 0 ;;
+  update)
+    # Re-resolve packages to latest. _SLUICE_PIN_SKIP=1 (transient, function-scoped) skips pin mode for
+    # THIS build so it re-resolves fresh instead of replaying the old pin, then refresh both artifacts.
+    _SLUICE_PIN_SKIP=1 build --no-cache
+    write_lock
+    if [ "${SLUICE_PIN:-}" = 1 ]; then
+      # A pinning project: re-pin to the fresh versions, then one more PINNED build (cache-warm, replay
+      # legs no-op) so `update` ends with a verified pinned image (else 'lock --enforce' would fail after
+      # a sanctioned update).
+      write_pin
+      build
+      echo "${E_DIM}[sluice]${E_RST} re-resolved and re-pinned - the box is down; run 'sluice' to start it." >&2
+    else
+      echo "${E_DIM}[sluice]${E_RST} updated - the box is down; run 'sluice' to start it (or 'sluice rebuild' to rebuild + start)." >&2
+    fi
+    exit 0 ;;
   shell)
     # run_in (not exec_in) so the EXIT trap fires the receipt after the interactive session - the
     # "every run ends with a receipt" promise holds for `shell` too, not just run-default.

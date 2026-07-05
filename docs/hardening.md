@@ -111,8 +111,26 @@ Protects against: a runaway agent or build exhausting the host
 The default posture is default-drop with an allowlist; these knobs gate or bound what an allowed
 host can still carry ([residual risk](../THREAT_MODEL.md#residual-risk-one-line)).
 
-- `SLUICE_EGRESS_MAX_BYTES` - a budget on bytes sent to reached hosts. Over the cap,
+- `SLUICE_EGRESS_MAX_BYTES` - a **detective** budget on bytes sent to reached hosts. Over the cap,
   `sluice egress` exits non-zero (a CI gate) and `sluice learn` warns. Bounds laundering volume.
+- `SLUICE_EGRESS_HOST_BUDGETS` - a **detective** *per-host* budget (`host=bytes .wildcard=bytes`), a
+  tighter laundering bound than the whole-box cap. Over any host's cap, `sluice egress` exits non-zero.
+- `SLUICE_EGRESS_HARD_CAP_BYTES` - a **preventive** per-boot ceiling: an in-box `xt_quota` DROP on all
+  proxied egress, so bytes are stopped mid-flight (even established flows hard-stop), not just gated
+  after. Numeric, **>= 1 MiB**. Honest limits worth internalizing before you set a tight one: it counts
+  **wire bytes** (headers, TLS overhead, and *download* ACKs debit it too), the window is **per-boot**
+  (a long-lived box accumulates across runs), hitting it kills **all** proxied egress (including a
+  `sluice learn` hot-reload target and the ephemeral `learn --audit` box, which can truncate the audit
+  run), and it needs `xt_quota` - if the kernel lacks it the box **fails closed** (refuses to boot).
+- `SLUICE_ALLOW_IPS_MAX_BYTES` - the same preventive `xt_quota` budget, shared across all
+  `SLUICE_ALLOW_IPS` direct egress (the escape hatch that bypasses the proxy). The direct-IP lane is now
+  metered per entry in the receipt (`allow_ips[]`) with the firewall-drop total (`fw_dropped`).
+- `SLUICE_BUMP_METHODS` / `SLUICE_BUMP_MAX_BODY` - upload controls on the decrypted (bumped) lane: an
+  HTTP-method allowlist and a request-body cap (413 over it). No-op without `SLUICE_BUMP_DOMAINS`.
+  `SLUICE_BUMP_MAX_BODY` is **per request**, not cumulative - pair it with a byte budget.
+- `SLUICE_DNS_AUDIT=1` - **detects** DNS-tunnel patterns (many unique labels under one allowlisted
+  parent) in the receipt. Detection, not prevention; `SLUICE_DNS_TUNNEL_THRESHOLD` (default 500) trips
+  the flag.
 - Laundering gate - at session start sluice warns when the allowlist contains shared hosts an
   attacker could also write to. `SLUICE_LAUNDERING_OK=1` acknowledges and silences;
   `SLUICE_STRICT_LAUNDERING=1` refuses to run instead.

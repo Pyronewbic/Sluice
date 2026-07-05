@@ -50,6 +50,11 @@ SLUICE_PREFETCH_CMD=""
 # e.g. "ghcr.io/pyronewbic/sluice-base:0.2.1"
 SLUICE_BASE_IMAGE=""
 
+# Verified pinned replay: =1 builds from ./sluice.pin (base digest + exact versions, written by
+# `sluice lock --pin`) and verifies the result against sluice.lock (fails closed on drift). Also
+# settable as an env var. `sluice update` re-resolves + re-pins. See docs/supply-chain.md.
+SLUICE_PIN=""
+
 # --- egress allowlist (runtime; default-DROP otherwise) -------------------------
 
 # HTTP/HTTPS hosts the running box may reach, on top of the base (npm/yarn registries +
@@ -61,6 +66,10 @@ SLUICE_ALLOW_DOMAINS=""
 # Scope each to one port with ip:port[/proto]; a colon-less entry opens EVERY port (warns). Refused:
 # any /0 or 0.0.0.0/N, a CIDR broader than the /8 floor, and IPv6. e.g. "10.0.0.5:5432" (Postgres)
 SLUICE_ALLOW_IPS=""
+
+# Shared PREVENTIVE byte budget across ALL SLUICE_ALLOW_IPS direct egress (in-box xt_quota; over it the
+# direct-IP flows are severed). Numeric; needs xt_quota (fails closed if absent). Empty = off.
+SLUICE_ALLOW_IPS_MAX_BYTES=""
 
 # Central egress policy: a URL (http/https/file) to an org policy, applied host-side as the final
 # gate. A bare host list adds hosts (back-compat); v2 directives also `deny` hosts and refuse to run
@@ -79,10 +88,21 @@ SLUICE_BUMP_DOMAINS=""
 # e.g. "^https?://api\.internal\.example\.com/v1/"
 SLUICE_BUMP_URLS=""
 
+# Bumped-lane upload controls (no-op without SLUICE_BUMP_DOMAINS). METHODS = an HTTP-method allowlist
+# for the decrypted host (deny uploads); MAX_BODY = request-body byte cap (per request; 413 over it).
+# e.g. SLUICE_BUMP_METHODS="GET HEAD"   SLUICE_BUMP_MAX_BODY="1048576"
+SLUICE_BUMP_METHODS=""
+SLUICE_BUMP_MAX_BODY=""
+
 # DNS is scoped to the allowlist by default: a non-allowlisted name resolves to a local
 # dead-end sink (closes DNS-label exfil; the attempt still shows up for `sluice learn`).
 # =1 restores forward-all resolution - weakens the guarantee.
 SLUICE_DNS_OPEN=""
+
+# Opt-in DNS query audit: =1 logs every query so the receipt surfaces DNS volume + tunnel patterns
+# (many unique labels under one parent). SLUICE_DNS_TUNNEL_THRESHOLD (default 500) trips the flag.
+SLUICE_DNS_AUDIT=""
+SLUICE_DNS_TUNNEL_THRESHOLD=""
 
 # DoH/DoT resolvers are blocked even when allowlisted (a DNS-over-HTTPS tunnel bypasses the
 # SNI filter). =1 permits them.
@@ -95,8 +115,16 @@ SLUICE_LAUNDERING_OK=""
 SLUICE_STRICT_LAUNDERING=""
 
 # Egress volume budget (bytes SENT OUT this run). Over it, `sluice egress` exits non-zero
-# (gate CI) and the run's receipt warns. Empty = off.
+# (gate CI) and the run's receipt warns. Empty = off. DETECTIVE (reports after the fact).
 SLUICE_EGRESS_MAX_BYTES=""
+
+# Per-host detective budget: "host=bytes .wildcard=bytes ..." - a tighter laundering bound than the
+# whole-box cap. Over any host's cap, `sluice egress` exits non-zero. e.g. ".s3.amazonaws.com=1048576"
+SLUICE_EGRESS_HOST_BUDGETS=""
+
+# PREVENTIVE per-boot egress ceiling: an in-box xt_quota DROP on all proxied egress (stops bytes
+# mid-flight). Numeric, >= 1 MiB (1048576); counts wire bytes; needs xt_quota (fails closed). Empty = off.
+SLUICE_EGRESS_HARD_CAP_BYTES=""
 
 # --- hardening (opt-in; off by default) -----------------------------------------
 

@@ -78,3 +78,37 @@ _run_write_pin() {
   assert_failure
   assert_output --partial "usage: sluice lock --pin"
 }
+
+# --- config_hash is pin-aware: SLUICE_PIN=1 must flip the hash (a pinned box is distinct) + a pin edit
+#     rebuilds. Extract config_hash + run it against a temp CORE/config, so an env-only knob is testable.
+_config_hash() {  # runs config_hash with the given SLUICE_PIN + optional pin content in PROJECT_DIR
+  local t="$BATS_TEST_TMPDIR/ch.sh"
+  {
+    echo 'set -euo pipefail'
+    printf 'PROJECT_CONFIG=%q\n' "$BATS_TEST_TMPDIR/sluice.config.sh"
+    printf 'PROJECT_DIR=%q\n'    "$BATS_TEST_TMPDIR"
+    printf 'CORE=%q\n'           "$BATS_TEST_TMPDIR/core"
+    sed -n '/^config_hash()/,/^}/p' "$SLUICE_BIN"
+    echo 'config_hash'
+  } > "$t"
+  SLUICE_PIN="${1:-}" run bash "$t"
+}
+
+@test "config_hash: SLUICE_PIN=1 flips the hash vs an unpinned build" {
+  printf 'SLUICE_RUN_CMD="true"\n' > "$BATS_TEST_TMPDIR/sluice.config.sh"
+  mkdir -p "$BATS_TEST_TMPDIR/core"; printf 'x\n' > "$BATS_TEST_TMPDIR/core/f"
+  printf 'base  x@sha256:abc\napk  busybox  1.36.1  Q1x\n' > "$BATS_TEST_TMPDIR/sluice.pin"
+  _config_hash ""; local h_off="$output"
+  _config_hash 1; local h_on="$output"
+  [ -n "$h_off" ] && [ -n "$h_on" ] && [ "$h_off" != "$h_on" ]
+}
+
+@test "config_hash: a sluice.pin edit rebuilds in pin mode" {
+  printf 'SLUICE_RUN_CMD="true"\n' > "$BATS_TEST_TMPDIR/sluice.config.sh"
+  mkdir -p "$BATS_TEST_TMPDIR/core"; printf 'x\n' > "$BATS_TEST_TMPDIR/core/f"
+  printf 'base  x@sha256:abc\napk  busybox  1.36.1  Q1x\n' > "$BATS_TEST_TMPDIR/sluice.pin"
+  _config_hash 1; local h1="$output"
+  printf 'base  x@sha256:abc\napk  busybox  1.37.0  Q1y\n' > "$BATS_TEST_TMPDIR/sluice.pin"
+  _config_hash 1; local h2="$output"
+  [ "$h1" != "$h2" ]
+}

@@ -84,6 +84,12 @@ CFG
   ( cd "$WORK/lock" && "$SLUICE" lock --pin ) >/tmp/verify-lock-pin.log 2>&1 || true
   cp "$WORK/lock/sluice.pin" "$WORK/pin.txt" 2>/dev/null || true
   rc=0; ( cd "$WORK/lock" && "$SLUICE" lock --check ) >/dev/null 2>&1 || rc=$?; echo "$rc" > "$WORK/checkpin.rc"
+
+  # 7. SLUICE_PIN=1: a VERIFIED pinned replay build - rebuild converging on sluice.pin (pinned base
+  # digest + exact versions), which build() checks against sluice.lock and fails closed on drift.
+  rc=0; ( cd "$WORK/lock" && SLUICE_PIN=1 "$SLUICE" build ) >/tmp/verify-pin-build.log 2>&1 || rc=$?; echo "$rc" > "$WORK/pinbuild.rc"
+  grep -q "pinned build verified" /tmp/verify-pin-build.log && echo yes > "$WORK/pinverified" || echo no > "$WORK/pinverified"
+  rc=0; ( cd "$WORK/lock" && SLUICE_PIN=1 "$SLUICE" lock --check ) >/dev/null 2>&1 || rc=$?; echo "$rc" > "$WORK/pincheck.rc"
 }
 
 teardown_file() {
@@ -129,6 +135,13 @@ teardown_file() {
 }
 @test "lock --pin: refreshed sluice.lock stays in sync (--check exit 0)" {
   [ "$(cat "$WORK/checkpin.rc")" = 0 ]
+}
+@test "SLUICE_PIN=1: a pinned replay build succeeds and is verified against sluice.lock" {
+  [ "$(cat "$WORK/pinbuild.rc")" = 0 ]
+  [ "$(cat "$WORK/pinverified")" = yes ]
+}
+@test "SLUICE_PIN=1: the pinned image stays in sync (lock --check exit 0)" {
+  [ "$(cat "$WORK/pincheck.rc")" = 0 ]
 }
 
 @test "lock --sbom: CycloneDX 1.6 + sluice tool metadata (jq)" {

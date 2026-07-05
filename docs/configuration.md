@@ -55,6 +55,10 @@ minimal config is just a `SLUICE_RUN_CMD`.
   Default: build from `core/`. See [supply-chain](supply-chain.md).
 - `SLUICE_REQUIRE_SIGNED` - `=1` makes a missing/failed base signature or SBOM attestation
   fatal (default: warn and continue).
+- `SLUICE_PIN` - `=1` builds from `sluice.pin` (written by `sluice lock --pin`): the recorded base
+  digest + exact package versions, replayed and then **verified** against `sluice.lock` (the build
+  fails closed on any drift). Requires a `sluice.pin`; `sluice update` re-resolves and re-pins. See
+  [supply-chain](supply-chain.md#sluice-lock-pin-a-replay-manifest).
 
 ## Egress (runtime; default-DROP otherwise)
 
@@ -79,6 +83,18 @@ What the filter guarantees - and does not - is in
   default: listed hosts are decrypted so squid can filter by `SLUICE_BUMP_URLS` url_regex;
   every other host is spliced, never decrypted. Weigh it first:
   [THREAT_MODEL.md](../THREAT_MODEL.md#scoped-tls-interception-opt-in-off-by-default).
+- `SLUICE_BUMP_METHODS`, `SLUICE_BUMP_MAX_BODY` - upload controls on the **decrypted** (bumped) lane;
+  no-ops without `SLUICE_BUMP_DOMAINS` (`sluice doctor` warns). `SLUICE_BUMP_METHODS` is a space-
+  separated HTTP-method allowlist (`GET HEAD OPTIONS`) - a bumped-host request using any other method
+  is denied. `SLUICE_BUMP_MAX_BODY` caps request-body bytes (a global directive, so it also bounds
+  plain-HTTP bodies; spliced tunnels are opaque and unaffected); over it, squid returns 413. Both are
+  validated host-side (letters-only methods, numeric cap) and re-validated in-box. `SLUICE_BUMP_MAX_BODY`
+  is **per request** - it bounds a single body, not cumulative exfil (pair it with a byte budget).
+- `SLUICE_DNS_AUDIT`, `SLUICE_DNS_TUNNEL_THRESHOLD` - `SLUICE_DNS_AUDIT=1` logs every DNS query to a
+  host-readable file so the receipt and `sluice egress --json` surface DNS volume and **tunnel
+  patterns** (many unique labels under one parent = exfil-as-DNS-labels). `SLUICE_DNS_TUNNEL_THRESHOLD`
+  (default 500) is the per-parent unique-name count that trips a flag. Detective only - resolution
+  scoping is unchanged.
 - `SLUICE_DNS_OPEN` - default DNS is scoped to the allowlist (non-allowlisted names resolve
   to a local dead-end sink, closing DNS-label exfil). `=1` restores forward-all resolution -
   weakens the guarantee.
@@ -98,15 +114,30 @@ What the filter guarantees - and does not - is in
   warns. Unlike `SLUICE_EGRESS_MAX_BYTES` (silently ignored when malformed), a malformed token here
   **dies** (fail closed) - a silently-void security budget is worse than a stop.
 
+- `SLUICE_EGRESS_HARD_CAP_BYTES` - a **preventive** per-boot ceiling on all proxied egress, enforced
+  in-box with an `xt_quota` iptables rule on squid's uid: once the quota is spent, egress is DROPped
+  (even established flows hard-stop). Numeric, **>= 1 MiB** (boot probes + TLS handshakes consume the
+  budget, so a smaller cap bricks the box at boot). Honest limits: the quota counts **wire bytes**
+  (TCP/IP + TLS overhead, and download ACKs), so a tight cap is impractical for download-heavy
+  sessions; the window is **per-boot**, so a long-lived box accumulates across runs; and hitting it
+  kills *all* proxied egress (including a `sluice learn` hot-reload target and the ephemeral `learn
+  --audit` box). It fails **closed** if the kernel lacks `xt_quota` (refuses to boot). An org can
+  mandate a ceiling with the `max-hard-cap-bytes N` [policy](policy.md) directive.
+- `SLUICE_ALLOW_IPS_MAX_BYTES` - a **preventive** shared byte budget across *all* `SLUICE_ALLOW_IPS`
+  direct egress (the escape hatch that bypasses the proxy). Same `xt_quota` mechanism; over budget,
+  direct-IP flows are severed. Numeric. Also needs `xt_quota` (fails closed).
+
 The byte-denominated egress knobs, so they are not conflated:
 
 | Knob | Kind | Scope | Measures |
 |---|---|---|---|
 | `SLUICE_EGRESS_MAX_BYTES` | detective (CI gate + warning) | whole box | total tx bytes |
 | `SLUICE_EGRESS_HOST_BUDGETS` | detective (CI gate + warning) | per host | that host's tx bytes |
+| `SLUICE_EGRESS_HARD_CAP_BYTES` | **preventive** (in-box DROP) | whole box, proxied | total wire bytes, per boot |
+| `SLUICE_ALLOW_IPS_MAX_BYTES` | **preventive** (in-box DROP) | all direct-IP egress | wire bytes, per boot |
 
-Both are **detective** - they report and gate after the fact; neither stops bytes mid-flight (a
-preventive in-box cap is on the roadmap). Both read the boot-scoped proxy log via `sluice egress`.
+The detective knobs report and gate after the fact (`sluice egress` reads the boot-scoped proxy log);
+the preventive knobs stop bytes mid-flight in the firewall but need `xt_quota` and count wire bytes.
 
 ## Hardening (opt-in; off by default)
 

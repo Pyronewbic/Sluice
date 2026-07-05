@@ -78,6 +78,7 @@ Env: SLUICE_ENGINE  SLUICE_RUNTIME=kata  SLUICE_NO_BANNER  SLUICE_YES  SLUICE_NO
      SLUICE_SECCOMP=hardened|browser|audit (extra syscall filter; hardened >= engine default)
      SLUICE_READONLY_ROOT=1 (immutable rootfs; tmpfs + anon-volume the writable paths)
      SLUICE_WORKSPACE=overlay (host repo read-only; box edits a copy - see 'diff'/'apply')
+     SLUICE_EGRESS_HARD_CAP_BYTES=N (preventive in-box egress cap)  SLUICE_PIN=1 (verified pinned replay)
      Config knobs (sluice.config.sh): see sluice.config.example.sh + docs/configuration.md
 Docs: https://github.com/Pyronewbic/Sluice
 EOF

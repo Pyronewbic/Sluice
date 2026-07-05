@@ -364,6 +364,38 @@ validate_host_budgets() {
 }
 case "${1:-run-default}" in run-default|run|shell|build|rebuild|update) validate_host_budgets ;; esac
 
+# SLUICE_EGRESS_HARD_CAP_BYTES: a PREVENTIVE in-box byte ceiling (xt_quota). Numeric and >= 1 MiB - boot
+# deny/allow probes + TLS handshakes consume the quota, so a sub-1MiB cap would brick the box at boot.
+# SLUICE_ALLOW_IPS_MAX_BYTES: a shared direct-IP budget (any numeric size). Both fail closed.
+validate_egress_hard_caps() {
+  case "${SLUICE_EGRESS_HARD_CAP_BYTES:-}" in
+    '') ;;
+    *[!0-9]*) die "SLUICE_EGRESS_HARD_CAP_BYTES must be a byte count (got '${SLUICE_EGRESS_HARD_CAP_BYTES}')" ;;
+    *) [ "$SLUICE_EGRESS_HARD_CAP_BYTES" -ge 1048576 ] || die "SLUICE_EGRESS_HARD_CAP_BYTES must be >= 1048576 (1 MiB) - boot probes + TLS handshakes consume the budget; a smaller cap bricks the box at boot" ;;
+  esac
+  case "${SLUICE_ALLOW_IPS_MAX_BYTES:-}" in
+    '') ;;
+    *[!0-9]*) die "SLUICE_ALLOW_IPS_MAX_BYTES must be a byte count (got '${SLUICE_ALLOW_IPS_MAX_BYTES}')" ;;
+  esac
+}
+case "${1:-run-default}" in run-default|run|shell|build|rebuild|update) validate_egress_hard_caps ;; esac
+
+# SLUICE_BUMP_METHODS / SLUICE_BUMP_MAX_BODY are sed'd into squid.conf in-box (H5), so their charset is
+# security-critical (injection). Validate host-side; the entrypoint re-validates (defense in depth).
+validate_bump_controls() {
+  local _m
+  set -f
+  for _m in ${SLUICE_BUMP_METHODS:-}; do
+    case "$_m" in *[!A-Za-z]*) set +f; die "SLUICE_BUMP_METHODS token '$_m' must be letters only (an HTTP method, e.g. GET HEAD POST)" ;; esac
+  done
+  set +f
+  case "${SLUICE_BUMP_MAX_BODY:-}" in
+    '') ;;
+    *[!0-9]*) die "SLUICE_BUMP_MAX_BODY must be a byte count (got '${SLUICE_BUMP_MAX_BODY}')" ;;
+  esac
+}
+case "${1:-run-default}" in run-default|run|shell|build|rebuild|update) validate_bump_controls ;; esac
+
 # build: assemble a temp context (core + this project's config) and build
 # Verify a published base image's cosign signature (keyless/OIDC). Soft by default: warn if
 # cosign is absent or the image is unsigned; SLUICE_REQUIRE_SIGNED=1 makes either case fatal.

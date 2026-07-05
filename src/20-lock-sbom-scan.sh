@@ -38,6 +38,12 @@ $hb_tx_table
 EOF
   fi
   [ "$hb_over" = 1 ] && over=1
+  # SLUICE_ALLOW_IPS_MAX_BYTES: the shared direct-IP budget DROPs packets once exhausted; a non-zero
+  # DROP counter means the run hit the cap -> fail the gate (bounds direct-IP exfil by volume).
+  if [ -n "${SLUICE_ALLOW_IPS:-}" ] && [ -n "${SLUICE_ALLOW_IPS_MAX_BYTES:-}" ]; then
+    local _aid; _aid="$(allowips_dropped 2>/dev/null || true)"; case "$_aid" in ''|*[!0-9]*) _aid=0 ;; esac
+    [ "$_aid" -gt 0 ] && over=1
+  fi
   if [ "$mode" = --json ]; then
     # Back-compat host arrays + a detailed hosts array (class/requests/bytes) for the control plane.
     local allowed blocked hosts_json="" first=1 cls host cnt byt over_json=false
@@ -63,10 +69,11 @@ $rows
 EOF
     # window=boot: unlike the at-exit receipt (run-scoped), this command reads the whole-boot egress
     # window - so does its SLUICE_EGRESS_MAX_BYTES gate. Surfaced for the control plane (see docs/operations.md).
-    printf '{"schema":"sluice.egress/v1","box":"%s","window":"boot","allowed":%s,"blocked":%s,"tx_bytes":%s,"budget":%s,"over_budget":%s,"hosts":[%s]}\n' \
+    local _aipf _dnsf; _aipf="$(_allowips_json_fields)"; _dnsf="$(_dns_json_fields)"
+    printf '{"schema":"sluice.egress/v1","box":"%s","window":"boot","allowed":%s,"blocked":%s,"tx_bytes":%s,"budget":%s,"over_budget":%s,"hosts":[%s]%s%s}\n' \
       "$(_json_esc "$container")" \
       "$(printf '%s\n' "$allowed" | _json_arr)" "$(printf '%s\n' "$blocked" | _json_arr)" \
-      "$tx" "${cap:-null}" "$over_json" "$hosts_json"
+      "$tx" "${cap:-null}" "$over_json" "$hosts_json" "$_aipf" "$_dnsf"
     return "$over"
   fi
   if [ -n "$rows" ]; then
@@ -100,6 +107,32 @@ EOF
       case "$hb_tx" in ''|*[!0-9]*) hb_tx=0 ;; esac
       [ "$hb_tx" -gt "$hb_cap" ] && echo "  ${C_RED}host budget EXCEEDED${C_RST}: $hb_host sent $(_human_bytes "$hb_tx") > $(_human_bytes "$hb_cap") cap (SLUICE_EGRESS_HOST_BUDGETS)"
     done
+  fi
+  # SLUICE_ALLOW_IPS direct-egress accounting (the escape hatch that bypasses squid - now metered).
+  if [ -n "${SLUICE_ALLOW_IPS:-}" ]; then
+    local _e _p _b _fwd _fp _fb
+    allowips_rows 2>/dev/null | while IFS="$TAB" read -r _e _p _b; do
+      [ -n "$_e" ] || continue
+      echo "  ${C_DIM}direct-ip${C_RST} $_e  $_p pkt  $(_human_bytes "${_b:-0}")"
+    done
+    _fwd="$(fw_dropped 2>/dev/null || true)"; _fp="${_fwd%%"$TAB"*}"; _fb="${_fwd#*"$TAB"}"
+    case "$_fp" in ''|*[!0-9]*) _fp=0 ;; esac
+    [ "$_fp" -gt 0 ] && echo "  ${C_DIM}firewall dropped $_fp non-HTTP/off-allowlist packet(s)${C_RST}"
+    if [ -n "${SLUICE_ALLOW_IPS_MAX_BYTES:-}" ]; then
+      local _aid2; _aid2="$(allowips_dropped 2>/dev/null || true)"; case "$_aid2" in ''|*[!0-9]*) _aid2=0 ;; esac
+      [ "$_aid2" -gt 0 ] && echo "  ${C_RED}direct-ip budget EXCEEDED${C_RST}: $_aid2 pkt dropped (SLUICE_ALLOW_IPS_MAX_BYTES)"
+    fi
+  fi
+  # DNS query audit (SLUICE_DNS_AUDIT=1): volume + tunnel-pattern flags.
+  if [ "${SLUICE_DNS_AUDIT:-}" = 1 ]; then
+    local _dp _dq _du _dtq=0 _dtu=0 _thr; _thr="${SLUICE_DNS_TUNNEL_THRESHOLD:-500}"; case "$_thr" in ''|*[!0-9]*) _thr=500 ;; esac
+    while IFS="$TAB" read -r _dp _dq _du; do
+      [ -n "$_dp" ] || continue; _dtq=$((_dtq + _dq)); _dtu=$((_dtu + _du))
+      [ "$_du" -ge "$_thr" ] && echo "  ${C_RED}possible DNS-tunnel pattern${C_RST} under $_dp ($_du unique names)"
+    done <<EOF
+$(dns_rows 2>/dev/null || true)
+EOF
+    echo "  ${C_DIM}dns: $_dtq queries, $_dtu unique names${C_RST}"
   fi
   # C2: make the tamper-evident audit log discoverable (has-rows human path only; the empty case stays quiet).
   [ -n "$rows" ] && echo "  ${C_DIM}audit log: sluice egress --export | --verify${C_RST}"
