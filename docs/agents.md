@@ -27,7 +27,7 @@ the contract a preset must follow lives in [`agents/README.md`](../agents/README
 | `cursor` | `CURSOR_API_KEY` | `cursor-agent --force` |
 | `opencode` | `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` | `opencode` (allow-all permission config baked at build) |
 | `amp` | `AMP_API_KEY` | `amp --dangerously-allow-all` |
-| `qwen` | `OPENAI_API_KEY` (a DashScope key) | `qwen --yolo` against DashScope's OpenAI-compatible endpoint |
+| `qwen` | `OPENAI_API_KEY` or `DASHSCOPE_API_KEY` (a DashScope key) | `qwen --yolo` against DashScope's OpenAI-compatible endpoint |
 | `crush` | `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` | `crush --yolo` |
 
 Each preset file's header documents its host list and any quirks - read
