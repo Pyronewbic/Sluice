@@ -23,7 +23,7 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with: { submodules: recursive }
+        with: { submodules: recursive, persist-credentials: false }
       - name: Verify runtime examples
         env:
           RUNTIMES: ${{ github.event.inputs.runtimes }}   # empty on schedule -> all (the _want guard)
@@ -43,7 +43,7 @@ jobs:
         suite: [lock, learn, control-plane]   # learn folds in audit; control-plane folds in ls + seams
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with: { submodules: recursive }
+        with: { submodules: recursive, persist-credentials: false }
       - name: Install grype (pinned, checksummed; for the lock --scan leg)
         if: matrix.suite == 'lock'
         run: bash scripts/install-grype.sh
@@ -57,6 +57,6 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with: { submodules: recursive }
+        with: { submodules: recursive, persist-credentials: false }
       - name: Verify the Nix example
         run: test/bats/bin/bats --print-output-on-failure test/nightly-nix.bats

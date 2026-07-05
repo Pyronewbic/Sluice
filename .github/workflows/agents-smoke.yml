@@ -21,7 +21,7 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with: { submodules: recursive }
+        with: { submodules: recursive, persist-credentials: false }
       - name: Verify agent presets
         # AGENTS unset -> all presets; no key set -> live probes are no-ops (cred-free gate only).
         run: test/bats/bin/bats --print-output-on-failure test/nightly-agents.bats

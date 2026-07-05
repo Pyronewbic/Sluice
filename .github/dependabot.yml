@@ -11,3 +11,7 @@ updates:
         patterns: ["*"]
     commit-message:
       prefix: ci
+    # Wait a week before proposing a freshly-published version - a compromised release is usually
+    # yanked within days, so the cooldown keeps a poisoned bump out of the auto-PR window.
+    cooldown:
+      default-days: 7
