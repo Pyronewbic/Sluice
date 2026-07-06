@@ -23,7 +23,7 @@ if [ "${1:-}" = ls ]; then shift; cmd_ls "$@"; exit $?; fi
 cmd_prune() {
   local only_orphans="" imgs i a proj kept
   [ "${1:-}" = --orphans ] && only_orphans=1
-  imgs="$("$ENGINE" image ls --filter label=sluice.confighash --format '{{.Repository}}' 2>/dev/null | grep -v '^<none>$' | sort -u || true)"
+  imgs="$("$ENGINE" image ls --filter label=sluice.confighash --format '{{.Repository}}' 2>/dev/null | sed 's,^localhost/,,' | grep -v '^<none>$' | sort -u || true)"   # strip podman's localhost/ so names match the canonical sluice-<slug>
   [ -n "$imgs" ] || { echo "[sluice] no sluice boxes to prune."; return 0; }
   if [ -n "$only_orphans" ]; then   # keep only boxes whose recorded project dir is gone
     kept=""

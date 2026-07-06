@@ -61,7 +61,10 @@ build() {
     _pin_active=1
   fi
   # Self-describing labels (read by `sluice ls`; not part of config_hash, so no spurious rebuild).
-  local args=(--label "sluice.confighash=$(config_hash)"
+  # Hoist the hash: `local args=($(config_hash))` masks its exit status (local returns 0), so a failing
+  # config_hash (e.g. shasum rc 127) would silently bake an empty label under set -e; assigned alone it dies.
+  local _chash; _chash="$(config_hash)"
+  local args=(--label "sluice.confighash=$_chash"
     --label "sluice.project=$PROJECT_DIR"
     --label "sluice.stack=$(config_stack)"
     --label "sluice.allowcount=$(printf '%s' "${SLUICE_ALLOW_DOMAINS:-}" | wc -w | tr -d ' ')"

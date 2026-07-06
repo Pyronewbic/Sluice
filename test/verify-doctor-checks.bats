@@ -559,3 +559,49 @@ assert d['config_error'] is False, d   # valid syntax: the parse check passed
   run grep -c 'blocked_json=null' "$ROOT/bin/sluice"
   [ "$output" -ge 1 ]
 }
+
+# Rootless podman can't enforce pids/memory caps or bind ports <1024 (host/kernel limits); doctor
+# surfaces the caveats. Drive the real launcher with a fake `podman` on PATH reporting Rootless=true
+# (SLUICE_ENGINE forces it over the host's docker).
+_fake_rootless_podman_bin() {
+  mkdir -p "$WORK/bin"
+  cat > "$WORK/bin/podman" <<'P'
+#!/bin/sh
+case "$*" in
+  "info --format {{.Host.Security.Rootless}}") echo true ;;
+  info) exit 0 ;;
+  --version) echo "podman version 4.9.3" ;;
+  *) exit 1 ;;
+esac
+P
+  chmod +x "$WORK/bin/podman"
+}
+
+@test "doctor: rootless podman surfaces the pids/memory + ports<1024 caveats" {
+  _fake_rootless_podman_bin
+  printf 'SLUICE_RUN_CMD="bash"\nSLUICE_MEMORY="512m"\nSLUICE_PORTS="80 8080"\n' > "$WORK/sluice.config.sh"
+  run bash -c "cd '$WORK' && PATH=\"$WORK/bin:\$PATH\" SLUICE_ENGINE=podman '$SLUICE' doctor"
+  assert_success
+  assert_output --partial "cgroups-v2"
+  assert_output --partial "port 80 (<1024)"
+  assert_output --partial "may silently not apply"
+  refute_output --partial "port 8080"          # 8080 is >=1024, not flagged
+}
+
+@test "doctor: docker engine emits no rootless-podman caveats" {
+  printf 'SLUICE_RUN_CMD="bash"\nSLUICE_PORTS="80"\n' > "$WORK/sluice.config.sh"
+  run bash -c "cd '$WORK' && '$SLUICE' doctor"
+  assert_success
+  refute_output --partial "cgroups-v2"
+}
+
+@test "doctor --json: rootless_podman is true under rootless podman, false under docker" {
+  _fake_rootless_podman_bin
+  printf 'SLUICE_RUN_CMD="bash"\n' > "$WORK/sluice.config.sh"
+  run bash -c "cd '$WORK' && PATH=\"$WORK/bin:\$PATH\" SLUICE_ENGINE=podman '$SLUICE' doctor --json"
+  assert_success
+  jq -e '.rootless_podman==true' <<<"$output"
+  run bash -c "cd '$WORK' && '$SLUICE' doctor --json"
+  assert_success
+  jq -e '.rootless_podman==false' <<<"$output"
+}
