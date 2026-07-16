@@ -818,7 +818,7 @@ cmd_ls() {
   # Gather labels + container state into parallel arrays, applying filters as we go. (Kept as a plain
   # while-loop, NOT a $(...) capture: a case pattern's ) inside command substitution mis-parses on bash 3.2.)
   local names=() stats=() projs=() stacks=() descs=() curs=() orphs=() allows=() ports_=() locks=() blocks=() ovls=() chashes=()
-  local name proj stack desc status cur orphan allowcount portslbl lock blocked ovl chash
+  local name proj stack desc status cur orphan allowcount portslbl lock blocked ovl chash _adline _adval
   while IFS= read -r name; do
     [ -n "$name" ] || continue
     proj="$( "$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.project" }}' "$name" 2>/dev/null || true)"
@@ -835,6 +835,21 @@ cmd_ls() {
     case "$portslbl"   in "<no value>") portslbl=""   ;; esac
     case "$ovl"        in "<no value>") ovl=""        ;; esac
     case "$chash"      in "<no value>") chash=""      ;; esac
+    # The allowcount label is baked at build, but SLUICE_ALLOW_DOMAINS is the one live-edited,
+    # hash-excluded knob (learn) - read the config's first assignment textually (never sourced;
+    # ls must not execute box configs). Label = fallback when the config or the line is gone.
+    if [ -n "$proj" ] && [ -f "$proj/sluice.config.sh" ]; then
+      _adline="$(grep -m1 -E '^[[:space:]]*SLUICE_ALLOW_DOMAINS=' "$proj/sluice.config.sh" 2>/dev/null || true)"
+      if [ -n "$_adline" ]; then
+        _adval="${_adline#*=}"
+        case "$_adval" in
+          \"*) _adval="${_adval#\"}"; _adval="${_adval%%\"*}" ;;
+          \'*) _adval="${_adval#\'}"; _adval="${_adval%%\'*}" ;;
+          *)   _adval="${_adval%%#*}" ;;
+        esac
+        allowcount="$(printf '%s' "$_adval" | wc -w | tr -d ' ')"
+      fi
+    fi
     orphan=false; [ -n "$proj" ] && [ ! -d "$proj" ] && orphan=true
     if   "$RUNNER" ps    --filter "name=$name" --filter status=running --format '{{.Names}}' 2>/dev/null | grep -qx "$name"; then status=running
     elif "$RUNNER" ps -a --filter "name=$name" --format '{{.Names}}' 2>/dev/null | grep -qx "$name"; then status=stopped
@@ -881,7 +896,7 @@ EOF
     for j in "${!order[@]}"; do
       i="${order[$j]}"
       [ "$j" -gt 0 ] && printf ','
-      ac="${allows[$i]}"; [ -n "$ac" ] || ac=null              # null = un-rebuilt box (label absent), not 0
+      ac="${allows[$i]}"; [ -n "$ac" ] || ac=null              # null = no readable config AND label absent (un-rebuilt), not 0
       lk=false; [ "${locks[$i]}" = locked ] && lk=true
       # tr-split (like overlays) keeps a glob metachar in the label literal - no pathname expansion against $PWD
       pjson="$(printf '%s' "${ports_[$i]}" | tr ' \t' '\n\n' | _json_arr)"
