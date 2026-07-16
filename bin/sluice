@@ -318,7 +318,8 @@ denied_ip_requests() {
       if (sni != "" && sni != "-") host=sni;
       else if (url ~ /^http:\/\//) { h=url; sub(/^http:\/\//,"",h); sub(/\/.*/,"",h); sub(/:.*/,"",h); host=h }
       else { h=url; sub(/:[0-9]+$/,"",h); host=h }
-      if (host ~ /^[0-9]+(\.[0-9]+){3}$/) n++;
+      # Spelled out, not {3}: mawk builds without --re-interval never match a brace repeat.
+      if (host ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/) n++;
     } END { print n+0 }'
 }
 
