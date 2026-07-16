@@ -114,6 +114,21 @@ reached_hosts_raw() {
 }
 reached_hosts()  { reached_hosts_raw "$@" | sort -u; }
 
+# Denied requests whose target is a raw IPv4 literal (an IP CONNECT/URL has no hostname to filter, so
+# the proxy denies it). The hostname ledgers skip numeric hosts (`learn` must never propose an IP), which
+# made these probes invisible - count them instead. Offset-aware via _squid_log (run-scoped in the receipt).
+denied_ip_requests() {
+  _squid_log | awk '
+    { sni=""; for (i=1;i<=NF;i++) if ($i ~ /^ssl_sni=/) sni=substr($i,9);
+      status=$3; url=$5; host="";
+      if (status !~ /NONE_NONE/ && status !~ /TCP_DENIED/ && status !~ /\/000/) next;
+      if (sni != "" && sni != "-") host=sni;
+      else if (url ~ /^http:\/\//) { h=url; sub(/^http:\/\//,"",h); sub(/\/.*/,"",h); sub(/:.*/,"",h); host=h }
+      else { h=url; sub(/:[0-9]+$/,"",h); host=h }
+      if (host ~ /^[0-9]+(\.[0-9]+){3}$/) n++;
+    } END { print n+0 }'
+}
+
 # Per-host egress rows for the receipt + `sluice egress`: one awk pass over the (offset-aware) proxy
 # log -> "<class>\t<host>\t<count>\t<bytes>". class=reached if the host ever got through, else blocked
 # (reached-precedence wins on mixed lines); count = successes (reached) or denials (blocked); bytes =
@@ -266,22 +281,26 @@ allowips_dropped() {
     $3=="DROP" { print $1+0; found=1; exit } END { if (!found) print "" }'
 }
 
-# ",\"allow_ips\":[...],\"fw_dropped\":{...}" for the receipt + `sluice egress --json`, or "" when
-# SLUICE_ALLOW_IPS is unset. One iptables read each for the per-entry counters and the policy-DROP total.
+# ",\"allow_ips\":[...]" (only when SLUICE_ALLOW_IPS is set) plus always-on drop accountability:
+# ",\"fw_dropped\":{...},\"denied_ip_requests\":N". A raw-IP probe or non-HTTP attempt is recorded for
+# every box, not only ones that configured a direct-IP lane.
 _allowips_json_fields() {
-  [ -n "${SLUICE_ALLOW_IPS:-}" ] || { printf ''; return 0; }
-  local TAB e p b aij="" first=1 fwd fp fb; TAB="$(printf '\t')"
-  while IFS="$TAB" read -r e p b; do
-    [ -n "$e" ] || continue
-    [ "$first" = 1 ] && first=0 || aij="$aij,"
-    aij="$aij{\"entry\":\"$(_json_esc "$e")\",\"packets\":${p:-0},\"bytes\":${b:-0}}"
-  done <<EOF
+  local TAB e p b aij="" first=1 aif="" fwd fp fb dip; TAB="$(printf '\t')"
+  if [ -n "${SLUICE_ALLOW_IPS:-}" ]; then
+    while IFS="$TAB" read -r e p b; do
+      [ -n "$e" ] || continue
+      [ "$first" = 1 ] && first=0 || aij="$aij,"
+      aij="$aij{\"entry\":\"$(_json_esc "$e")\",\"packets\":${p:-0},\"bytes\":${b:-0}}"
+    done <<EOF
 $(allowips_rows 2>/dev/null || true)
 EOF
+    aif=",\"allow_ips\":[$aij]"
+  fi
   fwd="$(fw_dropped 2>/dev/null || true)"; fp="${fwd%%"$TAB"*}"; fb="${fwd#*"$TAB"}"
   case "$fp" in ''|*[!0-9]*) fp=0 ;; esac
   case "$fb" in ''|*[!0-9]*) fb=0 ;; esac
-  printf ',"allow_ips":[%s],"fw_dropped":{"packets":%s,"bytes":%s}' "$aij" "$fp" "$fb"
+  dip="$(denied_ip_requests 2>/dev/null || true)"; case "$dip" in ''|*[!0-9]*) dip=0 ;; esac
+  printf '%s,"fw_dropped":{"packets":%s,"bytes":%s},"denied_ip_requests":%s' "$aif" "$fp" "$fb" "$dip"
 }
 
 # ",\"dns\":{...}" when SLUICE_DNS_AUDIT=1, else "". Sums dns_rows for totals + flags tunnel parents

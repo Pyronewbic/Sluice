@@ -123,8 +123,9 @@ host can still carry ([residual risk](../THREAT_MODEL.md#residual-risk-one-line)
   `sluice learn` hot-reload target and the ephemeral `learn --audit` box, which can truncate the audit
   run), and it needs `xt_quota` - if the kernel lacks it the box **fails closed** (refuses to boot).
 - `SLUICE_ALLOW_IPS_MAX_BYTES` - the same preventive `xt_quota` budget, shared across all
-  `SLUICE_ALLOW_IPS` direct egress (the escape hatch that bypasses the proxy). The direct-IP lane is now
-  metered per entry in the receipt (`allow_ips[]`) with the firewall-drop total (`fw_dropped`).
+  `SLUICE_ALLOW_IPS` direct egress (the escape hatch that bypasses the proxy). The direct-IP lane is
+  metered per entry in the receipt (`allow_ips[]`); the firewall-drop total (`fw_dropped`) and the
+  denied raw-IP request count (`denied_ip_requests`) are recorded for every box, lane configured or not.
 - `SLUICE_BUMP_METHODS` / `SLUICE_BUMP_MAX_BODY` - upload controls on the decrypted (bumped) lane: an
   HTTP-method allowlist and a request-body cap (413 over it). No-op without `SLUICE_BUMP_DOMAINS`.
   `SLUICE_BUMP_MAX_BODY` is **per request**, not cumulative - pair it with a byte budget.
