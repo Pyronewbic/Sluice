@@ -65,16 +65,33 @@ IPT
 
 @test "allowips json fields: builds allow_ips[] + fw_dropped{} when SLUICE_ALLOW_IPS is set" {
   _stub_output_chain
+  _squid_log() { :; }
   SLUICE_ALLOW_IPS="10.0.0.5:5432 10.0.0.6"
   run _allowips_json_fields
   assert_success
   assert_output --partial '"allow_ips":[{"entry":"10.0.0.5:5432","packets":10,"bytes":840}'
   assert_output --partial '"fw_dropped":{"packets":12,"bytes":800}'
+  assert_output --partial '"denied_ip_requests":0'
 }
 
-@test "allowips json fields: empty string when SLUICE_ALLOW_IPS is unset" {
+@test "allowips json fields: drop accountability stays on when SLUICE_ALLOW_IPS is unset" {
   unset SLUICE_ALLOW_IPS
+  _stub_output_chain
+  _squid_log() { printf '1752709000.123 172.17.0.2 NONE_NONE/000 CONNECT 1.1.1.1:443 ssl_sni=- tx=0 rx=0\n'; }
   run _allowips_json_fields
   assert_success
-  assert_output ""
+  assert_output ',"fw_dropped":{"packets":12,"bytes":800},"denied_ip_requests":1'
+}
+
+@test "denied_ip_requests: counts denied raw-IP targets, ignores hostname denials + successes" {
+  _squid_log() { cat <<'LOG'
+1752709000.123 172.17.0.2 NONE_NONE/000 CONNECT 1.1.1.1:443 ssl_sni=- tx=0 rx=0
+1752709001.123 172.17.0.2 TCP_DENIED/403 GET http://9.9.9.9/probe ssl_sni=- tx=0 rx=0
+1752709002.123 172.17.0.2 NONE_NONE/000 CONNECT blocked.example:443 ssl_sni=blocked.example tx=0 rx=0
+1752709003.123 172.17.0.2 TCP_TUNNEL/200 CONNECT 8.8.8.8:443 ssl_sni=- tx=100 rx=200
+LOG
+  }
+  run denied_ip_requests
+  assert_success
+  assert_output "2"
 }

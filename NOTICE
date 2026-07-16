@@ -1,0 +1,21 @@
+sluice
+Copyright the sluice authors.
+
+This product is licensed under the Apache License, Version 2.0 (see the LICENSE file).
+
+--------------------------------------------------------------------------------
+Third-party components
+--------------------------------------------------------------------------------
+
+Sandbox base image and packages
+  The sandbox image is built on Chainguard's Wolfi base image
+  (cgr.dev/chainguard/wolfi-base) and installs packages from the Wolfi OS
+  repository (https://github.com/wolfi-dev/os). Each package is used under its
+  own open-source license; `sluice lock` and `sluice lock --sbom` inventory what
+  is installed on top of the base. sluice is an independent project and is not
+  affiliated with, sponsored by, or endorsed by Chainguard.
+
+Test framework
+  The test suite uses bats-core (https://github.com/bats-core/bats-core) and its
+  helper libraries bats-support, bats-assert, and bats-file, vendored as git
+  submodules under test/.

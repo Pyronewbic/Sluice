@@ -255,3 +255,12 @@ the gate on Linux Docker + rootless Podman ([acceptance.yml](.github/workflows/a
 
 [Apache-2.0](LICENSE) - permissive, use it however you like. Found a sandbox escape or
 egress bypass? See [SECURITY.md](SECURITY.md).
+
+## Acknowledgments
+
+The sandbox image builds on [Chainguard](https://www.chainguard.dev/)'s
+[`wolfi-base`](https://github.com/wolfi-dev/os) and installs packages from the Wolfi OS
+repository, each used under its own open-source license; `sluice lock`/`--sbom` inventory
+exactly what is installed on top. sluice is an independent project, not affiliated with,
+sponsored by, or endorsed by Chainguard. The test suite uses
+[bats-core](https://github.com/bats-core/bats-core) and its helpers, vendored under `test/`.

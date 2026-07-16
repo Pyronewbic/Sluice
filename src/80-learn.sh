@@ -25,10 +25,10 @@ EOF
   _inner="$(printf '"schema":"sluice.egress/v1","run":"%s","ts":"%s","box":"%s","status":"%s","confighash":"%s","allowlist":%s,"totals":{"reached":%s,"blocked":%s,"bytes":%s},"hosts":[%s]' \
     "$_run" "$_ts" "$(_json_esc "$container")" "$rstatus" "$(config_hash 2>/dev/null || true)" \
     "$(allowed_domains | tr ' ' '\n' | _json_arr)" "${_reached:-0}" "${_blocked:-0}" "${_tot:-0}" "$_hj")"
-  # Additive M2 sections, inserted BEFORE the trailing prev/self chain fields (the receipt-line invariant):
-  # direct-IP (SLUICE_ALLOW_IPS) counters + firewall-dropped total, and the DNS audit summary. Empty
-  # strings when the knobs are off, so an unchanged box keeps a byte-identical record. Only on a readable
-  # box (a down box has no counters to read).
+  # Additive sections, inserted BEFORE the trailing prev/self chain fields (the receipt-line invariant):
+  # drop accountability (fw_dropped + denied_ip_requests, always on) with the per-entry direct-IP
+  # counters when SLUICE_ALLOW_IPS is set, and the DNS audit summary (its knob only). Only on a
+  # readable box (a down box has no counters to read).
   if [ "$rstatus" = ok ]; then _inner="$_inner$(_allowips_json_fields)$(_dns_json_fields)"; fi
   printf '{%s}\n' "$_inner" > "$_dir/egress-receipt.json" 2>/dev/null || true
   # prev = the previous record's self (genesis = 64 zeros). Guard the read: a first-run tail on the
@@ -55,6 +55,13 @@ show_egress_receipt() {
       # than let an unreadable run look like clean zero egress.
       _persist_receipt "" unavailable
       echo "[sluice] ${E_YEL:-}egress receipt unavailable${E_RST:-} - could not read the in-box audit log (pids limit?)" >&2
+    else
+      # No hostname rows, but a run that ONLY probed raw IPs must still leave a receipt + record.
+      local _dip0; _dip0="$(denied_ip_requests 2>/dev/null || true)"; case "$_dip0" in ''|*[!0-9]*) _dip0=0 ;; esac
+      if [ "$_dip0" -gt 0 ]; then
+        echo "[sluice] egress receipt: $container   0 reached, $_dip0 raw-IP request(s) denied" >&2
+        _persist_receipt "" ok
+      fi
     fi
     return 0
   fi
@@ -86,6 +93,13 @@ show_egress_receipt() {
       }
       if(nb==0) printf "  %sall egress was allowlisted%s\n", grn, rst;
     }' >&2
+
+  # Raw-IP denials are run-scoped and always ledgered (hostname rows skip numeric hosts; `learn`
+  # must never propose an IP, so they get their own line instead of a blocked row).
+  local _dipn; _dipn="$(denied_ip_requests 2>/dev/null || true)"; case "$_dipn" in ''|*[!0-9]*) _dipn=0 ;; esac
+  [ "$_dipn" -gt 0 ] && \
+    printf '  %sblocked%s   %s raw-IP request(s) denied %s(no hostname to filter; SLUICE_ALLOW_IPS is the reviewed lane)%s\n' \
+      "$red" "$rst" "$_dipn" "$dim" "$rst" >&2
 
   _persist_receipt "$rows" ok   # latest snapshot + append to the hash-chained audit log
 

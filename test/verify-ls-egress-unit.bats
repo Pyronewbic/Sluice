@@ -127,6 +127,54 @@ _stub_engine_one_box() {
   [ "$(grep -cF "sed 's,^localhost/,,'" "$BIN")" -ge 2 ]
 }
 
+@test "ls --json: allow_count reads the config's live allowlist, not the stale build label" {
+  _stub_engine_one_box
+  PROJ="$(mktemp -d)"
+  printf 'SLUICE_RUN_CMD="bash"\nSLUICE_ALLOW_DOMAINS="a.example b.example"\n' > "$PROJ/sluice.config.sh"
+  eng() {
+    case "$*" in
+      "image ls --filter label=sluice.confighash --format {{.Repository}}") printf 'sluice-api\n' ;;
+      "info") return 0 ;;
+      *"sluice.project"*)    printf '%s\n' "$PROJ" ;;
+      *"sluice.allowcount"*) printf '3\n' ;;
+      *"sluice.confighash"*) printf 'abc123def456\n' ;;
+      *) : ;;
+    esac
+  }
+  run cmd_ls --json
+  assert_success
+  jq -e '.[0].allow_count==2' <<<"$output"
+  rm -rf "$PROJ" "$XDG_STATE_HOME"
+}
+
+@test "ls --json: a live emptied allowlist reads 0 even when the label says 3" {
+  _stub_engine_one_box
+  PROJ="$(mktemp -d)"
+  printf 'SLUICE_ALLOW_DOMAINS=""\n' > "$PROJ/sluice.config.sh"
+  eng() {
+    case "$*" in
+      "image ls --filter label=sluice.confighash --format {{.Repository}}") printf 'sluice-api\n' ;;
+      "info") return 0 ;;
+      *"sluice.project"*)    printf '%s\n' "$PROJ" ;;
+      *"sluice.allowcount"*) printf '3\n' ;;
+      *"sluice.confighash"*) printf 'abc123def456\n' ;;
+      *) : ;;
+    esac
+  }
+  run cmd_ls --json
+  assert_success
+  jq -e '.[0].allow_count==0' <<<"$output"
+  rm -rf "$PROJ" "$XDG_STATE_HOME"
+}
+
+@test "ls --json: a gone project dir falls back to the baked allowcount label" {
+  _stub_engine_one_box   # sluice.project -> /nonexistent/proj, label -> 3
+  run cmd_ls --json
+  assert_success
+  jq -e '.[0].allow_count==3' <<<"$output"
+  rm -rf "$XDG_STATE_HOME"
+}
+
 @test "ls --json: a pre-posture image without a confighash label yields confighash:null" {
   _stub_engine_one_box
   eng() {

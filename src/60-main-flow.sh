@@ -204,7 +204,9 @@ if ! PROJECT_CONFIG="$(find_config)"; then
     stop|logs|learn|egress|rm|diff|apply) die "no sluice.config.sh found in $PWD or any parent - nothing to ${1}." ;;
     *) die "unknown command: ${1:-} - run 'sluice help' for usage." ;;
   esac
-  # zero-config: scaffold, preview, then confirm before build/run (CI stops unless SLUICE_YES=1).
+  # zero-config: scaffold, preview, then confirm before build/run. Non-interactive runs ALWAYS stop
+  # after the scaffold (SLUICE_YES included): the detected run command can mutate the freshly-mounted
+  # repo (dep installs), too much blast radius for an implicit yes nobody reviewed.
   banner
   echo "[sluice] no sluice.config.sh found - scaffolding one from the detected stack:"
   SLUICE_INIT_QUIET=1 cmd_init
@@ -213,8 +215,8 @@ if ! PROJECT_CONFIG="$(find_config)"; then
     printf '[sluice] build and run it now? [Y/n] '
     read -r _ans || _ans=n
     case "$_ans" in [nN]|[nN][oO]) echo "[sluice] kept sluice.config.sh - edit it, then run 'sluice'."; exit 0 ;; esac
-  elif [ "${SLUICE_YES:-}" != 1 ]; then
-    echo "[sluice] non-interactive: review sluice.config.sh, then run 'sluice' (or set SLUICE_YES=1 to auto-run)."
+  else
+    echo "[sluice] non-interactive: review sluice.config.sh, then run 'sluice' to build + run it."
     exit 0
   fi
   PROJECT_CONFIG="$PWD/sluice.config.sh"
@@ -273,18 +275,32 @@ case "${1:-run-default}" in
       && echo "${E_DIM}[sluice]${E_RST} config from $(_tilde "$PROJECT_CONFIG") (box for $(_tilde "$PROJECT_DIR"))" >&2 ;;
 esac
 
+# Host-side credential hook: fires once per invocation, before ANY session (warm or cold) - a
+# short-lived token minted here is fresh for every run, not only the run that created the container.
+run_prelaunch() {
+  [ -n "${SLUICE_PRELAUNCH:-}" ] || return 0
+  [ -n "${_PRELAUNCH_DONE:-}" ] && return 0
+  command -v "$SLUICE_PRELAUNCH" >/dev/null 2>&1 \
+    || die "SLUICE_PRELAUNCH=$SLUICE_PRELAUNCH is not a function/command defined in sluice.config.sh"
+  echo "[sluice] running prelaunch hook: $SLUICE_PRELAUNCH"
+  "$SLUICE_PRELAUNCH"
+  _PRELAUNCH_DONE=1
+}
+
 # Pre-run nudge: a config that declares auth vars (SLUICE_ENV) with none set on the host and no
 # persisted session will likely fail to authenticate (the key is forwarded from your shell, never
-# baked; headless OAuth can't complete). Warn, don't block; run-default path only.
+# baked; headless OAuth can't complete). Warn, don't block; run-default path only. The prelaunch
+# hook runs FIRST, so a hook that stages the auth env never trips a false alarm here.
 warn_auth_unset() {
   [ -n "${SLUICE_ENV:-}" ] || return 0
   local v; for v in $SLUICE_ENV; do [ -n "${!v:-}" ] && return 0; done
   local store="${XDG_STATE_HOME:-$HOME/.local/state}/sluice/$slug"
   [ -n "${SLUICE_STATE_DIRS:-}" ] && [ -d "$store" ] && return 0
-  echo "${E_YEL}[sluice] note:${E_RST} none of [$SLUICE_ENV] are set on the host - export one before running." >&2
+  local hookhint=""; [ -n "${SLUICE_PRELAUNCH:-}" ] && hookhint=" (prelaunch hook '$SLUICE_PRELAUNCH' set none of them)"
+  echo "${E_YEL}[sluice] note:${E_RST} none of [$SLUICE_ENV] are set on the host$hookhint - export one before running." >&2
   echo "         the key is forwarded from your shell (never baked); a browser OAuth login can't complete in the sandbox." >&2
 }
-case "${1:-run-default}" in run-default) warn_auth_unset ;; esac
+case "${1:-run-default}" in run-default) run_prelaunch; warn_auth_unset ;; esac
 
 # Laundering-host gate: an allowlisted host an attacker can also write to (S3, gists, pastebins, LLM
 # APIs) lets data leak out even though it's allowlisted - we splice, never decrypt, so a request body

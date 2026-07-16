@@ -411,8 +411,26 @@ cmd_doctor() {
 
   # SLUICE_MASK posture: what's shadowed now, and secret-looking files the box CAN still read.
   if [ -n "${SLUICE_MASK:-}" ]; then
-    local _nm; _nm="$(mask_matches 2>/dev/null | grep -c . || true)"
+    local _mm _nm; _mm="$(mask_matches 2>/dev/null || true)"
+    _nm="$(printf '%s\n' "$_mm" | grep -c . || true)"
     _doc mask "$SLUICE_MASK ${C_DIM}($_nm path(s) masked at launch)${C_RST}"
+    # A masked file that is git-TRACKED reads as emptied inside the box, so in-box git shows it
+    # modified - and an in-box add/commit would stage the empty file. Flag; overlay avoids it.
+    local _mt _mtn="" _ntf
+    while IFS= read -r _mt; do
+      [ -n "$_mt" ] || continue
+      git -C "$PROJECT_DIR" ls-files --error-unmatch -- "$_mt" >/dev/null 2>&1 && _mtn="$_mtn$_mt"$'\n'
+    done <<EOF
+$_mm
+EOF
+    if [ -n "$_mtn" ]; then
+      _attn=$((_attn+1))
+      _ntf="$(printf '%s' "$_mtn" | grep -c . || true)"
+      _doc "" "${C_YEL}note${C_RST}: $_ntf masked file(s) are git-tracked - in-box git sees them emptied (a commit there would stage the empty file); prefer SLUICE_WORKSPACE=overlay when masking tracked files"
+      printf '%s' "$_mtn" | head -10 | while IFS= read -r _mt; do
+        printf '             %s\n' "$(_term_esc "$_mt")"
+      done
+    fi
   fi
   local _unm _nu _uf
   _unm="$(unmasked_secrets 2>/dev/null || true)"
@@ -818,7 +836,7 @@ cmd_ls() {
   # Gather labels + container state into parallel arrays, applying filters as we go. (Kept as a plain
   # while-loop, NOT a $(...) capture: a case pattern's ) inside command substitution mis-parses on bash 3.2.)
   local names=() stats=() projs=() stacks=() descs=() curs=() orphs=() allows=() ports_=() locks=() blocks=() ovls=() chashes=()
-  local name proj stack desc status cur orphan allowcount portslbl lock blocked ovl chash
+  local name proj stack desc status cur orphan allowcount portslbl lock blocked ovl chash _adline _adval
   while IFS= read -r name; do
     [ -n "$name" ] || continue
     proj="$( "$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.project" }}' "$name" 2>/dev/null || true)"
@@ -835,6 +853,21 @@ cmd_ls() {
     case "$portslbl"   in "<no value>") portslbl=""   ;; esac
     case "$ovl"        in "<no value>") ovl=""        ;; esac
     case "$chash"      in "<no value>") chash=""      ;; esac
+    # The allowcount label is baked at build, but SLUICE_ALLOW_DOMAINS is the one live-edited,
+    # hash-excluded knob (learn) - read the config's first assignment textually (never sourced;
+    # ls must not execute box configs). Label = fallback when the config or the line is gone.
+    if [ -n "$proj" ] && [ -f "$proj/sluice.config.sh" ]; then
+      _adline="$(grep -m1 -E '^[[:space:]]*SLUICE_ALLOW_DOMAINS=' "$proj/sluice.config.sh" 2>/dev/null || true)"
+      if [ -n "$_adline" ]; then
+        _adval="${_adline#*=}"
+        case "$_adval" in
+          \"*) _adval="${_adval#\"}"; _adval="${_adval%%\"*}" ;;
+          \'*) _adval="${_adval#\'}"; _adval="${_adval%%\'*}" ;;
+          *)   _adval="${_adval%%#*}" ;;
+        esac
+        allowcount="$(printf '%s' "$_adval" | wc -w | tr -d ' ')"
+      fi
+    fi
     orphan=false; [ -n "$proj" ] && [ ! -d "$proj" ] && orphan=true
     if   "$RUNNER" ps    --filter "name=$name" --filter status=running --format '{{.Names}}' 2>/dev/null | grep -qx "$name"; then status=running
     elif "$RUNNER" ps -a --filter "name=$name" --format '{{.Names}}' 2>/dev/null | grep -qx "$name"; then status=stopped
@@ -881,7 +914,7 @@ EOF
     for j in "${!order[@]}"; do
       i="${order[$j]}"
       [ "$j" -gt 0 ] && printf ','
-      ac="${allows[$i]}"; [ -n "$ac" ] || ac=null              # null = un-rebuilt box (label absent), not 0
+      ac="${allows[$i]}"; [ -n "$ac" ] || ac=null              # null = no readable config AND label absent (un-rebuilt), not 0
       lk=false; [ "${locks[$i]}" = locked ] && lk=true
       # tr-split (like overlays) keeps a glob metachar in the label literal - no pathname expansion against $PWD
       pjson="$(printf '%s' "${ports_[$i]}" | tr ' \t' '\n\n' | _json_arr)"

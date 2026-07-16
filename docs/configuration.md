@@ -180,8 +180,10 @@ How-to and trade-offs: [hardening](hardening.md).
   box keeps its own contents (e.g. Linux-built `node_modules`) while the host's stay
   untouched. Starts empty; persists across recreation; removed by `sluice rm`/`prune`.
 - `SLUICE_PRELAUNCH` - name of a shell function defined in this config, run on the host
-  before launch - mint/stage short-lived credentials, then expose them via `SLUICE_MOUNTS`
-  or `SLUICE_ENV`.
+  before **every session** (`sluice` / `run` / `shell`, warm or cold box) and before a
+  `rebuild` recreates the container - mint/stage short-lived credentials, then expose them
+  via `SLUICE_MOUNTS` or `SLUICE_ENV` (forwarded at exec time, so re-minted values reach
+  each new session). Runs once per invocation; keep it idempotent and fast.
 
 ## Environment-only knobs
 
@@ -195,8 +197,10 @@ Set these in your shell, not the config:
   registry or network in CI. A deterministic build error still fails after the retries.
 - `SLUICE_RM_PURGE_STATE` - `=1` makes `sluice rm` also delete the box's persisted state dir
   (agent sessions/auth); by default `rm` keeps it. Best-effort on Linux (box-owned files may resist).
-- `SLUICE_YES` - `=1` auto-confirms non-interactive prompts (`prune`, the zero-config first
-  run, `apply`).
+- `SLUICE_YES` - `=1` auto-confirms non-interactive prompts (`prune`, `apply`). The zero-config
+  first run is the exception: non-interactively it always stops after scaffolding the config
+  (review it, then run `sluice` again) - the detected run command executes against your mounted
+  repo, so it never runs sight-unseen.
 - `SLUICE_NO_BANNER` - non-empty suppresses the startup banner. The banner (stderr, TTY only)
   shows a live posture line at launch - engine, allowlist size, active hardening, whether secrets
   are masked - and turns yellow with `exfil risk` when an allowlisted host is a laundering/DoH

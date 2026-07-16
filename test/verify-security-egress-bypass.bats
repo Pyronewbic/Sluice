@@ -31,6 +31,14 @@ teardown_file() { destroy_box egbypass egbypass; }
   assert_success
 }
 
+@test "egress-bypass: a denied raw-IP attempt is ledgered, not just dropped" {
+  # The transparent intercept denies a no-SNI raw-IP CONNECT; the ledger must count it even though
+  # the hostname rows skip IP literals (learn must never propose one).
+  ( cd "$WORK/egbypass" && "$SLUICE" run curl -sS --max-time 8 -o /dev/null https://1.1.1.1 ) || true
+  run bash -c "cd '$WORK/egbypass' && '$SLUICE' egress --json | jq -e '.denied_ip_requests >= 1'"
+  assert_success
+}
+
 # The fail-closed boot self-test (init-firewall.sh) asserts -P OUTPUT DROP (v4 + v6) and exits 1 on a
 # non-DROP policy; entrypoint runs it under set -e before "[sluice] ready", so a failed self-test means
 # no box. These assert the guarantee it enforces holds on the live box - a regression that weakened the

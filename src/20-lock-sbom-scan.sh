@@ -110,19 +110,24 @@ EOF
   fi
   # SLUICE_ALLOW_IPS direct-egress accounting (the escape hatch that bypasses squid - now metered).
   if [ -n "${SLUICE_ALLOW_IPS:-}" ]; then
-    local _e _p _b _fwd _fp _fb
+    local _e _p _b
     allowips_rows 2>/dev/null | while IFS="$TAB" read -r _e _p _b; do
       [ -n "$_e" ] || continue
       echo "  ${C_DIM}direct-ip${C_RST} $_e  $_p pkt  $(_human_bytes "${_b:-0}")"
     done
-    _fwd="$(fw_dropped 2>/dev/null || true)"; _fp="${_fwd%%"$TAB"*}"; _fb="${_fwd#*"$TAB"}"
-    case "$_fp" in ''|*[!0-9]*) _fp=0 ;; esac
-    [ "$_fp" -gt 0 ] && echo "  ${C_DIM}firewall dropped $_fp non-HTTP/off-allowlist packet(s)${C_RST}"
     if [ -n "${SLUICE_ALLOW_IPS_MAX_BYTES:-}" ]; then
       local _aid2; _aid2="$(allowips_dropped 2>/dev/null || true)"; case "$_aid2" in ''|*[!0-9]*) _aid2=0 ;; esac
       [ "$_aid2" -gt 0 ] && echo "  ${C_RED}direct-ip budget EXCEEDED${C_RST}: $_aid2 pkt dropped (SLUICE_ALLOW_IPS_MAX_BYTES)"
     fi
   fi
+  # Drop accountability - always on: a raw-IP request the proxy denied and packets the firewall
+  # dropped are visible even when no direct-IP lane is configured (a probe must not vanish).
+  local _fwd _fp _dip
+  _dip="$(denied_ip_requests 2>/dev/null || true)"; case "$_dip" in ''|*[!0-9]*) _dip=0 ;; esac
+  [ "$_dip" -gt 0 ] && echo "  ${C_RED}denied${C_RST} $_dip raw-IP request(s) (no hostname to filter; SLUICE_ALLOW_IPS is the reviewed lane)"
+  _fwd="$(fw_dropped 2>/dev/null || true)"; _fp="${_fwd%%"$TAB"*}"
+  case "$_fp" in ''|*[!0-9]*) _fp=0 ;; esac
+  [ "$_fp" -gt 0 ] && echo "  ${C_DIM}firewall dropped $_fp non-HTTP/off-allowlist packet(s)${C_RST}"
   # DNS query audit (SLUICE_DNS_AUDIT=1): volume + tunnel-pattern flags.
   if [ "${SLUICE_DNS_AUDIT:-}" = 1 ]; then
     local _dp _dq _du _dtq=0 _dtu=0 _thr; _thr="${SLUICE_DNS_TUNNEL_THRESHOLD:-500}"; case "$_thr" in ''|*[!0-9]*) _thr=500 ;; esac

@@ -78,7 +78,8 @@ The guarantees below hold only while these do:
   `disable_ipv6` set, or `ip6tables` `OUTPUT` `DROP`) - so a silently-failed default-DROP can't leave
   egress open while the box reports `ready`.
 - **IP-literal / DNS / IPv6 bypasses** -> a direct-IP HTTPS connection has no SNI ->
-  terminated; an intercepted plaintext-HTTP request is allowed by `Host`, which squid verifies against
+  terminated (and ledgered: the receipt + `sluice egress` count denied raw-IP requests, so a probe
+  is visible, not just dropped); an intercepted plaintext-HTTP request is allowed by `Host`, which squid verifies against
   the IP the client actually connected to (`host_verify_strict`), so a forged `Host: <allowlisted>` to
   an arbitrary IP is refused; IPv6 is disabled entirely (we proxy v4 only, so a dual-stack app can't
   slip out over v6). **DNS resolution is scoped to the egress allowlist**: dnsmasq forwards only allowlisted names,
@@ -180,9 +181,12 @@ The guarantees below hold only while these do:
    `/8` (e.g. the two-CIDR `0.0.0.0/1 128.0.0.0/1` cover) are **refused** host-side, and the in-box
    firewall independently refuses the same so a bypassed launcher check can't open all direct egress.
    This lane is no longer invisible: each entry routes through an accountable `SLUICE-ALLOWIPS` iptables
-   chain, so its per-entry byte counters appear in the egress receipt (`allow_ips[]`) alongside the
-   firewall-dropped total (`fw_dropped`), and `SLUICE_ALLOW_IPS_MAX_BYTES` sets a preventive shared
-   volume budget across all direct-IP egress (over it, the flows are severed). Still unfiltered by
+   chain, so its per-entry byte counters appear in the egress receipt (`allow_ips[]`), and
+   `SLUICE_ALLOW_IPS_MAX_BYTES` sets a preventive shared volume budget across all direct-IP egress
+   (over it, the flows are severed). Drop accountability is recorded for **every** box, lane
+   configured or not: the firewall-dropped total (`fw_dropped`) and the count of raw-IP requests the
+   proxy denied (`denied_ip_requests`) always appear in the receipt + `sluice egress --json`, so a
+   raw-IP probe surfaces instead of vanishing from the hostname ledger. Still unfiltered by
    hostname - metering and a byte cap are the bound, not content inspection.
 4. **A squid vulnerability or a loose allowlist.** The egress policy rests on squid +
    the allowlist file. A squid CVE or an over-broad `SLUICE_ALLOW_DOMAINS` is the trust anchor
