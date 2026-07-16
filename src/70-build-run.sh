@@ -221,13 +221,8 @@ _validated_git_common_dir() {
 start() {
   "$RUNNER" rm -f -v "$container" >/dev/null 2>&1 || true
 
-  # Optional host-side hook to stage credentials/secrets before launch.
-  if [ -n "${SLUICE_PRELAUNCH:-}" ]; then
-    command -v "$SLUICE_PRELAUNCH" >/dev/null 2>&1 \
-      || die "SLUICE_PRELAUNCH=$SLUICE_PRELAUNCH is not a function/command defined in sluice.config.sh"
-    echo "[sluice] running prelaunch hook: $SLUICE_PRELAUNCH"
-    "$SLUICE_PRELAUNCH"
-  fi
+  # Credential hook (no-op if this invocation already ran it) - staged mounts need it before create.
+  run_prelaunch
 
   # On rootless podman, map the host user onto the sluice uid so the box doesn't re-own the repo to a
   # subuid (no-op on docker / rootful podman). Appends to RUNTIME_RUN_OPTS before runtime_run reads it.
@@ -407,7 +402,9 @@ EOF
   running || die "container failed to come up - see: sluice logs"
 }
 
-ensure_up() { maybe_build; runtime_sync_image; running || start; }
+# run_prelaunch before the warm-box short-circuit: SLUICE_ENV forwards at exec time, so a session
+# into an already-running box still gets hook-minted (fresh) values, not the creation-time ones.
+ensure_up() { maybe_build; runtime_sync_image; run_prelaunch; running || start; }
 
 # Build the `<engine> exec` arg vector (sluice user, SLUICE_ENV forwarded, TTY only when attached).
 _exec_args() {

@@ -187,8 +187,10 @@ SLUICE_STATE_DIRS=""
 # persists across recreation; removed by `sluice rm`/`prune`. e.g. "node_modules .venv"
 SLUICE_OVERLAY_DIRS=""
 
-# Name of a shell function defined in THIS file, run on the host before launch - mint/stage
-# short-lived credentials, then expose them via SLUICE_MOUNTS or SLUICE_ENV. e.g.
+# Name of a shell function defined in THIS file, run on the host before EVERY session (warm or
+# cold box) - mint/stage short-lived credentials, then expose them via SLUICE_MOUNTS or
+# SLUICE_ENV (read at exec time, so each session gets the freshly-minted value). Keep it
+# idempotent and fast. e.g.
 #   stage_creds() { umask 077; gcloud auth print-access-token > "$HOME/.cache/app/token"; }
 #   SLUICE_PRELAUNCH="stage_creds"
 SLUICE_PRELAUNCH=""
