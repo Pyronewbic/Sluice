@@ -411,8 +411,26 @@ cmd_doctor() {
 
   # SLUICE_MASK posture: what's shadowed now, and secret-looking files the box CAN still read.
   if [ -n "${SLUICE_MASK:-}" ]; then
-    local _nm; _nm="$(mask_matches 2>/dev/null | grep -c . || true)"
+    local _mm _nm; _mm="$(mask_matches 2>/dev/null || true)"
+    _nm="$(printf '%s\n' "$_mm" | grep -c . || true)"
     _doc mask "$SLUICE_MASK ${C_DIM}($_nm path(s) masked at launch)${C_RST}"
+    # A masked file that is git-TRACKED reads as emptied inside the box, so in-box git shows it
+    # modified - and an in-box add/commit would stage the empty file. Flag; overlay avoids it.
+    local _mt _mtn="" _ntf
+    while IFS= read -r _mt; do
+      [ -n "$_mt" ] || continue
+      git -C "$PROJECT_DIR" ls-files --error-unmatch -- "$_mt" >/dev/null 2>&1 && _mtn="$_mtn$_mt"$'\n'
+    done <<EOF
+$_mm
+EOF
+    if [ -n "$_mtn" ]; then
+      _attn=$((_attn+1))
+      _ntf="$(printf '%s' "$_mtn" | grep -c . || true)"
+      _doc "" "${C_YEL}note${C_RST}: $_ntf masked file(s) are git-tracked - in-box git sees them emptied (a commit there would stage the empty file); prefer SLUICE_WORKSPACE=overlay when masking tracked files"
+      printf '%s' "$_mtn" | head -10 | while IFS= read -r _mt; do
+        printf '             %s\n' "$(_term_esc "$_mt")"
+      done
+    fi
   fi
   local _unm _nu _uf
   _unm="$(unmasked_secrets 2>/dev/null || true)"

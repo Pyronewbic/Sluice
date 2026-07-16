@@ -36,6 +36,26 @@ teardown() { rm -rf "$WORK"; }
   assert_output --partial "packages/api/.env"
 }
 
+@test "doctor: warns when a masked file is git-tracked (in-box git would see it emptied)" {
+  printf 'SLUICE_MASK=".env*"\nSLUICE_RUN_CMD="bash"\n' > "$WORK/sluice.config.sh"
+  echo "SECRET=1" > "$WORK/.env"
+  ( cd "$WORK" && git init -q && git add .env \
+      && git -c user.email=t@t -c user.name=t commit -qm x )
+  run bash -c "cd '$WORK' && '$SLUICE' doctor"
+  assert_success
+  assert_output --partial "git-tracked"
+  assert_output --partial ".env"
+}
+
+@test "doctor: an untracked masked file raises no git-tracked warning" {
+  printf 'SLUICE_MASK=".env*"\nSLUICE_RUN_CMD="bash"\n' > "$WORK/sluice.config.sh"
+  echo "SECRET=1" > "$WORK/.env"
+  ( cd "$WORK" && git init -q )
+  run bash -c "cd '$WORK' && '$SLUICE' doctor"
+  assert_success
+  refute_output --partial "git-tracked"
+}
+
 @test "doctor: .env.example is scaffolding, not a secret (no warning)" {
   printf 'SLUICE_RUN_CMD="bash"\n' > "$WORK/sluice.config.sh"
   echo "SECRET=" > "$WORK/.env.example"
