@@ -204,7 +204,9 @@ if ! PROJECT_CONFIG="$(find_config)"; then
     stop|logs|learn|egress|rm|diff|apply) die "no sluice.config.sh found in $PWD or any parent - nothing to ${1}." ;;
     *) die "unknown command: ${1:-} - run 'sluice help' for usage." ;;
   esac
-  # zero-config: scaffold, preview, then confirm before build/run (CI stops unless SLUICE_YES=1).
+  # zero-config: scaffold, preview, then confirm before build/run. Non-interactive runs ALWAYS stop
+  # after the scaffold (SLUICE_YES included): the detected run command can mutate the freshly-mounted
+  # repo (dep installs), too much blast radius for an implicit yes nobody reviewed.
   banner
   echo "[sluice] no sluice.config.sh found - scaffolding one from the detected stack:"
   SLUICE_INIT_QUIET=1 cmd_init
@@ -213,8 +215,8 @@ if ! PROJECT_CONFIG="$(find_config)"; then
     printf '[sluice] build and run it now? [Y/n] '
     read -r _ans || _ans=n
     case "$_ans" in [nN]|[nN][oO]) echo "[sluice] kept sluice.config.sh - edit it, then run 'sluice'."; exit 0 ;; esac
-  elif [ "${SLUICE_YES:-}" != 1 ]; then
-    echo "[sluice] non-interactive: review sluice.config.sh, then run 'sluice' (or set SLUICE_YES=1 to auto-run)."
+  else
+    echo "[sluice] non-interactive: review sluice.config.sh, then run 'sluice' to build + run it."
     exit 0
   fi
   PROJECT_CONFIG="$PWD/sluice.config.sh"

@@ -243,3 +243,15 @@ hasnt() { ! grep -qF -- "$2" "$WORK/$1/sluice.config.sh"; }
   has node-noscript '# NOTE:' &&
   has node-noscript 'no dev/start/serve script'
 }
+
+# Bare `sluice` in a config-less repo: the zero-config path scaffolds, then a non-interactive shell
+# must STOP (never build/run) - SLUICE_YES included, since the detected run cmd mutates the mount.
+@test "zero-config non-interactive: scaffolds then STOPS, even under SLUICE_YES=1" {
+  local d; d="$(mktemp -d)"; printf '{"name":"zc"}\n' > "$d/package.json"
+  run bash -c "cd '$d' && SLUICE_YES=1 '$SLUICE' 2>&1"
+  assert_success
+  [ -f "$d/sluice.config.sh" ]
+  assert_output --partial "review sluice.config.sh"
+  refute_output --partial "building sluice-"
+  rm -rf "$d"
+}

@@ -197,8 +197,10 @@ Set these in your shell, not the config:
   registry or network in CI. A deterministic build error still fails after the retries.
 - `SLUICE_RM_PURGE_STATE` - `=1` makes `sluice rm` also delete the box's persisted state dir
   (agent sessions/auth); by default `rm` keeps it. Best-effort on Linux (box-owned files may resist).
-- `SLUICE_YES` - `=1` auto-confirms non-interactive prompts (`prune`, the zero-config first
-  run, `apply`).
+- `SLUICE_YES` - `=1` auto-confirms non-interactive prompts (`prune`, `apply`). The zero-config
+  first run is the exception: non-interactively it always stops after scaffolding the config
+  (review it, then run `sluice` again) - the detected run command executes against your mounted
+  repo, so it never runs sight-unseen.
 - `SLUICE_NO_BANNER` - non-empty suppresses the startup banner. The banner (stderr, TTY only)
   shows a live posture line at launch - engine, allowlist size, active hardening, whether secrets
   are masked - and turns yellow with `exfil risk` when an allowlisted host is a laundering/DoH
