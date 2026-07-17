@@ -44,7 +44,7 @@ config_hash() {
     for f in ${SLUICE_PREFETCH_FILES:-}; do [ -f "$PROJECT_DIR/$f" ] && cat "$PROJECT_DIR/$f"; done; \
     printf 'pin=%s\n' "${SLUICE_PIN:-}"; \
     if [ "${SLUICE_PIN:-}" = 1 ] && [ -f "$PROJECT_DIR/sluice.pin" ]; then cat "$PROJECT_DIR/sluice.pin"; fi; } \
-    | shasum | awk '{print $1}' | cut -c1-12
+    | _sha256 | cut -c1-12
 }
 
 # ps-filter (not `inspect .State.Running`) so it works on both docker and nerdctl - nerdctl's native
@@ -330,8 +330,10 @@ EOF
 last_run_offset() { { _root_exec "$container" cat /run/sluice-run-offset 2>/dev/null || true; } | tr -dc 0-9; }
 mark_run_start()  { _root_exec "$container" sh -c 'wc -c < /var/log/squid/access.log | tr -dc 0-9 > /run/sluice-run-offset' 2>/dev/null || true; }
 
-# sha256 of stdin (hex only). shasum ships on macOS + the Linux runners (config_hash already uses it).
-_sha256() { shasum -a 256 2>/dev/null | awk '{print $1}'; }
+# sha256 of stdin (hex only). Prefer coreutils sha256sum (Linux: Alpine, *-slim, most CI images have
+# no perl-based `shasum`); fall back to `shasum -a 256` (macOS ships that, not sha256sum). Both are
+# SHA-256, so the digest is identical whichever tool runs - a hard requirement for config_hash.
+_sha256() { if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi 2>/dev/null | awk '{print $1}'; }
 
 # Arm the at-exit egress receipt for a session: snapshot the proxy-log position so the receipt is
 # scoped to THIS run (not the box's whole boot), mark the run start so a later `learn` can scope to it,

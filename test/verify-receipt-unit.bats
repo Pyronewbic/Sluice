@@ -165,3 +165,15 @@ _rec() { local TAB; TAB="$(printf '\t')"; _persist_receipt "$(printf 'reached%s%
   assert_success
   assert_output --partial "REACHED off=[]"   # sentinel reached AND offset empty (full-log fallback)
 }
+
+# _sha256 must be portable: coreutils sha256sum (Linux/CI, no perl `shasum`) OR shasum -a 256 (macOS,
+# no sha256sum). Both are SHA-256, so the digest is identical - which config_hash depends on.
+@test "hash: _sha256 computes SHA-256 whichever tool is present" {
+  command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1 || skip "no sha256 tool on this host"
+  [ "$(printf abc | _sha256)" = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" ]
+}
+
+@test "hash: config_hash no longer pipes through bare shasum (SHA1 / perl-only, absent on Alpine/slim)" {
+  run grep -F '| shasum |' "$ROOT/bin/sluice"
+  assert_failure
+}
