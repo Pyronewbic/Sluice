@@ -145,7 +145,7 @@ block. Walkthrough: [examples/README.md](examples/README.md).
 
 ### 5. Distribution & trust - LANDED
 Apache-2.0 (open-core; the control plane is the moat), `SECURITY.md`, `install.sh`, and a Homebrew tap
-pinning the cosign-signed release tarball; released through v0.9.0. Signed GHCR base image (opt-in) with
+pinning the cosign-signed release tarball; released through v0.10.0. Signed GHCR base image (opt-in) with
 an attested SBOM, plus the `lock` audit/drift/SBOM/scan surface. Honest scope: audit/drift, **not**
 reproducibility (Wolfi apk is rolling) - the remaining depth is in the backlog above. Mechanics:
 [docs/supply-chain.md](docs/supply-chain.md).
