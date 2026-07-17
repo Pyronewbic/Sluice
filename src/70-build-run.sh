@@ -450,7 +450,13 @@ workspace_counts() {
 cmd_workspace_diff() {
   workspace_is_overlay || die "sluice diff needs SLUICE_WORKSPACE=overlay (the protected-copy workspace)"
   ensure_up
-  _root_exec "$container" sh -c 'diff -ruN --exclude=.git /mnt/sluice-orig "$1" 2>/dev/null' _ "$PROJECT_DIR" || true
+  # Masked files are identical empty binds on both sides (so they read as unchanged); exclude them
+  # explicitly so the review can never imply the real secret is safe when apply would truncate it.
+  local -a _dex=(); local _mp
+  while IFS= read -r _mp; do [ -n "$_mp" ] && _dex+=(--exclude="${_mp##*/}"); done <<EOF
+$(mask_matches 2>/dev/null || true)
+EOF
+  _root_exec "$container" sh -c 'wd="$1"; shift; diff -ruN --exclude=.git "$@" /mnt/sluice-orig "$wd" 2>/dev/null' _ "$PROJECT_DIR" ${_dex[@]+"${_dex[@]}"} || true
 }
 
 # `sluice apply`: write the working copy back onto the host repo (adds/mods via tar, then deletions).
@@ -472,8 +478,13 @@ EOF
     return 0
   fi
   # Adds + modifications: tar the working copy over the host repo. Surface failures (no 2>/dev/null,
-  # check the pipe status) instead of printing a false 'applied'.
-  if ! _root_exec "$container" sh -c 'cd "$1" && tar -cf - .' _ "$PROJECT_DIR" | tar -C "$PROJECT_DIR" -xf -; then
+  # check the pipe status) instead of printing a false 'applied'. Masked files are empty binds in the
+  # box, so EXCLUDE every mask match or the write-back truncates the host's real secret to 0 bytes.
+  local -a _tex=(); local _mp
+  while IFS= read -r _mp; do [ -n "$_mp" ] && _tex+=(--exclude="./$_mp"); done <<EOF
+$(mask_matches 2>/dev/null || true)
+EOF
+  if ! _root_exec "$container" sh -c 'wd="$1"; shift; cd "$wd" && tar -cf - "$@" .' _ "$PROJECT_DIR" ${_tex[@]+"${_tex[@]}"} | tar -C "$PROJECT_DIR" -xf -; then
     die "apply failed writing to $PROJECT_DIR (check permissions and free space; the host repo may be partially updated)"
   fi
   # Deletions: remove host files the box deleted, against the BOOT-TIME snapshot (not the live ro
