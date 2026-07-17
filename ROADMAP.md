@@ -92,7 +92,7 @@ rough effort (S/M/L) and the gap each closes.
   image; the box runs under nerdctl and the image is loaded across (the `$RUNNER` split, default unset =
   unchanged). Verified on the spike VM 2026-06-02: the firewall/squid stack comes up unchanged. Edera is
   Track B (its `protect` launch interface, pending the access key). Runbook:
-  [`spike/terraform/`](spike/terraform/README.md).
+  [`terraform/`](terraform/README.md) (`enable_kata=true`).
 - **More agent presets - S.** The wedge; a preset is "just a file" (tool + API hosts + auth var). Cheap
   adoption, and the preset library is community moat.
 
