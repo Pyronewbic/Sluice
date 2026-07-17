@@ -119,6 +119,9 @@ for entry in ${SLUICE_ALLOW_IPS:-}; do
   case "$entry" in
     *::*)         echo "[firewall] WARN: skipping IPv6 SLUICE_ALLOW_IPS entry (IPv4-only): $entry" >&2; continue ;;
   esac
+  # Skip+warn a non-IP (hostname) entry: it would resolve to the allowlist DNS sink, not the host. The
+  # launcher already refuses these; this is defense-in-depth against a hand-baked config.
+  case "${entry%%:*}" in *[!0-9./]*) echo "[firewall] WARN: skipping non-IPv4 SLUICE_ALLOW_IPS entry: $entry" >&2; continue ;; esac
   case "$entry" in
     *:*)
       case "${entry#*:}" in *:*) echo "[firewall] WARN: skipping IPv6 SLUICE_ALLOW_IPS entry (IPv4-only): $entry" >&2; continue ;; esac
