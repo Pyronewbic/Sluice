@@ -30,14 +30,17 @@ allow  api.internal.example.com     # add a host (a bare line means the same)
 deny   .pastebin.com                 # remove from the effective allowlist, even if local config added it
 
 # ceilings - refuse to run if local config crosses them
-deny-ip 0.0.0.0/0                    # forbid a SLUICE_ALLOW_IPS entry inside this CIDR
+deny-ip 169.254.169.254/32           # forbid any SLUICE_ALLOW_IPS entry that OVERLAPS this CIDR
+                                     #   (an entry inside it, or a supernet that contains it)
 forbid SLUICE_DNS_OPEN               # refuse if the config sets this loosening knob
 forbid SLUICE_ALLOW_DOH
 forbid SLUICE_BUMP_DOMAINS
 forbid-laundering                    # refuse any allowlisted host an attacker could also write to
 max-allow-ips 2                      # cap the number of SLUICE_ALLOW_IPS entries
-max-hard-cap-bytes 10485760          # mandate a preventive egress ceiling: refuse if the box sets no
-                                     #   SLUICE_EGRESS_HARD_CAP_BYTES, or one larger than this
+max-allow-ips-bytes 10485760         # mandate a direct-IP volume bound: refuse if SLUICE_ALLOW_IPS is
+                                     #   set without a SLUICE_ALLOW_IPS_MAX_BYTES <= this
+max-hard-cap-bytes 10485760          # mandate a preventive (proxied-lane) egress ceiling: refuse if the
+                                     #   box sets no SLUICE_EGRESS_HARD_CAP_BYTES, or one larger than this
 
 # policy-level
 strict-unknown                       # make an unknown directive a hard refusal, not a warning
@@ -58,10 +61,14 @@ config (and any `sluice learn` edits) - so policy wins:
   Wildcard entries (e.g. `*.s3.amazonaws.com`) are matched **literally**: the effective list is
   computed independently of the invocation directory, so a glob-shaped host is never expanded against
   the working directory's filenames.
-- **Ceilings** (`forbid`/`deny-ip`/`max-allow-ips`/`forbid-laundering`/`max-hard-cap-bytes`): a
-  violation **refuses to run** (exit non-zero), naming the offending knob/host. `max-hard-cap-bytes N`
-  mandates a preventive volume ceiling - a box that sets no `SLUICE_EGRESS_HARD_CAP_BYTES`, or one
-  above `N`, is refused, so a developer can't opt out of the bound. (A verb-with-arg directive, so a
+- **Ceilings** (`forbid`/`deny-ip`/`max-allow-ips`/`max-allow-ips-bytes`/`forbid-laundering`/`max-hard-cap-bytes`): a
+  violation **refuses to run** (exit non-zero), naming the offending knob/host. `deny-ip` refuses an
+  `SLUICE_ALLOW_IPS` entry that OVERLAPS the CIDR in either direction (inside it, or a supernet
+  containing it). `max-hard-cap-bytes N` mandates a preventive volume ceiling on the proxied lane and
+  `max-allow-ips-bytes N` mandates one on the direct-IP lane (`SLUICE_ALLOW_IPS_MAX_BYTES <= N` when
+  `SLUICE_ALLOW_IPS` is set) - a box that sets no `SLUICE_EGRESS_HARD_CAP_BYTES`, or one
+  above `N`, is refused, so a developer can't opt out of the bound. A malformed (non-numeric) ceiling
+  arg is itself a hard refusal, not a silent no-op. (A verb-with-arg directive, so a
   pre-directive client warns-and-ignores it rather than mis-reading it as an allowlist host.) `SLUICE_ALLOW_IPS` is refused rather than
   silently trimmed because the firewall reads the baked list - a host-side trim wouldn't reach a
   running box, so a hard refuse is the honest contract.

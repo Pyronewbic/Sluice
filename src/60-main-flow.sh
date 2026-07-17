@@ -264,7 +264,7 @@ EOF
   _POLICY_SRC="$_PEVAL_SRC"; _POLICY_SUMMARY="$_PEVAL_SUMMARY"
   echo "${E_DIM}[sluice]${E_RST} managed egress policy: $(_tilde "$_POLICY_SRC") ($_POLICY_SUMMARY)" >&2
 }
-case "${1:-run-default}" in run-default|run|shell|build|rebuild|update) apply_policy ;; esac
+case "${1:-run-default}" in run-default|run|shell|build|rebuild|update|diff) apply_policy ;; esac
 
 # Advisory: in a monorepo it's easy to build/run against a config found by walking UP from a subdir
 # without noticing. Name the source (like `-b` announces its target). Run/build paths only; skipped
@@ -319,7 +319,7 @@ warn_laundering() {
   echo "${E_YEL}[sluice] note:${E_RST} allowlisted host(s) an attacker can also write to -${risky} - data can be laundered out (splice, not decrypt)." >&2
   echo "         keep the allowlist tight; SLUICE_LAUNDERING_OK=1 to acknowledge (silences this), SLUICE_STRICT_LAUNDERING=1 to refuse." >&2
 }
-case "${1:-run-default}" in run-default|run|shell) warn_laundering ;; esac
+case "${1:-run-default}" in run-default|run|shell|diff) warn_laundering ;; esac
 
 # SLUICE_ALLOW_IPS is a direct-egress escape hatch that BYPASSES squid (init-firewall.sh ACCEPTs it
 # raw), and unlike the other path-y knobs it had no floor: a /0 opened all direct egress yet a broader-
@@ -357,7 +357,7 @@ validate_allow_ips() {
   done
   set +f
 }
-case "${1:-run-default}" in run-default|run|shell|build|rebuild|update) validate_allow_ips ;; esac
+case "${1:-run-default}" in run-default|run|shell|build|rebuild|update|diff) validate_allow_ips ;; esac
 
 # SLUICE_EGRESS_HOST_BUDGETS: "host=bytes .wildcard=bytes ..." - a detective per-host tx budget (over
 # any host's cap, `sluice egress` exits non-zero). Validate strictly and fail CLOSED: a malformed token
@@ -378,7 +378,7 @@ validate_host_budgets() {
   done
   set +f
 }
-case "${1:-run-default}" in run-default|run|shell|build|rebuild|update) validate_host_budgets ;; esac
+case "${1:-run-default}" in run-default|run|shell|build|rebuild|update|diff) validate_host_budgets ;; esac
 
 # SLUICE_EGRESS_HARD_CAP_BYTES: a PREVENTIVE in-box byte ceiling (xt_quota). Numeric and >= 1 MiB - boot
 # deny/allow probes + TLS handshakes consume the quota, so a sub-1MiB cap would brick the box at boot.
@@ -394,7 +394,7 @@ validate_egress_hard_caps() {
     *[!0-9]*) die "SLUICE_ALLOW_IPS_MAX_BYTES must be a byte count (got '${SLUICE_ALLOW_IPS_MAX_BYTES}')" ;;
   esac
 }
-case "${1:-run-default}" in run-default|run|shell|build|rebuild|update) validate_egress_hard_caps ;; esac
+case "${1:-run-default}" in run-default|run|shell|build|rebuild|update|diff) validate_egress_hard_caps ;; esac
 
 # SLUICE_BUMP_METHODS / SLUICE_BUMP_MAX_BODY are sed'd into squid.conf in-box (H5), so their charset is
 # security-critical (injection). Validate host-side; the entrypoint re-validates (defense in depth).
@@ -410,7 +410,7 @@ validate_bump_controls() {
     *[!0-9]*) die "SLUICE_BUMP_MAX_BODY must be a byte count (got '${SLUICE_BUMP_MAX_BODY}')" ;;
   esac
 }
-case "${1:-run-default}" in run-default|run|shell|build|rebuild|update) validate_bump_controls ;; esac
+case "${1:-run-default}" in run-default|run|shell|build|rebuild|update|diff) validate_bump_controls ;; esac
 
 # build: assemble a temp context (core + this project's config) and build
 # Verify a published base image's cosign signature (keyless/OIDC). Soft by default: warn if

@@ -81,6 +81,52 @@ STUBS
   refute_output --partial "SHOULD-NOT-FETCH"
 }
 
+@test "policy: learn DROPS a laundering host under forbid-laundering (not just warns)" {
+  local t="$BATS_TEST_TMPDIR/learn_launder_drop.sh"
+  cat > "$t" <<'STUBS'
+set -euo pipefail
+policy_configured() { return 0; }
+_policy_raw() { echo "forbid-laundering"; }
+apply_allowlist() { echo "APPLIED:$1"; }                    # tripwire: must NOT run (host dropped)
+reload_allowlist() { return 0; }
+merge_allow() { printf '%s' "$1"; }
+doh_listed() { return 1; }
+laundering_host() { return 0; }                             # the picked host IS laundering-capable
+_policy_denied_host() { return 1; }
+_allow_covers_denied() { return 1; }
+_tilde() { printf '%s' "$1"; }
+PROJECT_CONFIG=/dev/null; E_YEL=''; E_RST=''; C_GRN=''; C_RST=''; C_DIM=''
+STUBS
+  sed -n '/^learn_apply()/,/^}/p' "$ROOT/bin/sluice" >> "$t"
+  echo 'learn_apply "api.openai.com"' >> "$t"
+  run bash "$t"
+  assert_output --partial "policy forbids laundering-capable hosts"
+  refute_output --partial "APPLIED:"
+}
+
+@test "policy: learn KEEPS a laundering host (warned) when no policy forbids it" {
+  local t="$BATS_TEST_TMPDIR/learn_launder_keep.sh"
+  cat > "$t" <<'STUBS'
+set -euo pipefail
+policy_configured() { return 1; }                           # no policy -> no forbid-laundering
+_policy_raw() { echo ""; }
+apply_allowlist() { echo "APPLIED:$1"; }
+reload_allowlist() { return 0; }
+merge_allow() { printf '%s' "$1"; }
+doh_listed() { return 1; }
+laundering_host() { return 0; }
+_policy_denied_host() { return 1; }
+_allow_covers_denied() { return 1; }
+_tilde() { printf '%s' "$1"; }
+PROJECT_CONFIG=/dev/null; E_YEL=''; E_RST=''; C_GRN=''; C_RST=''; C_DIM=''
+STUBS
+  sed -n '/^learn_apply()/,/^}/p' "$ROOT/bin/sluice" >> "$t"
+  echo 'learn_apply "api.openai.com"' >> "$t"
+  run bash "$t"
+  assert_output --partial "APPLIED:api.openai.com"
+  assert_output --partial "laundered out"
+}
+
 # --- apply_policy run-path invariant vs the pure policy_evaluator (doctor-A1 refactor) -------------
 # apply_policy is the security-critical managed-egress gate ("deny is final"). It was split into a PURE
 # policy_evaluate (doctor calls it report-only) + a die-mode apply_policy (the run path). These tests
@@ -153,7 +199,7 @@ printf "REFUSALS<<%sEOL\n" "$_PEVAL_REFUSALS"'
 }
 @test "policy: (5) SLUICE_ALLOW_IPS matching a deny-ip - apply dies, eval records" {
   export POLICY_BODY=$'deny-ip 10.0.0.0/8' SLUICE_ALLOW_IPS="10.0.0.5:5432"
-  _assert_violation deny-ip "policy denies SLUICE_ALLOW_IPS '10.0.0.5:5432' (matches deny-ip 10.0.0.0/8)"
+  _assert_violation deny-ip "policy denies SLUICE_ALLOW_IPS '10.0.0.5:5432' (overlaps deny-ip 10.0.0.0/8)"
 }
 @test "policy: (6) SLUICE_ALLOW_IPS over max-allow-ips - apply dies, eval records" {
   export POLICY_BODY=$'max-allow-ips 1' SLUICE_ALLOW_IPS="10.0.0.5:5432 10.0.0.6:6379"
