@@ -85,3 +85,11 @@ EOF
   wf="$(grep -o 'rhysd/actionlint:[^ ]*' "$ROOT/.github/workflows/scans.yml" | head -1)"
   [ -n "$mk" ] && [ "$mk" = "$wf" ]
 }
+
+# Global npm must be enumerated at FULL closure (--all), like apk/pip/gem - not top-level-only
+# (--depth=0), or a transitive-npm CVE stays invisible to `sluice lock --scan`.
+@test "supplychain: global npm is enumerated at full closure (--all), in both inventory + sbom" {
+  [ "$(grep -c 'npm ls -g --all --json' "$ROOT/bin/sluice")" -ge 2 ]
+  run grep -F 'npm ls -g --depth=0' "$ROOT/bin/sluice"
+  assert_failure   # the top-level-only form is gone
+}

@@ -36,6 +36,18 @@ verify_base() {
 # scaffolded config; empty for hand-written / agent configs.
 config_stack() { grep -oE 'detected: [^)]+' "$PROJECT_CONFIG" 2>/dev/null | head -1 | sed 's/detected: //' || true; }
 
+# Resolve a base ref to its content digest (repo@sha256:...) so verify + the Dockerfile FROM pin the
+# SAME bytes: a same-tag republish (or a MITM) between the verify pull and the FROM pull can't slip an
+# unverified base in. An already-pinned ref passes through; a local-only image with no RepoDigest falls
+# back to the tag (verify still runs on it).
+resolve_base_digest() {
+  local ref="$1" d
+  case "$ref" in *@sha256:*) printf '%s' "$ref"; return 0 ;; esac
+  "$ENGINE" pull "$ref" >/dev/null 2>&1 || true
+  d="$("$ENGINE" image inspect "$ref" --format '{{ if .RepoDigests }}{{ index .RepoDigests 0 }}{{ end }}' 2>/dev/null || true)"
+  case "$d" in *@sha256:*) printf '%s' "$d" ;; *) printf '%s' "$ref" ;; esac
+}
+
 build() {
   local tmp; tmp="$(mktemp -d)"
   cp -R "$CORE"/. "$tmp"/
@@ -72,8 +84,10 @@ build() {
     --label "sluice.overlays=${SLUICE_OVERLAY_DIRS:-}"
     --label "sluice.desc=${SLUICE_DESC:-}" "$@")   # extra flags, e.g. --no-cache
   if [ -n "${SLUICE_BASE_IMAGE:-}" ]; then
-    verify_base "$SLUICE_BASE_IMAGE"
-    args+=(--build-arg "BASE_IMAGE=$SLUICE_BASE_IMAGE")     # project layer FROM the signed base
+    # Verify + build FROM the same DIGEST, not the tag (closes the verify-tag / build-tag TOCTOU).
+    local _basedig; _basedig="$(resolve_base_digest "$SLUICE_BASE_IMAGE")"
+    verify_base "$_basedig"
+    args+=(--build-arg "BASE_IMAGE=$_basedig")     # project layer FROM the verified digest
   fi
   # Pin mode: build FROM the exact base digest recorded in sluice.pin and turn on the replay legs.
   if [ -n "$_pin_active" ]; then
