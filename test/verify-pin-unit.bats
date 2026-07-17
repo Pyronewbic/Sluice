@@ -88,6 +88,7 @@ _config_hash() {  # runs config_hash with the given SLUICE_PIN + optional pin co
     printf 'PROJECT_CONFIG=%q\n' "$BATS_TEST_TMPDIR/sluice.config.sh"
     printf 'PROJECT_DIR=%q\n'    "$BATS_TEST_TMPDIR"
     printf 'CORE=%q\n'           "$BATS_TEST_TMPDIR/core"
+    sed -n '/^_sha256()/,/^}/p' "$SLUICE_BIN"   # config_hash pipes through _sha256 (portable hasher)
     sed -n '/^config_hash()/,/^}/p' "$SLUICE_BIN"
     echo 'config_hash'
   } > "$t"

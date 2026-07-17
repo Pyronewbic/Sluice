@@ -12,3 +12,6 @@ Thumbs.db
 
 # demo-recording scratch (vhs work dirs + renders; assets/ holds the committed gifs)
 .demos/
+
+# a stray sluice.config.sh scaffolded by running `sluice` in this repo root (sluice IS the tool here)
+/sluice.config.sh
