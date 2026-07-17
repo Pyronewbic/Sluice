@@ -191,18 +191,23 @@ reload_allowlist() {
 # running box would silently diverge from its own config. Laundering hosts are allowed (boot allows
 # them too) but warned, matching the session-start gate.
 learn_apply() {   # $1 = newline-separated entries (hosts and/or .domains)
-  local entries="$1" keep="" doh="" launder="" pden="" pdeny="" ptxt="" e h
+  local entries="$1" keep="" doh="" launder="" launder_dropped="" pden="" pdeny="" pforbidlaunder="" ptxt="" e h
   # A central policy can DENY a host; the live reload appends straight to the running box's allowlist,
   # so learn enforces the deny here too. Fetch the policy the same way apply_policy does (fail CLOSED):
   # if SLUICE_POLICY_URL is unreachable, _policy_raw dies and this aborts before we add/write/reload,
   # rather than apply without the deny list.
-  if policy_configured; then ptxt="$(_policy_raw)"; pdeny="$(printf '%s\n' "$ptxt" | awk '$1=="deny"{print $2}')"; fi
+  if policy_configured; then ptxt="$(_policy_raw)"; pdeny="$(printf '%s\n' "$ptxt" | awk '$1=="deny"{print $2}')"; pforbidlaunder="$(printf '%s\n' "$ptxt" | awk '$1=="forbid-laundering"{print 1; exit}')"; fi
   while IFS= read -r e; do
     [ -n "$e" ] || continue
     h="${e#.}"   # a .domain wildcard matches by its bare host
     if [ "${SLUICE_ALLOW_DOH:-}" != 1 ] && doh_listed "$e"; then doh="$doh $e"; continue; fi   # $e keeps the leading dot so a wildcard covering a DoH host is caught
     if [ -n "$pdeny" ] && { _policy_denied_host "$h" "$pdeny" || _allow_covers_denied "$e" "$pdeny"; }; then pden="$pden $e"; continue; fi
-    laundering_host "$h" && launder="$launder $e"
+    if laundering_host "$h"; then
+      # Under forbid-laundering / SLUICE_STRICT_LAUNDERING the run path REFUSES a laundering host;
+      # learn hot-reloads onto the live allowlist with no gate, so it must DROP it too (not just warn).
+      if [ "${pforbidlaunder:-}" = 1 ] || [ "${SLUICE_STRICT_LAUNDERING:-}" = 1 ]; then launder_dropped="$launder_dropped $e"; continue; fi
+      launder="$launder $e"
+    fi
     keep="$keep $e"
   done <<EOF
 $entries
@@ -211,6 +216,9 @@ EOF
 
   if [ -n "$pden" ]; then
     echo "[sluice] ${E_YEL}not allowing (denied by central policy):${E_RST}$pden" >&2
+  fi
+  if [ -n "$launder_dropped" ]; then
+    echo "[sluice] ${E_YEL}not allowing (policy forbids laundering-capable hosts):${E_RST}$launder_dropped" >&2
   fi
   if [ -n "$doh" ]; then
     echo "[sluice] ${E_YEL}not allowing DoH/DoT resolver(s):${E_RST}$doh" >&2

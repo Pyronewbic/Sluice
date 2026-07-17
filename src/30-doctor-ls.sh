@@ -230,7 +230,7 @@ _allow_covers_denied() {
 #   _PEVAL_SRC        policy source label;  _PEVAL_SUMMARY  "N allow, N deny, N forbid"
 #   _PEVAL_UNKNOWNS   unknown directive tokens;  _PEVAL_STRICT  1 if strict-unknown
 policy_evaluate() {
-  local body allow="" deny="" denyip="" forbid="" maxips="" maxhardcap="" launder=0 strict=0 rsbase=0 unknowns="" line verb arg
+  local body allow="" deny="" denyip="" forbid="" maxips="" maxipsbytes="" maxhardcap="" launder=0 strict=0 rsbase=0 unknowns="" line verb arg
   body="$(_policy_raw)"
   while IFS= read -r line; do
     line="${line%%#*}"; line="$(printf '%s' "$line" | awk '{$1=$1};1')"; [ -n "$line" ] || continue
@@ -242,6 +242,7 @@ policy_evaluate() {
       forbid)              forbid="$forbid $arg" ;;
       forbid-laundering)   launder=1 ;;
       max-allow-ips)       maxips="$arg" ;;
+      max-allow-ips-bytes) maxipsbytes="$arg" ;;
       max-hard-cap-bytes)  maxhardcap="$arg" ;;
       strict-unknown)      strict=1 ;;
       require-signed-base) rsbase=1 ;;
@@ -286,17 +287,44 @@ EOF
     if [ -n "$risky" ]; then refusals="$refusals""policy forbids laundering-capable allowlisted host(s):$risky"$'\n'; fi
   fi
   # (5) SLUICE_ALLOW_IPS matching a deny-ip, then (6) over the max-allow-ips cap. Same order, same count.
-  local ipn=0 e ipp d
+  local ipn=0 e entc ipbase d dbase
   for e in ${SLUICE_ALLOW_IPS:-}; do
-    ipn=$((ipn+1)); ipp="${e%%:*}"; ipp="${ipp%%/*}"
-    for d in $denyip; do if _ip_in_cidr "$ipp" "$d"; then refusals="$refusals""policy denies SLUICE_ALLOW_IPS '$e' (matches deny-ip $d)"$'\n'; fi; done
+    ipn=$((ipn+1)); entc="${e%%:*}"; ipbase="${entc%%/*}"
+    # Bidirectional overlap: refuse if the entry's base is inside the deny CIDR OR the deny's base is
+    # inside the ENTRY's CIDR - the supernet case a base-only /32 check silently let through.
+    for d in $denyip; do
+      dbase="${d%%/*}"
+      if _ip_in_cidr "$ipbase" "$d" || _ip_in_cidr "$dbase" "$entc"; then
+        refusals="$refusals""policy denies SLUICE_ALLOW_IPS '$e' (overlaps deny-ip $d)"$'\n'
+      fi
+    done
   done
   set +f
-  case "$maxips" in ''|*[!0-9]*) ;; *) if [ "$ipn" -gt "$maxips" ]; then refusals="$refusals""policy caps SLUICE_ALLOW_IPS at $maxips (your config has $ipn)"$'\n'; fi ;; esac
+  # A known ceiling directive with a malformed (non-numeric) arg is a HARD refusal, not a silent no-op:
+  # a units typo in the org policy must not void the mandate (the local knob fails closed too).
+  case "$maxips" in
+    '') ;;
+    *[!0-9]*) refusals="$refusals""policy: max-allow-ips needs a number, got '$maxips' - refusing (a silently-void ceiling is worse than a stop)."$'\n' ;;
+    *) [ "$ipn" -gt "$maxips" ] && refusals="$refusals""policy caps SLUICE_ALLOW_IPS at $maxips (your config has $ipn)"$'\n' ;;
+  esac
+  # max-allow-ips-bytes N: mandate a volume bound on the direct-IP lane whenever it's used - the proxied
+  # hard cap (below) never metered that lane, so an org had no lever to bound direct-IP volume.
+  case "$maxipsbytes" in
+    '') ;;
+    *[!0-9]*) refusals="$refusals""policy: max-allow-ips-bytes needs a byte count, got '$maxipsbytes' - refusing."$'\n' ;;
+    *) if [ -n "${SLUICE_ALLOW_IPS:-}" ]; then
+         case "${SLUICE_ALLOW_IPS_MAX_BYTES:-}" in
+           '')       refusals="$refusals""policy requires SLUICE_ALLOW_IPS_MAX_BYTES <= $maxipsbytes (your config sets none)"$'\n' ;;
+           *[!0-9]*) refusals="$refusals""policy requires a numeric SLUICE_ALLOW_IPS_MAX_BYTES <= $maxipsbytes"$'\n' ;;
+           *)        [ "$SLUICE_ALLOW_IPS_MAX_BYTES" -gt "$maxipsbytes" ] && refusals="$refusals""policy caps SLUICE_ALLOW_IPS_MAX_BYTES at $maxipsbytes (your config sets $SLUICE_ALLOW_IPS_MAX_BYTES)"$'\n' ;;
+         esac
+       fi ;;
+  esac
   # (7) max-hard-cap-bytes N: the org mandates a PREVENTIVE egress ceiling <= N. Refuse if the box sets
   # none, sets a non-numeric one, or exceeds N - so a developer can't opt out of the volume bound.
   case "$maxhardcap" in
-    ''|*[!0-9]*) ;;
+    '') ;;
+    *[!0-9]*) refusals="$refusals""policy: max-hard-cap-bytes needs a byte count, got '$maxhardcap' - refusing (a silently-void ceiling is worse than a stop)."$'\n' ;;
     *) case "${SLUICE_EGRESS_HARD_CAP_BYTES:-}" in
          '')       refusals="$refusals""policy requires SLUICE_EGRESS_HARD_CAP_BYTES <= $maxhardcap (your config sets none)"$'\n' ;;
          *[!0-9]*) refusals="$refusals""policy requires a numeric SLUICE_EGRESS_HARD_CAP_BYTES <= $maxhardcap"$'\n' ;;

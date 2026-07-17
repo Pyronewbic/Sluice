@@ -1470,7 +1470,7 @@ _allow_covers_denied() {
 #   _PEVAL_SRC        policy source label;  _PEVAL_SUMMARY  "N allow, N deny, N forbid"
 #   _PEVAL_UNKNOWNS   unknown directive tokens;  _PEVAL_STRICT  1 if strict-unknown
 policy_evaluate() {
-  local body allow="" deny="" denyip="" forbid="" maxips="" maxhardcap="" launder=0 strict=0 rsbase=0 unknowns="" line verb arg
+  local body allow="" deny="" denyip="" forbid="" maxips="" maxipsbytes="" maxhardcap="" launder=0 strict=0 rsbase=0 unknowns="" line verb arg
   body="$(_policy_raw)"
   while IFS= read -r line; do
     line="${line%%#*}"; line="$(printf '%s' "$line" | awk '{$1=$1};1')"; [ -n "$line" ] || continue
@@ -1482,6 +1482,7 @@ policy_evaluate() {
       forbid)              forbid="$forbid $arg" ;;
       forbid-laundering)   launder=1 ;;
       max-allow-ips)       maxips="$arg" ;;
+      max-allow-ips-bytes) maxipsbytes="$arg" ;;
       max-hard-cap-bytes)  maxhardcap="$arg" ;;
       strict-unknown)      strict=1 ;;
       require-signed-base) rsbase=1 ;;
@@ -1526,17 +1527,44 @@ EOF
     if [ -n "$risky" ]; then refusals="$refusals""policy forbids laundering-capable allowlisted host(s):$risky"$'\n'; fi
   fi
   # (5) SLUICE_ALLOW_IPS matching a deny-ip, then (6) over the max-allow-ips cap. Same order, same count.
-  local ipn=0 e ipp d
+  local ipn=0 e entc ipbase d dbase
   for e in ${SLUICE_ALLOW_IPS:-}; do
-    ipn=$((ipn+1)); ipp="${e%%:*}"; ipp="${ipp%%/*}"
-    for d in $denyip; do if _ip_in_cidr "$ipp" "$d"; then refusals="$refusals""policy denies SLUICE_ALLOW_IPS '$e' (matches deny-ip $d)"$'\n'; fi; done
+    ipn=$((ipn+1)); entc="${e%%:*}"; ipbase="${entc%%/*}"
+    # Bidirectional overlap: refuse if the entry's base is inside the deny CIDR OR the deny's base is
+    # inside the ENTRY's CIDR - the supernet case a base-only /32 check silently let through.
+    for d in $denyip; do
+      dbase="${d%%/*}"
+      if _ip_in_cidr "$ipbase" "$d" || _ip_in_cidr "$dbase" "$entc"; then
+        refusals="$refusals""policy denies SLUICE_ALLOW_IPS '$e' (overlaps deny-ip $d)"$'\n'
+      fi
+    done
   done
   set +f
-  case "$maxips" in ''|*[!0-9]*) ;; *) if [ "$ipn" -gt "$maxips" ]; then refusals="$refusals""policy caps SLUICE_ALLOW_IPS at $maxips (your config has $ipn)"$'\n'; fi ;; esac
+  # A known ceiling directive with a malformed (non-numeric) arg is a HARD refusal, not a silent no-op:
+  # a units typo in the org policy must not void the mandate (the local knob fails closed too).
+  case "$maxips" in
+    '') ;;
+    *[!0-9]*) refusals="$refusals""policy: max-allow-ips needs a number, got '$maxips' - refusing (a silently-void ceiling is worse than a stop)."$'\n' ;;
+    *) [ "$ipn" -gt "$maxips" ] && refusals="$refusals""policy caps SLUICE_ALLOW_IPS at $maxips (your config has $ipn)"$'\n' ;;
+  esac
+  # max-allow-ips-bytes N: mandate a volume bound on the direct-IP lane whenever it's used - the proxied
+  # hard cap (below) never metered that lane, so an org had no lever to bound direct-IP volume.
+  case "$maxipsbytes" in
+    '') ;;
+    *[!0-9]*) refusals="$refusals""policy: max-allow-ips-bytes needs a byte count, got '$maxipsbytes' - refusing."$'\n' ;;
+    *) if [ -n "${SLUICE_ALLOW_IPS:-}" ]; then
+         case "${SLUICE_ALLOW_IPS_MAX_BYTES:-}" in
+           '')       refusals="$refusals""policy requires SLUICE_ALLOW_IPS_MAX_BYTES <= $maxipsbytes (your config sets none)"$'\n' ;;
+           *[!0-9]*) refusals="$refusals""policy requires a numeric SLUICE_ALLOW_IPS_MAX_BYTES <= $maxipsbytes"$'\n' ;;
+           *)        [ "$SLUICE_ALLOW_IPS_MAX_BYTES" -gt "$maxipsbytes" ] && refusals="$refusals""policy caps SLUICE_ALLOW_IPS_MAX_BYTES at $maxipsbytes (your config sets $SLUICE_ALLOW_IPS_MAX_BYTES)"$'\n' ;;
+         esac
+       fi ;;
+  esac
   # (7) max-hard-cap-bytes N: the org mandates a PREVENTIVE egress ceiling <= N. Refuse if the box sets
   # none, sets a non-numeric one, or exceeds N - so a developer can't opt out of the volume bound.
   case "$maxhardcap" in
-    ''|*[!0-9]*) ;;
+    '') ;;
+    *[!0-9]*) refusals="$refusals""policy: max-hard-cap-bytes needs a byte count, got '$maxhardcap' - refusing (a silently-void ceiling is worse than a stop)."$'\n' ;;
     *) case "${SLUICE_EGRESS_HARD_CAP_BYTES:-}" in
          '')       refusals="$refusals""policy requires SLUICE_EGRESS_HARD_CAP_BYTES <= $maxhardcap (your config sets none)"$'\n' ;;
          *[!0-9]*) refusals="$refusals""policy requires a numeric SLUICE_EGRESS_HARD_CAP_BYTES <= $maxhardcap"$'\n' ;;
@@ -3060,7 +3088,7 @@ EOF
   _POLICY_SRC="$_PEVAL_SRC"; _POLICY_SUMMARY="$_PEVAL_SUMMARY"
   echo "${E_DIM}[sluice]${E_RST} managed egress policy: $(_tilde "$_POLICY_SRC") ($_POLICY_SUMMARY)" >&2
 }
-case "${1:-run-default}" in run-default|run|shell|build|rebuild|update) apply_policy ;; esac
+case "${1:-run-default}" in run-default|run|shell|build|rebuild|update|diff) apply_policy ;; esac
 
 # Advisory: in a monorepo it's easy to build/run against a config found by walking UP from a subdir
 # without noticing. Name the source (like `-b` announces its target). Run/build paths only; skipped
@@ -3115,7 +3143,7 @@ warn_laundering() {
   echo "${E_YEL}[sluice] note:${E_RST} allowlisted host(s) an attacker can also write to -${risky} - data can be laundered out (splice, not decrypt)." >&2
   echo "         keep the allowlist tight; SLUICE_LAUNDERING_OK=1 to acknowledge (silences this), SLUICE_STRICT_LAUNDERING=1 to refuse." >&2
 }
-case "${1:-run-default}" in run-default|run|shell) warn_laundering ;; esac
+case "${1:-run-default}" in run-default|run|shell|diff) warn_laundering ;; esac
 
 # SLUICE_ALLOW_IPS is a direct-egress escape hatch that BYPASSES squid (init-firewall.sh ACCEPTs it
 # raw), and unlike the other path-y knobs it had no floor: a /0 opened all direct egress yet a broader-
@@ -3153,7 +3181,7 @@ validate_allow_ips() {
   done
   set +f
 }
-case "${1:-run-default}" in run-default|run|shell|build|rebuild|update) validate_allow_ips ;; esac
+case "${1:-run-default}" in run-default|run|shell|build|rebuild|update|diff) validate_allow_ips ;; esac
 
 # SLUICE_EGRESS_HOST_BUDGETS: "host=bytes .wildcard=bytes ..." - a detective per-host tx budget (over
 # any host's cap, `sluice egress` exits non-zero). Validate strictly and fail CLOSED: a malformed token
@@ -3174,7 +3202,7 @@ validate_host_budgets() {
   done
   set +f
 }
-case "${1:-run-default}" in run-default|run|shell|build|rebuild|update) validate_host_budgets ;; esac
+case "${1:-run-default}" in run-default|run|shell|build|rebuild|update|diff) validate_host_budgets ;; esac
 
 # SLUICE_EGRESS_HARD_CAP_BYTES: a PREVENTIVE in-box byte ceiling (xt_quota). Numeric and >= 1 MiB - boot
 # deny/allow probes + TLS handshakes consume the quota, so a sub-1MiB cap would brick the box at boot.
@@ -3190,7 +3218,7 @@ validate_egress_hard_caps() {
     *[!0-9]*) die "SLUICE_ALLOW_IPS_MAX_BYTES must be a byte count (got '${SLUICE_ALLOW_IPS_MAX_BYTES}')" ;;
   esac
 }
-case "${1:-run-default}" in run-default|run|shell|build|rebuild|update) validate_egress_hard_caps ;; esac
+case "${1:-run-default}" in run-default|run|shell|build|rebuild|update|diff) validate_egress_hard_caps ;; esac
 
 # SLUICE_BUMP_METHODS / SLUICE_BUMP_MAX_BODY are sed'd into squid.conf in-box (H5), so their charset is
 # security-critical (injection). Validate host-side; the entrypoint re-validates (defense in depth).
@@ -3206,7 +3234,7 @@ validate_bump_controls() {
     *[!0-9]*) die "SLUICE_BUMP_MAX_BODY must be a byte count (got '${SLUICE_BUMP_MAX_BODY}')" ;;
   esac
 }
-case "${1:-run-default}" in run-default|run|shell|build|rebuild|update) validate_bump_controls ;; esac
+case "${1:-run-default}" in run-default|run|shell|build|rebuild|update|diff) validate_bump_controls ;; esac
 
 # build: assemble a temp context (core + this project's config) and build
 # Verify a published base image's cosign signature (keyless/OIDC). Soft by default: warn if
@@ -3914,18 +3942,23 @@ reload_allowlist() {
 # running box would silently diverge from its own config. Laundering hosts are allowed (boot allows
 # them too) but warned, matching the session-start gate.
 learn_apply() {   # $1 = newline-separated entries (hosts and/or .domains)
-  local entries="$1" keep="" doh="" launder="" pden="" pdeny="" ptxt="" e h
+  local entries="$1" keep="" doh="" launder="" launder_dropped="" pden="" pdeny="" pforbidlaunder="" ptxt="" e h
   # A central policy can DENY a host; the live reload appends straight to the running box's allowlist,
   # so learn enforces the deny here too. Fetch the policy the same way apply_policy does (fail CLOSED):
   # if SLUICE_POLICY_URL is unreachable, _policy_raw dies and this aborts before we add/write/reload,
   # rather than apply without the deny list.
-  if policy_configured; then ptxt="$(_policy_raw)"; pdeny="$(printf '%s\n' "$ptxt" | awk '$1=="deny"{print $2}')"; fi
+  if policy_configured; then ptxt="$(_policy_raw)"; pdeny="$(printf '%s\n' "$ptxt" | awk '$1=="deny"{print $2}')"; pforbidlaunder="$(printf '%s\n' "$ptxt" | awk '$1=="forbid-laundering"{print 1; exit}')"; fi
   while IFS= read -r e; do
     [ -n "$e" ] || continue
     h="${e#.}"   # a .domain wildcard matches by its bare host
     if [ "${SLUICE_ALLOW_DOH:-}" != 1 ] && doh_listed "$e"; then doh="$doh $e"; continue; fi   # $e keeps the leading dot so a wildcard covering a DoH host is caught
     if [ -n "$pdeny" ] && { _policy_denied_host "$h" "$pdeny" || _allow_covers_denied "$e" "$pdeny"; }; then pden="$pden $e"; continue; fi
-    laundering_host "$h" && launder="$launder $e"
+    if laundering_host "$h"; then
+      # Under forbid-laundering / SLUICE_STRICT_LAUNDERING the run path REFUSES a laundering host;
+      # learn hot-reloads onto the live allowlist with no gate, so it must DROP it too (not just warn).
+      if [ "${pforbidlaunder:-}" = 1 ] || [ "${SLUICE_STRICT_LAUNDERING:-}" = 1 ]; then launder_dropped="$launder_dropped $e"; continue; fi
+      launder="$launder $e"
+    fi
     keep="$keep $e"
   done <<EOF
 $entries
@@ -3934,6 +3967,9 @@ EOF
 
   if [ -n "$pden" ]; then
     echo "[sluice] ${E_YEL}not allowing (denied by central policy):${E_RST}$pden" >&2
+  fi
+  if [ -n "$launder_dropped" ]; then
+    echo "[sluice] ${E_YEL}not allowing (policy forbids laundering-capable hosts):${E_RST}$launder_dropped" >&2
   fi
   if [ -n "$doh" ]; then
     echo "[sluice] ${E_YEL}not allowing DoH/DoT resolver(s):${E_RST}$doh" >&2
