@@ -66,3 +66,15 @@ teardown() { rm -rf "$W"; }
   run resolve_base_digest "local/img:tag"
   assert_output "local/img:tag"
 }
+
+
+# --- coverage gaps surfaced by the test-case review (changed-behavior edge/bad paths) ---
+@test "signed-base: resolve_base_digest still pins the digest when the pull fails but the image is local" {
+  eval "$(sed -n '/^resolve_base_digest()/,/^}/p' "$ROOT/bin/sluice")"
+  ENGINE=eng
+  # registry unreachable: pull exits non-zero, but a locally-present image still inspects to a RepoDigest
+  eng() { case "$1" in pull) return 1 ;; *) case "$*" in *"image inspect"*) printf 'ghcr.io/x/sluice-base@sha256:cafe\n' ;; *) return 0 ;; esac ;; esac; }
+  run resolve_base_digest "ghcr.io/x/sluice-base:latest"
+  assert_success
+  assert_output "ghcr.io/x/sluice-base@sha256:cafe"
+}

@@ -93,3 +93,25 @@ EOF
   run grep -F 'npm ls -g --depth=0' "$ROOT/bin/sluice"
   assert_failure   # the top-level-only form is gone
 }
+
+
+# --- coverage gaps surfaced by the test-case review (changed-behavior edge/bad paths) ---
+@test "supplychain: npm --all closure dedups a shared transitive dep (sort -u), keeps transitive rows" {
+  command -v jq >/dev/null 2>&1 || skip "jq not on this host"
+  local line; line="$(grep -F 'npm ls -g --all --json' "$ROOT/bin/sluice" | grep -F 'sort -u')"
+  [ -n "$line" ]
+  local tmp; tmp="$(mktemp -d)"
+  cat > "$tmp/npm" <<'EOF'
+#!/bin/sh
+cat <<'JSON'
+{"dependencies":{"pkgA":{"version":"1.0.0","dependencies":{"shared":{"version":"9.9.9"}}},"pkgB":{"version":"2.0.0","dependencies":{"shared":{"version":"9.9.9"}}}}}
+JSON
+EOF
+  chmod +x "$tmp/npm"
+  run env PATH="$tmp:$PATH" bash -c "$line"
+  rm -rf "$tmp"
+  assert_success
+  [ "$(printf '%s\n' "$output" | grep -c 'shared')" = 1 ]
+  assert_output --partial "pkgA"
+  assert_output --partial "pkgB"
+}

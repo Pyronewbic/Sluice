@@ -46,3 +46,30 @@ teardown_file() { destroy_box pre pre; }
   run bash -c "cd '$WORK/pre-bad' && '$SLUICE' run true"
   assert_failure
 }
+
+
+# --- coverage gaps surfaced by the test-case review (changed-behavior edge/bad paths) ---
+@test "prelaunch: a hook-exported SLUICE_ENV value reaches the box, re-minted across a rebuild" {
+  mkdir -p "$WORK/pre-env"
+  # The hook mints a fresh token each invocation and logs it OUTSIDE the project dir (the box chowns
+  # the mount to uid 1000 on Linux, so a host append inside $WORK/pre-env would EACCES after run one).
+  cat > "$WORK/pre-env/sluice.config.sh" <<CFG
+SLUICE_NAME="sectest-preenv"
+SLUICE_RUN_CMD="bash"
+SLUICE_ENV="PRE_TOKEN"
+mint() { export PRE_TOKEN="tok-\${RANDOM}\${RANDOM}"; printf '%s\n' "\$PRE_TOKEN" >> "$WORK/preenv-mint"; }
+SLUICE_PRELAUNCH="mint"
+CFG
+  run bash -c "cd '$WORK/pre-env' && '$SLUICE' run sh -c 'echo BOX=\$PRE_TOKEN' 2>/dev/null"
+  box1="$(printf '%s\n' "$output" | sed -n 's/^BOX=//p')"
+  mint1="$(tail -n1 "$WORK/preenv-mint" 2>/dev/null)"
+  [ -n "$box1" ]
+  [ "$box1" = "$mint1" ]                 # the hook's freshly-exported value was forwarded into the box
+  ( cd "$WORK/pre-env" && "$SLUICE" rebuild ) >/dev/null 2>&1 || true
+  run bash -c "cd '$WORK/pre-env' && '$SLUICE' run sh -c 'echo BOX=\$PRE_TOKEN' 2>/dev/null"
+  box2="$(printf '%s\n' "$output" | sed -n 's/^BOX=//p')"
+  mint2="$(tail -n1 "$WORK/preenv-mint" 2>/dev/null)"
+  [ "$box2" = "$mint2" ]                 # re-minted value forwarded after the box was rebuilt
+  [ "$box2" != "$box1" ]                 # a genuinely fresh credential, not the creation-time one
+  destroy_box preenv pre-env
+}

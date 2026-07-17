@@ -72,3 +72,33 @@ _refusals() {
   run grep -F 'run-default|run|shell|diff) warn_laundering' "$ROOT/bin/sluice"
   assert_success
 }
+
+
+# --- coverage gaps surfaced by the test-case review (changed-behavior edge/bad paths) ---
+@test "ceiling: a malformed max-allow-ips-bytes arg is a hard refusal (not a silent no-op)" {
+  SLUICE_ALLOW_IPS="10.0.0.5:5432" run _refusals "max-allow-ips-bytes 10MiB"
+  assert_output --partial "max-allow-ips-bytes needs a byte count"
+}
+
+@test "max-allow-ips-bytes: a box exceeding the byte cap is refused" {
+  SLUICE_ALLOW_IPS="10.0.0.5:5432" SLUICE_ALLOW_IPS_MAX_BYTES="2097152" run _refusals "max-allow-ips-bytes 1048576"
+  assert_output --partial "caps SLUICE_ALLOW_IPS_MAX_BYTES at 1048576"
+}
+
+@test "max-allow-ips-bytes: a non-numeric SLUICE_ALLOW_IPS_MAX_BYTES on the box is refused" {
+  SLUICE_ALLOW_IPS="10.0.0.5:5432" SLUICE_ALLOW_IPS_MAX_BYTES="1MiB" run _refusals "max-allow-ips-bytes 1048576"
+  assert_output --partial "requires a numeric SLUICE_ALLOW_IPS_MAX_BYTES"
+}
+
+@test "ceiling: a bare max-allow-ips directive with no arg is a no-op, not a refusal (empty != malformed)" {
+  run _refusals "max-allow-ips"
+  refute_output --partial "max-allow-ips needs a number"
+  assert_output ""
+}
+
+@test "deny-ip: the top in-range address is refused, the adjacent block is not (exact CIDR boundary)" {
+  SLUICE_ALLOW_IPS="10.0.0.255:5432" run _refusals "deny-ip 10.0.0.0/24"
+  assert_output --partial "overlaps deny-ip"
+  SLUICE_ALLOW_IPS="10.0.1.5:5432" run _refusals "deny-ip 10.0.0.0/24"
+  refute_output --partial "deny-ip"
+}

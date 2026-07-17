@@ -625,3 +625,17 @@ P
   assert_success
   jq -e '.rootless_podman==false' <<<"$output"
 }
+
+
+# --- coverage gaps surfaced by the test-case review (changed-behavior edge/bad paths) ---
+@test "doctor: a masked directory whose contents are git-tracked is flagged" {
+  printf 'SLUICE_MASK="secrets"\nSLUICE_RUN_CMD="bash"\n' > "$WORK/sluice.config.sh"
+  mkdir -p "$WORK/secrets"
+  echo "KEY=1" > "$WORK/secrets/api.key"
+  ( cd "$WORK" && git init -q && git add secrets/api.key \
+      && git -c user.email=t@t -c user.name=t commit -qm x )
+  run bash -c "cd '$WORK' && '$SLUICE' doctor"
+  assert_success
+  assert_output --partial "git-tracked"
+  assert_output --partial "secrets"
+}
