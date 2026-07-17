@@ -1,0 +1,13 @@
+# Copy to terraform.tfvars (gitignored) and fill in. Only `project` is required.
+project = "your-gcp-project-id"
+
+# Optional overrides:
+# zone          = "us-central1-a"
+# instance_name = "sluice-ci"
+# machine_type  = "e2-standard-2"   # the default Docker runner
+# disk_size_gb  = 30
+# image         = "debian-cloud/debian-12"
+
+# Kata micro-VM mode (nested virt; pricier). Leave false for the plain Docker runner.
+# enable_kata       = false
+# kata_machine_type = "n1-standard-4"
