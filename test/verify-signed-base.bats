@@ -43,3 +43,26 @@ teardown() { rm -rf "$W"; }
   assert_output --partial "not the official signed base"
   refute_output --partial "image build failed"   # died before the build
 }
+
+# verify + FROM must pin the same DIGEST, not the tag (verify-tag / build-tag TOCTOU). resolve_base_digest
+# is the primitive; extract it and drive it with a stub engine.
+@test "signed-base: resolve_base_digest passes an already-pinned @sha256 ref through unchanged" {
+  eval "$(sed -n '/^resolve_base_digest()/,/^}/p' "$ROOT/bin/sluice")"
+  run resolve_base_digest "ghcr.io/x/sluice-base@sha256:abc123"
+  assert_output "ghcr.io/x/sluice-base@sha256:abc123"
+}
+
+@test "signed-base: resolve_base_digest resolves a tag to its RepoDigest" {
+  eval "$(sed -n '/^resolve_base_digest()/,/^}/p' "$ROOT/bin/sluice")"
+  ENGINE=eng
+  eng() { case "$*" in *"image inspect"*) printf 'ghcr.io/x/sluice-base@sha256:deadbeef\n' ;; *) return 0 ;; esac; }
+  run resolve_base_digest "ghcr.io/x/sluice-base:latest"
+  assert_output "ghcr.io/x/sluice-base@sha256:deadbeef"
+}
+
+@test "signed-base: resolve_base_digest falls back to the tag when the image has no RepoDigest" {
+  eval "$(sed -n '/^resolve_base_digest()/,/^}/p' "$ROOT/bin/sluice")"
+  ENGINE=eng; eng() { return 0; }   # inspect yields nothing (local-only image)
+  run resolve_base_digest "local/img:tag"
+  assert_output "local/img:tag"
+}
