@@ -63,9 +63,10 @@ resource "google_compute_instance" "runner" {
     access_config {} # ephemeral public IP for egress (apt/docker/GitHub); SSH still goes over IAP
   }
 
-  # startup.sh reads this to decide whether to install the Kata stack.
+  # startup.sh reads these to decide whether to install the Kata stack and/or the VHS render stack.
   metadata = {
     enable-kata = var.enable_kata ? "1" : "0"
+    enable-vhs  = var.enable_vhs ? "1" : "0"
   }
   metadata_startup_script = file("${path.module}/startup.sh")
 
