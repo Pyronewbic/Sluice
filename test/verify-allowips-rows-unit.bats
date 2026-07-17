@@ -95,3 +95,24 @@ LOG
   assert_success
   assert_output "2"
 }
+
+
+# --- coverage gaps surfaced by the test-case review (changed-behavior edge/bad paths) ---
+@test "denied_ip_requests: repeated probes to the same raw IP each count (no dedup - it's an event count)" {
+  _squid_log() { printf '%s\n' \
+    '1752709000.1 172.17.0.2 NONE_NONE/000 CONNECT 1.1.1.1:443 ssl_sni=- tx=0 rx=0' \
+    '1752709000.2 172.17.0.2 NONE_NONE/000 CONNECT 1.1.1.1:443 ssl_sni=- tx=0 rx=0' \
+    '1752709000.3 172.17.0.2 NONE_NONE/000 CONNECT 1.1.1.1:443 ssl_sni=- tx=0 rx=0'; }
+  run denied_ip_requests
+  assert_success
+  assert_output "3"
+}
+
+@test "allowips json fields: fw_dropped + denied_ip_requests default to zero when there are no drops" {
+  unset SLUICE_ALLOW_IPS
+  _root_exec() { :; }              # no OUTPUT chain output -> fw_dropped emits nothing
+  _squid_log() { :; }             # no denied raw-IP lines
+  run _allowips_json_fields
+  assert_success
+  assert_output ',"fw_dropped":{"packets":0,"bytes":0},"denied_ip_requests":0'
+}

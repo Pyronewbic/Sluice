@@ -191,3 +191,63 @@ _stub_engine_one_box() {
   jq -e '.[0].confighash==null' <<<"$output"
   rm -rf "$XDG_STATE_HOME"
 }
+
+
+# --- coverage gaps surfaced by the test-case review (changed-behavior edge/bad paths) ---
+@test "ls --json: an unquoted live allowlist strips a trailing # comment before counting" {
+  _stub_engine_one_box
+  PROJ="$(mktemp -d)"
+  printf 'SLUICE_ALLOW_DOMAINS=a.example # inline note\n' > "$PROJ/sluice.config.sh"
+  eng() {
+    case "$*" in
+      "image ls --filter label=sluice.confighash --format {{.Repository}}") printf 'sluice-api\n' ;;
+      "info") return 0 ;;
+      *"sluice.project"*)    printf '%s\n' "$PROJ" ;;
+      *"sluice.allowcount"*) printf '3\n' ;;
+      *"sluice.confighash"*) printf 'abc123def456\n' ;;
+      *) : ;;
+    esac
+  }
+  run cmd_ls --json
+  assert_success
+  jq -e '.[0].allow_count==1' <<<"$output"   # one host; the '# inline note' is stripped, label(3) ignored
+  rm -rf "$PROJ" "$XDG_STATE_HOME"
+}
+
+@test "ls --json: a config without a SLUICE_ALLOW_DOMAINS line falls back to the baked label" {
+  _stub_engine_one_box
+  PROJ="$(mktemp -d)"
+  printf 'SLUICE_RUN_CMD="bash"\n' > "$PROJ/sluice.config.sh"   # exists, but learn never set an allowlist
+  eng() {
+    case "$*" in
+      "image ls --filter label=sluice.confighash --format {{.Repository}}") printf 'sluice-api\n' ;;
+      "info") return 0 ;;
+      *"sluice.project"*)    printf '%s\n' "$PROJ" ;;
+      *"sluice.allowcount"*) printf '5\n' ;;
+      *"sluice.confighash"*) printf 'abc123def456\n' ;;
+      *) : ;;
+    esac
+  }
+  run cmd_ls --json
+  assert_success
+  jq -e '.[0].allow_count==5' <<<"$output"   # grep found no live line -> the build label wins
+  rm -rf "$PROJ" "$XDG_STATE_HOME"
+}
+
+@test "ls --json: a gone project dir with no allowcount label yields allow_count:null (not 0)" {
+  _stub_engine_one_box   # sluice.project -> /nonexistent/proj
+  eng() {
+    case "$*" in
+      "image ls --filter label=sluice.confighash --format {{.Repository}}") printf 'sluice-api\n' ;;
+      "info") return 0 ;;
+      *"sluice.project"*)    printf '/nonexistent/proj\n' ;;
+      *"sluice.allowcount"*) printf '<no value>\n' ;;   # label absent too
+      *"sluice.confighash"*) printf 'abc123def456\n' ;;
+      *) : ;;
+    esac
+  }
+  run cmd_ls --json
+  assert_success
+  jq -e '.[0].allow_count==null' <<<"$output"   # config unreadable AND no label -> unknown, never a false 0
+  rm -rf "$XDG_STATE_HOME"
+}

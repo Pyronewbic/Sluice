@@ -300,3 +300,29 @@ printf "EFF=[%s]\n" "$_PEVAL_EFFECTIVE"'
   assert_output --partial '"refusals":['
   assert_output --partial '"reachable":true'
 }
+
+
+# --- coverage gaps surfaced by the test-case review (changed-behavior edge/bad paths) ---
+@test "policy: learn DROPS a laundering host under SLUICE_STRICT_LAUNDERING with NO policy configured" {
+  local t="$BATS_TEST_TMPDIR/learn_strict_nopolicy.sh"
+  cat > "$t" <<'STUBS'
+set -euo pipefail
+policy_configured() { return 1; }                           # NO policy file/URL at all
+_policy_raw() { echo "SHOULD-NOT-FETCH"; exit 1; }          # tripwire: no policy -> no fetch
+apply_allowlist() { echo "APPLIED:$1"; }                    # tripwire: must NOT run (STRICT env drops the host)
+reload_allowlist() { return 0; }
+merge_allow() { printf '%s' "$1"; }
+doh_listed() { return 1; }
+laundering_host() { return 0; }                             # the picked host IS laundering-capable
+_policy_denied_host() { return 1; }
+_allow_covers_denied() { return 1; }
+_tilde() { printf '%s' "$1"; }
+PROJECT_CONFIG=/dev/null; E_YEL=''; E_RST=''; C_GRN=''; C_RST=''; C_DIM=''
+STUBS
+  sed -n '/^learn_apply()/,/^}/p' "$ROOT/bin/sluice" >> "$t"
+  echo 'SLUICE_STRICT_LAUNDERING=1 learn_apply "api.openai.com"' >> "$t"
+  run bash "$t"
+  assert_output --partial "policy forbids laundering-capable hosts"
+  refute_output --partial "APPLIED:"
+  refute_output --partial "SHOULD-NOT-FETCH"
+}
