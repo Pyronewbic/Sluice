@@ -196,9 +196,9 @@ weaknesses** in [`THREAT_MODEL.md`](THREAT_MODEL.md):
   the local core build (`SLUICE_BASE_IMAGE`, enforced by `SLUICE_REQUIRE_SIGNED=1`),
   `sluice lock` records what's inside, and `sluice lock --pin` + `SLUICE_PIN=1` builds a
   **verified** pinned replay - see [docs/supply-chain.md](docs/supply-chain.md).
-- **Centralized policy**: an org can enforce a deny-capable egress policy (deny hosts, forbid
-  loosening knobs, cap `SLUICE_ALLOW_IPS`) that a developer's local config can't override - see
-  [docs/policy.md](docs/policy.md).
+- **Centralized policy**: an org can enforce a deny-capable egress policy (deny hosts, refuse a
+  `deny-ip` CIDR overlap, forbid loosening knobs, cap `SLUICE_ALLOW_IPS` count + direct-lane volume)
+  that a developer's local config can't override - see [docs/policy.md](docs/policy.md).
 - **The honest caveat**: the allowlist is host-granular, so data can still be laundered
   through an *allowed* host - sluice flags such hosts and `SLUICE_EGRESS_MAX_BYTES` caps
   run volume, but read [THREAT_MODEL.md](THREAT_MODEL.md) before trusting it with
@@ -242,6 +242,8 @@ agents/                   coding-agent presets + the preset contract (agents/REA
 docs/                     configuration, agents, hardening, supply-chain references
 examples/                 self-contained gallery demos
 test/                     gate + nightly bats suites
+terraform/                Linux test-runner VM (+ optional Kata micro-VM), driven by sluice-vm.sh
+sluice-vm.sh              start/stop/sync/test the runner VM (env-driven; see terraform/README.md)
 completion/               bash + zsh shell completion
 install.sh                curl|sh + local installer
 sluice.config.example.sh  copyable config template

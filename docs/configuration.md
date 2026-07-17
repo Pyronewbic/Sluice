@@ -71,13 +71,15 @@ What the filter guarantees - and does not - is in
   learn` edits it live.
 - `SLUICE_ALLOW_IPS` - fixed IPs/CIDRs for non-HTTP services, direct egress bypassing the
   proxy. **IPv4-only.** Scope each entry: `ip:port[/proto]`. Refused: a catch-all (`0.0.0.0/0`, any
-  `/0` or `0.0.0.0/N`), a CIDR broader than the `/8` floor (e.g. `0.0.0.0/1 128.0.0.0/1`), and an
-  IPv6 literal. A colon-less entry (no port) is allowed but warns, since it opens every port to that
-  host. The in-box firewall enforces the same floor as a second layer.
+  `/0` or `0.0.0.0/N`), a CIDR broader than the `/8` floor (e.g. `0.0.0.0/1 128.0.0.0/1`), an
+  IPv6 literal, and a **hostname** (fixed IPs only - a host would resolve to the in-box DNS sink, so
+  put it in `SLUICE_ALLOW_DOMAINS`). A colon-less entry (no port) is allowed but warns, since it opens
+  every port to that host. The in-box firewall enforces the same floor as a second layer.
 - `SLUICE_POLICY_URL` - URL (http/https/file) to a central egress policy, applied host-side as the
   final gate. A bare host list is back-compat (additive); v2 directives can also `deny` hosts and
-  refuse to run on a crossed ceiling (`forbid <knob>`, `deny-ip`, `max-allow-ips`,
-  `forbid-laundering`). Also read from `~/.config/sluice/policy.conf` and a root-owned
+  refuse to run on a crossed ceiling (`forbid <knob>`, `deny-ip` (bidirectional CIDR overlap),
+  `max-allow-ips`, `max-allow-ips-bytes`, `max-hard-cap-bytes`, `forbid-laundering`, `strict-unknown`,
+  `require-signed-base`). Also read from `~/.config/sluice/policy.conf` and a root-owned
   `/etc/sluice/policy.conf` (the org's managed policy). Full reference: [policy.md](policy.md).
 - `SLUICE_BUMP_DOMAINS`, `SLUICE_BUMP_URLS` - scoped TLS interception, opt-in and off by
   default: listed hosts are decrypted so squid can filter by `SLUICE_BUMP_URLS` url_regex;

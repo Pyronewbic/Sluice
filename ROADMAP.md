@@ -31,7 +31,7 @@ below - not on building anything new.
       stable config API.
 - [x] Write a **compatibility promise** - landed in the README [Stability](README.md#stability)
       section.
-- [ ] Remove the pre-1.0 caveats: the README "> Pre-1.0: the command surface is still stabilizing"
+- [x] Remove the pre-1.0 caveats: the README "> Pre-1.0: the command surface is still stabilizing"
       note. At the cut, lead the v1.0.0 release notes with Highlights + Install + Docs links.
 
 **B. Close for confidence (or consciously accept the gap):**

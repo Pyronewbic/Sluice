@@ -16,7 +16,7 @@ Read from up to three places, lowest trust first. A `deny`/`forbid` from **any**
 | `/etc/sluice/policy.conf` (**root-owned**) | the org (pushed via MDM) | enforced |
 
 A configured `SLUICE_POLICY_URL` that cannot be fetched is **fatal** on any command that consults the
-policy - `run`/`shell`/`build`/`rebuild`/`update` and `sluice learn` - a managed policy must never
+policy - `run`/`shell`/`build`/`rebuild`/`update`/`diff` and `sluice learn` - a managed policy must never
 silently fall back to local-only.
 
 ## Format
@@ -49,7 +49,8 @@ require-signed-base                  # mandate SLUICE_REQUIRE_SIGNED=1 for every
 
 ## Enforcement
 
-Applied host-side on every `run`/`shell`/`build`/`rebuild`/`update`, as the final gate after the
+Applied host-side on every box bring-up (`run`/`shell`/`build`/`rebuild`/`update`/`diff` - `diff` builds
+and starts a box too), as the final gate after the
 config (and any `sluice learn` edits) - so policy wins:
 
 - **Allowlist** (`allow`/`deny`): effective = (local + `allow`) - `deny`. The box receives the
