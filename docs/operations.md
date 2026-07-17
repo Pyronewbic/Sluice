@@ -8,7 +8,9 @@ does not), see [THREAT_MODEL.md](../THREAT_MODEL.md#egress-receipts-what-they-at
 
 ## The fleet: `sluice ls`
 
-`sluice ls` lists every box on the machine with its posture - status, stack, allowlist size, published
+`sluice ls` lists every box on the machine with its posture - status, stack, live allowlist size (read
+from the config, so a `sluice learn` edit is reflected without a rebuild; falls back to the baked label
+only when the project dir is gone), published
 ports, supply-chain lock state, and project path - and marks the box you are in with `*`:
 
 <p align="center"><img src="../assets/operator-demo.gif" width="760" alt="sluice ls --running lists every running box with its posture (stack, allowlist size, ports, lock, path); sluice ls --egress --running adds the per-box count of hosts each was blocked from; sluice -b targets one box from anywhere and egress --export prints its tamper-evident audit log as JSONL"></p>
@@ -70,7 +72,7 @@ the suffix. So a `/v1` consumer keeps working as sluice grows.
 | `sluice.version/v1` | `version --json` | version, engine, os, install |
 | `sluice.doctor/v1` | `doctor --json` | single-box posture |
 | `sluice.box/v1` | each `ls --json` element | adds `confighash`, `state_dir`, and `last_receipt` (a verbatim embed of the box's latest egress receipt - a fleet↔audit join; its integrity is attested by `egress --verify`, not by `ls`) |
-| `sluice.egress/v1` | `egress --json`, each receipt record | per-host reached/blocked + bytes; `budget`/`over_budget` per host when `SLUICE_EGRESS_HOST_BUDGETS` is set |
+| `sluice.egress/v1` | `egress --json`, each receipt record | per-host reached/blocked + bytes; always-on `fw_dropped {packets,bytes}` + `denied_ip_requests` (raw-IP / non-HTTP drops the proxy log can't see); `budget`/`over_budget` per host when `SLUICE_EGRESS_HOST_BUDGETS` is set; `allow_ips[]` when `SLUICE_ALLOW_IPS` is set; `dns` volume/tunnel fields when `SLUICE_DNS_AUDIT=1` |
 | `sluice.egress-verify/v1` | `egress --verify --json` | one box's chain result |
 | `sluice.fleet-verify/v1` | `egress --verify --all --json` | every box's chain result |
 

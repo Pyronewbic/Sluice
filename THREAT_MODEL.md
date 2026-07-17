@@ -177,9 +177,12 @@ The guarantees below hold only while these do:
 3. **Exfil through `SLUICE_ALLOW_IPS`.** Reviewed fixed IPs get *direct* egress (the escape hatch for
    non-HTTP services like a database) - bypassing the proxy, so unfiltered by hostname. Scope each
    entry to one port with `ip:port` (a bare ip/cidr opens *every* port); keep the list minimal and specific.
-   It is **IPv4-only** and floored at **/8**: an IPv6 literal, any `0.0.0.0/N`, and a prefix shorter than
+   It is **IPv4-only** and floored at **/8**: an IPv6 literal, a **hostname** (fixed IPs only - a host
+   would resolve to the in-box DNS sink), any `0.0.0.0/N`, and a prefix shorter than
    `/8` (e.g. the two-CIDR `0.0.0.0/1 128.0.0.0/1` cover) are **refused** host-side, and the in-box
    firewall independently refuses the same so a bypassed launcher check can't open all direct egress.
+   A managed policy can additionally `deny-ip` a CIDR (refusing any entry that **overlaps** it in either
+   direction) and mandate this lane's volume budget with `max-allow-ips-bytes`.
    This lane is no longer invisible: each entry routes through an accountable `SLUICE-ALLOWIPS` iptables
    chain, so its per-entry byte counters appear in the egress receipt (`allow_ips[]`), and
    `SLUICE_ALLOW_IPS_MAX_BYTES` sets a preventive shared volume budget across all direct-IP egress
@@ -284,7 +287,7 @@ policy is tamper-resistant only via its root-owned deployment, not by sluice its
 
 ---
 
-_Last reviewed 2026-06-11 against sluice 0.8.0 (released) + the post-release hardening on main: seccomp
+_Last reviewed 2026-06-11 against sluice 0.9.0 (released) + the post-release hardening on main: seccomp
 (default-superset / browser / audit), the egress work (allowlist-scoped DNS, port-scoped + validated
 `SLUICE_ALLOW_IPS`, laundering-host gate, durable egress receipt + `SLUICE_EGRESS_MAX_BYTES`), in-repo
 secret masking (`SLUICE_MASK`), the DoH-filtered live `learn` reload, the stripped-setuid base, and the
