@@ -44,3 +44,9 @@ variable "image" {
   type        = string
   default     = "debian-cloud/debian-12"
 }
+
+variable "enable_vhs" {
+  description = "Also install the VHS render stack (vhs + ttyd + ffmpeg + headless chromium + fonts) to record the demo tapes (assets/demos/*.tape) on this VM. Independent of enable_kata; default off so the plain Docker test-runner stays lean."
+  type        = bool
+  default     = false
+}

@@ -11,9 +11,7 @@ does not), see [THREAT_MODEL.md](../THREAT_MODEL.md#egress-receipts-what-they-at
 `sluice ls` lists every box on the machine with its posture - status, stack, live allowlist size (read
 from the config, so a `sluice learn` edit is reflected without a rebuild; falls back to the baked label
 only when the project dir is gone), published
-ports, supply-chain lock state, and project path - and marks the box you are in with `*`:
-
-<p align="center"><img src="../assets/operator-demo.gif" width="760" alt="sluice ls --running lists every running box with its posture (stack, allowlist size, ports, lock, path); sluice ls --egress --running adds the per-box count of hosts each was blocked from; sluice -b targets one box from anywhere and egress --export prints its tamper-evident audit log as JSONL"></p>
+ports, supply-chain lock state, and project path - and marks the box you are in with `*`.
 
 Filters and forms (combinable):
 
@@ -60,6 +58,8 @@ run with the daemon down and cover **orphaned** boxes (a chain outlives its box)
 sourced, `--all` is chain-integrity only: per-box egress knobs (host budgets, byte caps) do not apply to
 it, and `-b <box>` is rejected for `--all` (it spans every box by definition). An unreadable log reports
 `verified:false, reason:"unreadable"` - never a silent pass.
+
+<p align="center"><img src="../assets/fleet-audit.gif" width="760" alt="with the container engine down, sluice egress --verify --all walks every box's append-only hash chain host-side and reports all 3 boxes intact; --verify --all --json emits the sluice.fleet-verify/v1 schema per box; --export --all concatenates every box's JSONL each record tagged with its box; then one dropped log line flips one box to TAMPERED with a non-zero exit - never a silent pass"></p>
 
 ## Machine-readable contracts
 

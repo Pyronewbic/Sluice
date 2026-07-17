@@ -50,8 +50,28 @@ if [ "$enable_kata" = "1" ]; then
   kata_line="kata: ${KATA_VER} nerdctl ${NERDCTL_VER} cni ${CNI_VER}; host $(uname -r) vs guest ${guest_k}"
 fi
 
+# --- VHS render stack: vhs + ttyd + ffmpeg + headless chromium + fonts, to record assets/demos/*.tape
+# on this VM (used for the Kata demo, which is Linux-only). Gated on enable-vhs so the plain test-runner
+# stays lean. vhs is pinned to the SAME version rendered locally so the VM gif matches the macOS set. ---
+vhs_line="vhs: disabled (enable_vhs=false)"
+enable_vhs="$(curl -fsS -H 'Metadata-Flavor: Google' \
+  http://metadata.google.internal/computeMetadata/v1/instance/attributes/enable-vhs 2>/dev/null || echo 0)"
+
+if [ "$enable_vhs" = "1" ]; then
+  VHS_VER="0.11.0"  # keep == the local vhs used for the other demos, for identical rendering
+  TTYD_VER="1.7.7"
+  apt-get install -y ffmpeg chromium fonts-jetbrains-mono gifsicle
+  curl -fsSL "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VER}/ttyd.x86_64" -o /usr/local/bin/ttyd
+  chmod +x /usr/local/bin/ttyd
+  curl -fsSL "https://github.com/charmbracelet/vhs/releases/download/v${VHS_VER}/vhs_${VHS_VER}_Linux_x86_64.tar.gz" -o /tmp/vhs.tgz
+  tar -C /tmp -xzf /tmp/vhs.tgz
+  install -m755 "$(find /tmp -type f -name vhs | head -1)" /usr/local/bin/vhs
+  vhs_line="vhs: ${VHS_VER} ttyd ${TTYD_VER} chromium $(chromium --version 2>/dev/null | awk '{print $2}')"
+fi
+
 {
   echo "sluice-provision-done $(date -u +%FT%TZ)"
   echo "docker:   $(docker --version)"
   echo "$kata_line"
+  echo "$vhs_line"
 } > /var/log/sluice-provision-done

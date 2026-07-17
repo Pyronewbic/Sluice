@@ -5,6 +5,8 @@ it can **add** and **deny** allowlist hosts and **refuse to run** when local con
 Inert unless a policy is configured. Signing is planned (v2.1); today integrity rests on the source
 (see [the managed-mode boundary](#managed-mode-the-honest-boundary)).
 
+<p align="center"><img src="../assets/policy-refusal.gif" width="680" alt="an org policy denies a host and sets deny-ip for the cloud-metadata IP 169.254.169.254/32; a developer's local config crosses both lines - it allowlists the denied host and opens a direct-IP supernet 169.254.169.0/24 that overlaps the denied /32 - so sluice refuses to run before any box is built, naming the overlapping deny-ip and exiting non-zero; swapping to a compliant config then runs clean under the same policy"></p>
+
 ## Sources and precedence
 
 Read from up to three places, lowest trust first. A `deny`/`forbid` from **any** source is final.

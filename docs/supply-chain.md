@@ -43,7 +43,7 @@ The default `sluice.lock` disclaimer stays true for the audit tier; `SLUICE_PIN=
 
 `sluice lock --pin` writes a committable `./sluice.pin`: the base image pinned by **`@sha256` digest**
 plus every apk/npm/pip/gem/go/cargo name and version - the coordinates a `SLUICE_PIN=1` build replays to
-converge on those exact versions (the replay build itself lands next; the pin is the artifact it reads).
+converge on those exact versions.
 
 ```bash
 sluice lock --pin        # write ./sluice.pin (also refreshes ./sluice.lock from the same image)
@@ -112,10 +112,15 @@ SLUICE_BASE_IMAGE=ghcr.io/pyronewbic/sluice-base:latest
 SLUICE_REQUIRE_SIGNED=1   # die unless the signature AND SBOM attestation verify
 ```
 
+For a reproducible pin, point `SLUICE_BASE_IMAGE` at an immutable ref instead of `:latest` - a version
+tag (`sluice-base:v0.10.0`, pushed alongside `:latest` on every release) or a `@sha256:...` digest.
+
 The published base is multi-arch (`linux/amd64` + `linux/arm64`), built from the Dockerfile's
 `base` stage on every version tag, cosign-signed keyless via GitHub OIDC, and carries a CycloneDX
 SBOM attestation ([publish-base.yml](../.github/workflows/publish-base.yml)). Before pushing, CI
-asserts the base invariants: uid 1000, no sudo, the firewall packages, no baked key.
+structure-tests the base invariants (uid 1000, no sudo, the firewall packages, no baked key) on the
+**amd64** build; arm64 shares the same Dockerfile (the invariants are arch-invariant), and the
+CycloneDX SBOM is derived from the amd64 image.
 
 When `SLUICE_BASE_IMAGE` points at a `sluice-base` ref and cosign is installed, the launcher
 verifies the signature and attestation automatically - warn-and-continue by default, fatal with
