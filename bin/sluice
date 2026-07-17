@@ -3166,6 +3166,12 @@ validate_allow_ips() {
     # single-colon host/port split below feed iptables a broken -d (opaque fail-closed boot abort).
     case "$e" in *::*) die "SLUICE_ALLOW_IPS='$e' is an IPv6 literal - SLUICE_ALLOW_IPS is IPv4-only (the box proxies/filters v4; IPv6 egress is default-closed). Drop it or use the IPv4 address." ;; esac
     case "${e#*:}" in *:*) die "SLUICE_ALLOW_IPS='$e' is an IPv6 literal - SLUICE_ALLOW_IPS is IPv4-only. Drop it or use the IPv4 address." ;; esac
+    # Reject a hostname (non IPv4/CIDR): SLUICE_ALLOW_IPS is fixed IPs (THREAT_MODEL). A hostname is
+    # resolved in-box by the allowlist-scoped dnsmasq, which sinks a non-allowlisted name to a dead-end -
+    # so the rule would target the sink, not the host. A host belongs in SLUICE_ALLOW_DOMAINS.
+    case "${e%%:*}" in
+      *[!0-9./]*) die "SLUICE_ALLOW_IPS='$e' is not an IPv4 address/CIDR - it takes fixed IPs (e.g. 10.0.0.5:5432); a hostname resolves to the DNS sink in-box. Put a host in SLUICE_ALLOW_DOMAINS instead." ;;
+    esac
     # Floor: a CIDR shorter than /_ALLOW_IPS_MIN_PREFIX (and any 0.0.0.0/N, caught above) is too broad
     # for a raw direct-egress ACCEPT. Strip a trailing :port first; a bare host / single IP has no '/'.
     hostcidr="${e%%:*}"

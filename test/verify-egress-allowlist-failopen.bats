@@ -86,8 +86,8 @@ _passes() { local t="$BATS_TEST_TMPDIR/v_ok.sh";   _validate_script "$t"; run ba
 @test "allow-ips: the /8 floor itself passes (inclusive)" {
   export SLUICE_ALLOW_IPS="10.0.0.0/8"; _passes
 }
-@test "allow-ips: a bare host passes" {
-  export SLUICE_ALLOW_IPS="db.internal:5432"; _passes
+@test "allow-ips: a hostname entry is refused (fixed IPs only; a host resolves to the DNS sink in-box)" {
+  export SLUICE_ALLOW_IPS="db.internal:5432"; _dies
 }
 @test "allow-ips: a mixed list of only-legit entries passes" {
   export SLUICE_ALLOW_IPS="10.0.0.5:5432 192.168.1.0/24 10.0.0.6:6379/tcp"; _passes
