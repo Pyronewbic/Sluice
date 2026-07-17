@@ -14,6 +14,13 @@ firewall** (only the hosts you allow, by name, are reachable) - and ends every r
 
 <p align="center"><img src="assets/agent-demo.gif" width="680" alt="sluice agent lists nine sandboxed coding-agent presets with auth status read live from the host env (the claude row green, key set); inside the box 'cat .env' prints nothing because SLUICE_MASK shadows the secret; and the egress receipt shows api.anthropic.com reached in green and pypi.org blocked in red - one command, the agent caged"></p>
 
+The same cage contains any untrusted **dependency**, too. Here a poisoned npm package's module
+code runs the moment your app imports it and tries to steal your `.env` and SSH key and POST them
+out - the sandbox masks the secret, never mounts your keys, and drops the exfil, while the install
+and import still complete:
+
+<p align="center"><img src="assets/npm-supply-chain.gif" width="680" alt="a routine npm install runs clean, then the app imports a poisoned dependency whose module code harvests secrets: inside the sandbox the .env reads 0 bytes (masked by SLUICE_MASK), ~/.ssh is not mounted, and the exfil POST to the attacker host is dropped by the default-DROP firewall; the install and import still complete, and the egress receipt shows registry.npmjs.org reached in green and the exfil host blocked in red, the record tamper-evident"></p>
+
 Drop a `sluice.config.sh` in a directory and run `sluice`, or just run `sluice` and let it
 detect the stack, scaffold the config, and build + run it sandboxed.
 
@@ -91,9 +98,7 @@ the mount). Full firewall + learn walkthrough: [examples/](examples/README.md).
 
 The firewall is not just a claim - an allowlisted host gets through, an exfil POST and a
 raw-IP bypass are blocked, and the run's audit log is **tamper-evident** (`egress --verify`
-flips from green to red if a record is altered):
-
-<p align="center"><img src="assets/firewall-demo.gif" width="680" alt="a run reaches an allowlisted host (api.github.com, green OK) but an exfil POST to a non-allowlisted host and a raw-IP connection are both blocked; sluice egress ledgers what got through; sluice egress --verify reports the hash chain intact, then after a tampered record it flips to red 'egress log TAMPERED, prev-link broken' with a non-zero exit"></p>
+flips from green to red if a record is altered).
 
 When a host you actually need is blocked, `sluice learn` allows it from the receipt, live:
 

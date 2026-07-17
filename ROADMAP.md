@@ -66,9 +66,9 @@ No new features needed - every claim here is backed by shipped code. This is abo
 contact with a skeptical, Linux-heavy dev/security crowd landing on the repo.
 - [x] **Linux dev-box smoke (landed 2026-06-02).** The real first-try path on a throwaway cloud Linux VM
       ran clean, credential-free and non-sudo; the stock build needs no manual patch. (Closes #2; detail in B above.)
-- [x] **Demo assets (landed 2026-06-02).** Two capability GIFs in the README (real pasted commands):
-      **doctor** and **learn**. The cage hero GIF was dropped as low-value (2026-06-02, prose leads
-      instead); a dedicated agent demo GIF stays optional.
+- [x] **Demo assets (landed).** Capability GIFs across the README + docs (agent hero, npm supply-chain,
+      onboard, learn, plus hardening / policy / operations demos); the wired set in the README/docs is
+      the live list - not enumerated here, so it can't drift as demos are added or cut.
 - [x] **Top-of-README quickstart (landed 2026-06-01).** Value prop -> copy-paste quickstart.
 - [x] **Issue templates + CONTRIBUTING (landed 2026-06-02).** Bug + feature forms (bug form collects
       version/engine/OS/`doctor`), blank issues disabled + security routed to `SECURITY.md`, lean
