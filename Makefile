@@ -34,6 +34,9 @@ SRC := $(sort $(wildcard src/*.sh))
 .PHONY: test test-unit test-engine test-acceptance test-security test-nightly structure lint lint-ci setup build build-check _bats-check
 setup:
 	git submodule update --init --recursive
+	@git config merge.sluicebuild.name 'regenerate bin/sluice from src/*.sh on conflict'
+	@git config merge.sluicebuild.driver 'make build >/dev/null 2>&1; cp -- bin/sluice %A'
+	@echo 'registered bin/sluice merge driver (see .gitattributes)'
 _bats-check:
 	@test -x $(BATS) || { echo "bats missing - run 'make setup'"; exit 1; }
 
