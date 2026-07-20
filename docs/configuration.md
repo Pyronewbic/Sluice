@@ -115,6 +115,10 @@ What the filter guarantees - and does not - is in
   longest wildcard wins. Over any single host's cap, `sluice egress` exits non-zero and the receipt
   warns. Unlike `SLUICE_EGRESS_MAX_BYTES` (silently ignored when malformed), a malformed token here
   **dies** (fail closed) - a silently-void security budget is worse than a stop.
+- `SLUICE_EGRESS_FLAG_BYTES` - a **visibility aid**, not a bound: when a single reached host's tx bytes
+  meet or exceed it, the receipt tags that host `(high volume)` and `sluice egress --json` emits
+  `"high_volume":true` on its row - flagging a bulk transfer to an allowlisted host that would
+  otherwise blend into a normal row. It bounds nothing (the byte caps do that); default 1 GiB.
 
 - `SLUICE_EGRESS_HARD_CAP_BYTES` - a **preventive** per-boot ceiling on all proxied egress, enforced
   in-box with an `xt_quota` iptables rule on squid's uid: once the quota is spent, egress is DROPped
