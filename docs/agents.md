@@ -29,6 +29,7 @@ the contract a preset must follow lives in [`agents/README.md`](../agents/README
 | `amp` | `AMP_API_KEY` | `amp --dangerously-allow-all` |
 | `qwen` | `OPENAI_API_KEY` or `DASHSCOPE_API_KEY` (a DashScope key) | `qwen --yolo` against DashScope's OpenAI-compatible endpoint |
 | `crush` | `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` | `crush --yolo` |
+| `plandex` | Cloud email-pin sign-in (in-terminal), or BYO `OPENROUTER_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | `plandex --full` (Full Auto) |
 
 Each preset file's header documents its host list and any quirks - read
 [`agents/<name>.config.sh`](../agents/) for the one you're running.
