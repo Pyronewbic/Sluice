@@ -3057,6 +3057,27 @@ PROJECT_DIR="$(cd "$(dirname "$PROJECT_CONFIG")" && pwd)"
 # per-project image + container names (SLUICE_NAME overrides the dir-name default)
 derive_names
 
+# Mount-scope guard: the box bind-mounts PROJECT_DIR (the dir of the found sluice.config.sh, walked up
+# from $PWD) read-write, with no floor - so launched from $HOME or / it would mount your whole home tree
+# / root fs into the sandbox, exposing ~/.ssh, credential stores, everything. Refuse $HOME, /, and any
+# ancestor of $HOME unless SLUICE_ALLOW_HOME=1. Pre-build + Docker-free, like the gates below.
+guard_home_mount() {
+  [ "${SLUICE_ALLOW_HOME:-}" = 1 ] && return 0
+  local why=""
+  case "$PROJECT_DIR" in /) why="the root filesystem" ;; esac
+  if [ -z "$why" ] && [ -n "${HOME:-}" ] && [ "$HOME" != / ]; then
+    if [ "$PROJECT_DIR" = "$HOME" ]; then why="your home directory"
+    else case "$HOME/" in "$PROJECT_DIR"/*) why="an ancestor of your home directory" ;; esac
+    fi
+  fi
+  [ -n "$why" ] || return 0
+  echo "${E_RED}[sluice] refusing:${E_RST} the project dir $(_tilde "$PROJECT_DIR") is $why - the box bind-mounts it" >&2
+  echo "         read-write, exposing ~/.ssh, credential stores and the rest of your files to the sandboxed code." >&2
+  echo "         Run sluice from inside a project directory, or set SLUICE_ALLOW_HOME=1 to override." >&2
+  exit 1
+}
+case "${1:-run-default}" in run-default|run|shell|build|rebuild|diff) guard_home_mount ;; esac
+
 # Central egress policy v2 evaluation machinery (policy_configured / _policy_raw / _verify_policy_sig /
 # the IP+host matchers / policy_evaluate) is defined up in src/30-doctor-ls.sh - it must exist BEFORE
 # the early `doctor` dispatch (top of this slice) so `sluice doctor` can evaluate the policy report-only.

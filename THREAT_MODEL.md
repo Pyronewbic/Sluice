@@ -103,6 +103,9 @@ The guarantees below hold only while these do:
   `SLUICE_STATE_DIRS`, and `SLUICE_OVERLAY_DIRS` add only what the config author lists. The git
   common-dir mount is taken only when the worktree linkage verifies back to *this* repo, so a box that
   rewrites its own (writable) `.git` to point elsewhere can't redirect the mount at an unrelated repo.
+  The mount scope equals the project dir (the dir of the found `sluice.config.sh`), so sluice **refuses to
+  run** when that dir is your `$HOME`, `/`, or an ancestor of `$HOME` - launched there the box would
+  bind-mount your whole home tree and expose `~/.ssh` and credential stores. `SLUICE_ALLOW_HOME=1` overrides.
 - **Reading in-repo secrets (opt-in mask)** -> the project dir is mounted read-write,
   *including* its own `.env`/key files - "can't read your secrets" historically meant files
   *outside* the repo. `SLUICE_MASK` closes the in-repo gap: matching files get an empty
