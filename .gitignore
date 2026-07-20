@@ -13,5 +13,8 @@ Thumbs.db
 # demo-recording scratch (vhs work dirs + renders; assets/ holds the committed gifs)
 .demos/
 
+# parallel-worktree workflow scratch (per-run isolated worktrees; the wt/<id> branches persist separately)
+.claude/worktrees/
+
 # a stray sluice.config.sh scaffolded by running `sluice` in this repo root (sluice IS the tool here)
 /sluice.config.sh

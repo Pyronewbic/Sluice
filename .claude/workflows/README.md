@@ -19,3 +19,9 @@ of tokens, so Claude only starts one when you explicitly ask.
 Anatomy: a pure-literal `export const meta = {...}` (name, description, whenToUse, phases) then a body
 using `agent()` (takes a structured-output `schema`; invocation `args` are in scope) / `parallel()` /
 `pipeline()` / `phase()` / `log()`. Copy any file here as a template.
+
+`parallel-worktree` field notes: pass a pre-made `args.streams` for tight control (the script tolerates
+`args` arriving as a JSON string). Each fresh worktree lacks the bats submodule, so the implement agents
+run `make setup` before `make test-unit` (>2 min - allow a generous command timeout). The `wt/<id>`
+branches and their worktrees survive the run for the driver to integrate; prune them afterward with
+`git worktree remove` + `git branch -D`.

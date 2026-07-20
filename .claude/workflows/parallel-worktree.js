@@ -67,9 +67,11 @@ const VERDICT_SCHEMA = {
   },
 }
 
-const BASE = (args && args.base) || 'main'
-const TASK = (args && args.task) || null
-let streams = (args && args.streams) || null
+// args may arrive as an object OR (via some invocation paths, e.g. name+args) a JSON string - tolerate both.
+const A = (typeof args === 'string' && args.trim()) ? JSON.parse(args) : (args || {})
+const BASE = A.base || 'main'
+const TASK = A.task || null
+let streams = A.streams || null
 if (!TASK && !streams) throw new Error('parallel-worktree: pass args.task (a description to partition) and/or args.streams (a pre-made partition)')
 
 // --- Partition -------------------------------------------------------------
