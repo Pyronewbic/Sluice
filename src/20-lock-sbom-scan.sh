@@ -427,7 +427,8 @@ render_drift_human() {
 # Render structured drift rows (stdin) as {in_sync,added,removed,changed[]} for CI.
 render_drift_json() {
   awk -F"$(printf '\t')" '
-    function j(s){ gsub(/\\/,"\\\\",s); gsub(/"/,"\\\"",s); return s }
+    # escape char-by-char, not gsub: mawk and BSD/macOS awk disagree on a backslash in a gsub replacement.
+    function j(s,  o,i,c){ o=""; for(i=1;i<=length(s);i++){ c=substr(s,i,1); if(c=="\\") o=o "\\\\"; else if(c=="\"") o=o "\\\""; else o=o c } return o }
     { if($1=="add")      a=a (a==""?"":",") sprintf("{\"type\":\"%s\",\"name\":\"%s\",\"version\":\"%s\"}",j($2),j($3),j($5));
       else if($1=="del") d=d (d==""?"":",") sprintf("{\"type\":\"%s\",\"name\":\"%s\",\"version\":\"%s\"}",j($2),j($3),j($4));
       else               c=c (c==""?"":",") sprintf("{\"type\":\"%s\",\"name\":\"%s\",\"from\":\"%s\",\"to\":\"%s\"}",j($2),j($3),j($4),j($5));
