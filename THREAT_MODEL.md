@@ -113,9 +113,13 @@ The guarantees below hold only while these do:
   presets mask `.env*` by default; it also stays in force during `learn --audit`). Honest
   limits: patterns are expanded **when the container starts** - a secret written later in
   the run is NOT masked (and survives until the next launch); the masked path's *existence*
-  (its name) is still visible; and an unmatched path - a different name, or nested deeper
-  than the pattern reaches - is not protected. `sluice doctor` warns when secret-looking
-  files (`.env*`, `*.pem`, `*key*.json`, ...) are present in the mount and unmasked.
+  (its name) is still visible; an unmatched path - a different name, or nested deeper
+  than the pattern reaches - is not protected; and a secret already **committed to git** stays
+  readable in-box via history (`git show`) - the mask only empties the working-tree copy, not
+  `.git/objects`, so remove committed secrets from history rather than relying on the mask. A
+  matched **symlink** masks its in-project target (a target outside the mount already dangles).
+  `sluice doctor` warns when secret-looking files (`.env*`, `*.pem`, `*key*.json`, ...) are present
+  in the mount and unmasked, and when a masked file is git-tracked.
 - **Host privilege escalation** -> sessions run non-root (uid 1000) with **no effective
   capabilities**; no Docker socket, no Docker-in-Docker, no in-box `sudo`. The base image is built
   with **every setuid/setgid bit stripped** (the shadow package's `passwd`/`chsh`/... are de-setuid

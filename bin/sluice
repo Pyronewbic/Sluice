@@ -1244,9 +1244,9 @@ cmd_scan() {
 
 # Expand SLUICE_MASK (space-separated, project-root-relative globs) to the paths matching RIGHT NOW,
 # one per line. Plain shell glob semantics: a slash-less pattern matches root-level entries only
-# ("packages/*/.env" reaches deeper). Symlink matches are skipped - a mount over a link would shadow
-# its TARGET, not the link. Invalid patterns (absolute, ..) are skipped here so doctor still reports
-# the rest; the run path dies on them (mask_validate).
+# ("packages/*/.env" reaches deeper). A matched SYMLINK masks its in-project TARGET (mount the real
+# file, never the link); a target outside the mount already dangles in the box. Invalid patterns
+# (absolute, ..) are skipped here so doctor still reports the rest; the run path dies on them (mask_validate).
 mask_matches() {
   [ -n "${SLUICE_MASK:-}" ] || return 0
   ( cd "$PROJECT_DIR" 2>/dev/null || exit 0
@@ -1255,7 +1255,20 @@ mask_matches() {
       case "$pat" in /*|*..*) continue ;; esac
       set +f
       for m in $pat; do
-        [ -L "$m" ] && continue
+        if [ -L "$m" ]; then
+          # Mask the symlink's TARGET (a real file we can safely mount over), not the link. Resolve it
+          # physically (macOS: /var is a symlink); a target that escapes the mount dangles in the box,
+          # so skip it. Resolution failure also falls back to skip - never worse than the old behavior.
+          _lt="$(readlink "$m" 2>/dev/null)" || continue
+          [ -n "$_lt" ] || continue
+          case "$_lt" in /*) _la="$_lt" ;; *) _la="$(dirname "$m")/$_lt" ;; esac
+          _ld="$(cd "$(dirname "$_la")" 2>/dev/null && pwd -P)" || continue
+          _la="$_ld/$(basename "$_la")"; _pp="$(pwd -P)"
+          case "$_la/" in "$_pp"/*) ;; *) continue ;; esac
+          m="${_la#"$_pp"/}"
+          if [ -f "$_la" ] || [ -d "$_la" ]; then printf '%s\n' "$m"; fi
+          continue
+        fi
         if [ -f "$m" ] || [ -d "$m" ]; then printf '%s\n' "$m"; fi
       done
       set -f
@@ -1696,7 +1709,7 @@ EOF
     if [ -n "$_mtn" ]; then
       _attn=$((_attn+1))
       _ntf="$(printf '%s' "$_mtn" | grep -c . || true)"
-      _doc "" "${C_YEL}note${C_RST}: $_ntf masked file(s) are git-tracked - in-box git sees them emptied (a commit there would stage the empty file); prefer SLUICE_WORKSPACE=overlay when masking tracked files"
+      _doc "" "${C_YEL}note${C_RST}: $_ntf masked file(s) are git-tracked - the mask empties the working-tree copy only: in-box git sees them emptied (a commit there would stage the empty file; SLUICE_WORKSPACE=overlay avoids that), but the committed secret stays readable in-box via git history (git show). Remove committed secrets from history."
       printf '%s' "$_mtn" | head -10 | while IFS= read -r _mt; do
         printf '             %s\n' "$(_term_esc "$_mt")"
       done
