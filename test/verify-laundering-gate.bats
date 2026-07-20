@@ -81,3 +81,22 @@ cfg() { printf 'SLUICE_NAME="sectest-laundering"\nSLUICE_ALLOW_DOMAINS="gist.git
   refute_output --partial "laundered"
   refute_output --partial "refusing"
 }
+
+# The shipped cursor/amp/qwen/crush presets allow a model/agent-stream host that accepts POST bodies -
+# a laundering surface just like api.anthropic.com, so their users must get the same session-start nudge.
+@test "laundering: cursor/amp/qwen/crush model-stream hosts are flagged" {
+  local h
+  for h in ampcode.com dashscope-intl.aliyuncs.com dashscope.aliyuncs.com api2.cursor.sh catwalk.charm.land; do
+    printf 'SLUICE_NAME="sectest-laundering"\nSLUICE_ALLOW_DOMAINS="%s"\nSLUICE_RUN_CMD="true"\n' "$h" > "$WORK/p/sluice.config.sh"
+    run bash -c "cd '$WORK/p' && SLUICE_ENGINE=false '$SLUICE' run true"
+    assert_output --partial "laundered"
+    assert_output --partial "$h"
+  done
+}
+
+@test "laundering: cursor's .api5.cursor.sh leading-dot wildcard is flagged" {
+  printf 'SLUICE_NAME="sectest-laundering"\nSLUICE_ALLOW_DOMAINS=".api5.cursor.sh"\nSLUICE_RUN_CMD="true"\n' > "$WORK/p/sluice.config.sh"
+  run bash -c "cd '$WORK/p' && SLUICE_ENGINE=false '$SLUICE' run true"
+  assert_output --partial "laundered"
+  assert_output --partial ".api5.cursor.sh"
+}
