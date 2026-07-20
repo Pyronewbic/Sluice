@@ -38,6 +38,18 @@ RCPT() { printf '%s' "$XDG_STATE_HOME/sluice/$slug/egress-receipt.json"; }
   assert_output "5.00 GB"
 }
 
+# printf %f takes the radix from the locale in bwk/mawk but not gawk, so without the LC_ALL=C pin the
+# same bytes render "5,10 GB" or "5.10 GB" depending on which awk the host ships. Skipped where no
+# comma-decimal locale is generated (Debian/CI ships only C/POSIX): asking for an absent locale makes
+# bash warn on stderr, which bats folds into $output - a false failure, not a real one.
+@test "human-bytes: a comma-decimal locale still renders a dot radix" {
+  # `|| true`: bats runs the body under set -e/pipefail, so a no-match grep would abort before the skip.
+  local loc; loc="$(locale -a 2>/dev/null | grep -iE '^(de_DE|nl_NL|fr_FR|es_ES|pt_BR)\.(utf-?8)$' | head -1 || true)"
+  [ -n "$loc" ] || skip "no comma-decimal locale on this host"
+  LC_ALL="$loc" LC_NUMERIC="$loc" run _human_bytes 5476083302   # ~5.10 GiB
+  assert_output "5.10 GB"
+}
+
 @test "receipt: a reached host over the flag threshold is marked high_volume in the JSON" {
   _recb big.example.com 2147483648   # 2 GiB > 1 GiB default
   run cat "$(RCPT)"

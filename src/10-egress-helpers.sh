@@ -171,7 +171,8 @@ egress_rows() {
 # bytes -> human (B / KB / MB / GB / TB; one decimal KB-MB, two GB+). GB/TB matter: a bulk exfil that
 # would print as "~5222.4 MB" reads clearly as "5.10 GB".
 _human_bytes() {
-  awk -v b="${1:-0}" 'BEGIN{
+  # LC_ALL=C: bwk/mawk honour a comma-decimal locale in printf %f, gawk does not - pin the radix to '.'.
+  LC_ALL=C awk -v b="${1:-0}" 'BEGIN{
     if (b<1024) printf "%d B", b;
     else if (b<1048576) printf "%.1f KB", b/1024;
     else if (b<1073741824) printf "%.1f MB", b/1048576;
