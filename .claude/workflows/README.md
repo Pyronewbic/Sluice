@@ -14,6 +14,7 @@ of tokens, so Claude only starts one when you explicitly ask.
 | `triage-tests` | Runs the bats suites, clusters failures, root-causes each cluster in parallel. Pass `args.suite` to scope. |
 | `release-audit` | Pre-tag sweep: drafts release notes from commits since the last tag, checks version refs / install + brew mechanics / supply-chain doc accuracy / CLI drift / ROADMAP state, verifies each finding. Output only. Pass `args.version` (and optionally `args.since`). |
 | `preflight` | Ship-readiness gate for a branch: runs the house pre-merge checklist (bin/sluice in sync, shellcheck, unit lane, commit hygiene), judges the diff for missing tests / THREAT_MODEL + doc drift, adversarially verifies each blocker, and folds in `review-launcher` when the launcher changed. Output only. Pass a base ref as `args` (default `main`). |
+| `parallel-worktree` | Splits a multi-part task into **disjoint-file** streams, implements each in an isolated git worktree in parallel (the one write-workflow here), and verifies each in-scope. A preflight gate serializes any streams that overlap. Reports per-stream branches + gotchas; the driver integrates (bin/sluice merge driver), full-gates on Linux, and ships. Pass `args.task` (and optionally `args.streams` / `args.base`). Use selectively - sluice is overlap-dense. |
 
 Anatomy: a pure-literal `export const meta = {...}` (name, description, whenToUse, phases) then a body
 using `agent()` (takes a structured-output `schema`; invocation `args` are in scope) / `parallel()` /
