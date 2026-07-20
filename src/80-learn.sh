@@ -160,7 +160,9 @@ apply_allowlist() {
   local val="$1" tmp
   if grep -q '^SLUICE_ALLOW_DOMAINS=' "$PROJECT_CONFIG"; then
     tmp="$(mktemp)"
-    awk -v v="$val" '/^SLUICE_ALLOW_DOMAINS=/ && !seen {print "SLUICE_ALLOW_DOMAINS=\"" v "\""; seen=1; next} {print}' \
+    # via the environment, not -v: awk escape-processes a -v value, so a backslash in a domain would be
+    # eaten (and differently per awk). ENVIRON is passed through verbatim.
+    _awk_val="$val" awk '/^SLUICE_ALLOW_DOMAINS=/ && !seen {print "SLUICE_ALLOW_DOMAINS=\"" ENVIRON["_awk_val"] "\""; seen=1; next} {print}' \
       "$PROJECT_CONFIG" > "$tmp" && mv "$tmp" "$PROJECT_CONFIG"
   else
     printf 'SLUICE_ALLOW_DOMAINS="%s"\n' "$val" >> "$PROJECT_CONFIG"
@@ -413,7 +415,8 @@ EOF
   # per-host selection - then persist + hot-reload onto the real (enforcing) box.
   local TAB; TAB="$(printf '\t')"
   local rows; rows="$(egress_rows "$audit_container" 2>/dev/null \
-    | awk -F"$TAB" -v allow=" $(allowed_domains) " '
+    | _awk_allow=" $(allowed_domains) " awk -F"$TAB" '
+        BEGIN{ allow=ENVIRON["_awk_allow"] }   # not -v: that escape-processes the value (see apply_allowlist)
         function allowed(h,   n,i,t,tl,toks){ if(index(allow," "h" "))return 1; n=split(allow,toks," "); for(i=1;i<=n;i++){t=toks[i]; if(substr(t,1,1)=="."){tl=length(t); if(h==substr(t,2)||(length(h)>tl&&substr(h,length(h)-tl+1)==t))return 1}} return 0 }
         $1=="reached" && !allowed($2){print $2 FS $3 FS $4}' \
     | sort -t"$TAB" -k3,3nr -k1,1 || true)"
