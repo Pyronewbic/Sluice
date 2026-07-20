@@ -50,7 +50,7 @@ mode is defensible:
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...     # or CLAUDE_CODE_OAUTH_TOKEN; forwarded, never baked
 cd your-project
-sluice agent claude                     # also: codex, gemini, cursor, aider, opencode, amp, qwen, crush
+sluice agent claude                     # also: codex, gemini, cursor, aider, opencode, amp, qwen, crush, plandex
 ```
 
 Or run any project sandboxed, then see where its egress hit a wall:
@@ -148,8 +148,8 @@ sluice ls
 ### Run a coding agent
 
 `sluice agent <name>` drops you into a coding agent that's non-root, sees only this repo,
-and can only reach its own model API. Nine presets ship (claude, codex, gemini, aider,
-cursor, opencode, amp, qwen, crush); each runs **YOLO by default** (the sandbox is the
+and can only reach its own model API. Ten presets ship (claude, codex, gemini, aider,
+cursor, opencode, amp, qwen, crush, plandex); each runs **YOLO by default** (the sandbox is the
 gate), masks `.env*` files from the box, and persists its sessions across rebuilds. The
 scaffold also allowlists your stack's package registry, so the agent's first install
 doesn't trip the firewall. Auth, parallel agents via git worktrees, and the preset list:
