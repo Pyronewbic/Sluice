@@ -29,6 +29,34 @@ _rec() { local TAB; TAB="$(printf '\t')"; _persist_receipt "$(printf 'reached%s%
   assert_output --partial "hash chain intact"
 }
 
+# append one chained receipt record: reached host $1 with $2 bytes
+_recb() { local TAB; TAB="$(printf '\t')"; _persist_receipt "$(printf 'reached%s%s%s1%s%s' "$TAB" "$1" "$TAB" "$TAB" "$2")" ok; }
+RCPT() { printf '%s' "$XDG_STATE_HOME/sluice/$slug/egress-receipt.json"; }
+
+@test "human-bytes: renders GB above a gigabyte (not capped at MB)" {
+  run _human_bytes 5368709120   # 5 GiB
+  assert_output "5.00 GB"
+}
+
+@test "receipt: a reached host over the flag threshold is marked high_volume in the JSON" {
+  _recb big.example.com 2147483648   # 2 GiB > 1 GiB default
+  run cat "$(RCPT)"
+  assert_output --partial '"host":"big.example.com"'
+  assert_output --partial '"high_volume":true'
+}
+
+@test "receipt: a normal-volume reached host is not flagged" {
+  _recb small.example.com 100
+  run cat "$(RCPT)"
+  assert_output --partial '"high_volume":false'
+}
+
+@test "receipt: SLUICE_EGRESS_FLAG_BYTES lowers the high-volume threshold" {
+  SLUICE_EGRESS_FLAG_BYTES=50 _recb tiny.example.com 100
+  run cat "$(RCPT)"
+  assert_output --partial '"high_volume":true'
+}
+
 @test "receipt-chain: a byte flip in a record body trips the self-hash branch" {
   _rec a.example.com; _rec b.example.com
   sed -i.bak '1s/a\.example\.com/a.evil.com/' "$LOG"

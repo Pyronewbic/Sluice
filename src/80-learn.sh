@@ -5,8 +5,9 @@
 # --verify`. $1 = the egress rows (may be empty), $2 = status (ok | unavailable).
 _persist_receipt() {
   local rows="$1" rstatus="$2" TAB _dir _log _inner _hj="" _first=1 _cls _host _cnt _byt \
-        _reached _blocked _tot _ts _run _prev _self _payload
+        _reached _blocked _tot _ts _run _prev _self _payload _flagthr _hv
   TAB="$(printf '\t')"
+  _flagthr="$(_egress_flag_bytes)"
   _dir="${XDG_STATE_HOME:-$HOME/.local/state}/sluice/$slug"
   mkdir -p "$_dir" 2>/dev/null || return 0
   _log="$_dir/egress-log.jsonl"
@@ -14,7 +15,8 @@ _persist_receipt() {
   while IFS="$TAB" read -r _cls _host _cnt _byt; do
     [ -n "$_host" ] || continue
     [ "$_first" = 1 ] && _first=0 || _hj="$_hj,"
-    _hj="$_hj{\"host\":\"$(_json_esc "$_host")\",\"class\":\"$_cls\",\"requests\":$_cnt,\"bytes\":$_byt}"
+    _hv=false; case "$_byt" in ''|*[!0-9]*) ;; *) [ "$_cls" = reached ] && [ "$_byt" -ge "$_flagthr" ] && _hv=true ;; esac
+    _hj="$_hj{\"host\":\"$(_json_esc "$_host")\",\"class\":\"$_cls\",\"requests\":$_cnt,\"bytes\":$_byt,\"high_volume\":$_hv}"
   done <<EOF
 $rows
 EOF
@@ -42,7 +44,7 @@ EOF
 }
 
 show_egress_receipt() {
-  local rows TAB reached_rows blocked_rows ordered grn="" red="" dim="" bld="" rst=""
+  local rows TAB reached_rows blocked_rows ordered grn="" red="" dim="" bld="" rst="" ylw="" _ft
   rows="$(egress_rows 2>/dev/null || true)"
   if [ -z "$rows" ]; then
     # Box gone before capture (concurrent stop / crash / host OOM): record the gap explicitly so a
@@ -70,12 +72,13 @@ show_egress_receipt() {
   blocked_rows="$(printf '%s\n' "$rows" | awk -F"$TAB" '$1=="blocked"' | sort -t"$TAB" -k2,2)"
   ordered="$(printf '%s\n%s\n' "$reached_rows" "$blocked_rows" | awk 'NF')"
   if [ -t 2 ] && [ -z "${NO_COLOR:-}" ]; then
-    grn=$'\033[32m'; red=$'\033[31m'; dim=$'\033[2m'; bld=$'\033[1m'; rst=$'\033[0m'
+    grn=$'\033[32m'; red=$'\033[31m'; dim=$'\033[2m'; bld=$'\033[1m'; rst=$'\033[0m'; ylw=$'\033[33m'
   fi
+  _ft="$(_egress_flag_bytes)"
   # Render summary header + aligned rows on stderr (so it never pollutes the app's stdout).
   printf '%s\n' "$ordered" | awk -F"$TAB" \
-    -v box="$container" -v grn="$grn" -v red="$red" -v dim="$dim" -v bld="$bld" -v rst="$rst" '
-    function human(b){ if(b<1024) return b" B"; else if(b<1048576) return sprintf("%.1f KB",b/1024); else return sprintf("%.1f MB",b/1048576) }
+    -v box="$container" -v grn="$grn" -v red="$red" -v dim="$dim" -v bld="$bld" -v rst="$rst" -v ylw="$ylw" -v thr="$_ft" '
+    function human(b){ if(b<1024) return b" B"; else if(b<1048576) return sprintf("%.1f KB",b/1024); else if(b<1073741824) return sprintf("%.1f MB",b/1048576); else if(b<1099511627776) return sprintf("%.2f GB",b/1073741824); else return sprintf("%.2f TB",b/1099511627776) }
     { cls[NR]=$1; host[NR]=$2; cnt[NR]=$3; byt[NR]=$4; total+=$4;
       if($1=="reached"){ nr++; if(nr<=10 && length($2)>w) w=length($2) } else { nb++; if(length($2)>w) w=length($2) } }
     END {
@@ -86,7 +89,8 @@ show_egress_receipt() {
           sr++;
           if(sr==11){ printf "  %s+%d more (sluice egress)%s\n", dim, nr-10, rst; }
           if(sr>10) continue;
-          printf "  %sreached%s   %-*s  %3d req   %s\n", grn, rst, w, host[i], cnt[i], human(byt[i]);
+          hv = (thr+0>0 && byt[i]>=thr+0) ? sprintf("   %s(high volume)%s", ylw, rst) : "";
+          printf "  %sreached%s   %-*s  %3d req   %s%s\n", grn, rst, w, host[i], cnt[i], human(byt[i]), hv;
         } else {
           printf "  %sblocked%s   %-*s  %3d req   %snot allowlisted (sluice learn)%s\n", red, rst, w, host[i], cnt[i], dim, rst;
         }
