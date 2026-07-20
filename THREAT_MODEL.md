@@ -175,8 +175,10 @@ The guarantees below hold only while these do:
    data can be laundered through it. Keep the list minimal; never allow a host an attacker can also
    write to. `sluice` flags such a host at session start (`SLUICE_LAUNDERING_OK=1` acknowledges and
    silences it, `SLUICE_STRICT_LAUNDERING=1` refuses to run). The flag matches the **leading-dot
-   wildcard** form too (`.storage.googleapis.com`, what `sluice learn` writes), not just the bare host,
-   so a wildcard allowlist doesn't slip a known launderer past the gate or a `forbid-laundering` policy.
+   wildcard** form too - both a wildcard *under* a launderer (`.storage.googleapis.com`) and a **parent**
+   wildcard that *covers* one (`.googleapis.com`, which `sluice learn` can write by collapsing a sibling
+   like `play.googleapis.com`) - so a wildcard allowlist can't slip a known launderer past the gate or a
+   `forbid-laundering` policy.
    Volume through an allowed host can now be **bounded**: preventively with `SLUICE_EGRESS_HARD_CAP_BYTES`
    (an in-box `xt_quota` DROP on all proxied egress, so bytes are stopped mid-flight, not just gated
    after) and detectively with `SLUICE_EGRESS_MAX_BYTES` (total) / `SLUICE_EGRESS_HOST_BUDGETS`
@@ -309,4 +311,7 @@ Hardened post-1.0: preventive egress volume caps (`SLUICE_EGRESS_HARD_CAP_BYTES`
 `SLUICE_ALLOW_IPS_MAX_BYTES`, xt_quota, fail-closed if absent); the accountable `SLUICE-ALLOWIPS` chain +
 `fw_dropped` visibility; bumped-lane upload controls (`SLUICE_BUMP_METHODS` / `SLUICE_BUMP_MAX_BODY`,
 per-request); the opt-in DNS-tunnel audit (`SLUICE_DNS_AUDIT`); and verified pinned replay
-(`sluice lock --pin` + `SLUICE_PIN=1`). Revisit when the egress path, mount model, or runtime options change._
+(`sluice lock --pin` + `SLUICE_PIN=1`). Hardened 2026-07-20: the laundering gate now also flags a
+**parent wildcard that covers a known launderer** (`.googleapis.com` -> storage.googleapis.com), closing
+a path where a `sluice learn` sibling-collapse re-opened an exfil host past the gate / a forbid-laundering
+policy. Revisit when the egress path, mount model, or runtime options change._

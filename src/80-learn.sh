@@ -202,7 +202,7 @@ learn_apply() {   # $1 = newline-separated entries (hosts and/or .domains)
     h="${e#.}"   # a .domain wildcard matches by its bare host
     if [ "${SLUICE_ALLOW_DOH:-}" != 1 ] && doh_listed "$e"; then doh="$doh $e"; continue; fi   # $e keeps the leading dot so a wildcard covering a DoH host is caught
     if [ -n "$pdeny" ] && { _policy_denied_host "$h" "$pdeny" || _allow_covers_denied "$e" "$pdeny"; }; then pden="$pden $e"; continue; fi
-    if laundering_host "$h"; then
+    if laundering_host "$e"; then   # $e keeps the leading dot so a wildcard COVERING a launderer is caught (mirrors the DoH check above)
       # Under forbid-laundering / SLUICE_STRICT_LAUNDERING the run path REFUSES a laundering host;
       # learn hot-reloads onto the live allowlist with no gate, so it must DROP it too (not just warn).
       if [ "${pforbidlaunder:-}" = 1 ] || [ "${SLUICE_STRICT_LAUNDERING:-}" = 1 ]; then launder_dropped="$launder_dropped $e"; continue; fi
