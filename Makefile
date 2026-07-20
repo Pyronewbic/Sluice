@@ -32,7 +32,7 @@ ENGINE_BATS   := $(ACCEPT_BATS) $(SECURITY_BATS)
 GATE_BATS     := $(UNIT_BATS) $(ENGINE_BATS)
 SRC := $(sort $(wildcard src/*.sh))
 
-.PHONY: test test-unit test-engine test-acceptance test-security test-nightly structure lint lint-ci setup build build-check _bats-check
+.PHONY: test test-unit test-engine test-acceptance test-security test-nightly test-awk structure lint lint-ci setup build build-check _bats-check
 setup:
 	git submodule update --init --recursive
 	@git config merge.sluicebuild.name 'regenerate bin/sluice from src/*.sh on conflict'
@@ -51,6 +51,25 @@ test-security:   _bats-check ; $(BATS) --print-output-on-failure $(SECURITY_BATS
 test-nightly:
 	@test -x $(BATS) || { echo "bats missing - run 'make setup'"; exit 1; }
 	$(BATS) --print-output-on-failure test/nightly-*.bats
+
+# The launcher must behave identically on every awk it can meet: macOS ships one-true-awk, Debian/CI
+# ships mawk, and gawk is common - they diverge on printf %f radix (locale) and on -v escape processing.
+# Shim `awk` on PATH to each installed implementation and re-run the no-Docker lane. Local pre-push
+# check (install the others with `brew install mawk gawk`); missing implementations are skipped.
+AWK_IMPLS ?= awk mawk gawk
+test-awk: _bats-check
+	@shim="$$(mktemp -d)"; rc=0; ran=0; \
+	for impl in $(AWK_IMPLS); do \
+	  p="$$(command -v $$impl 2>/dev/null)"; \
+	  [ -n "$$p" ] || { echo "-- $$impl not installed, skipped"; continue; }; \
+	  printf '#!/bin/sh\nexec %s "$$@"\n' "$$p" > "$$shim/awk"; chmod +x "$$shim/awk"; \
+	  echo "===== unit lane under $$impl ($$p) ====="; \
+	  PATH="$$shim:$$PATH" $(BATS) --print-output-on-failure $(UNIT_BATS) || rc=1; \
+	  ran=$$((ran+1)); \
+	done; \
+	rm -rf "$$shim"; \
+	[ "$$ran" -gt 0 ] || { echo "no awk implementation found" >&2; exit 1; }; \
+	exit $$rc
 
 structure:
 	docker build --target base -t sluice-base:gate core/
