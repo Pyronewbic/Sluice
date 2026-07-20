@@ -1,0 +1,4 @@
+# bin/sluice is GENERATED (`cat src/*.sh`). On a merge/rebase conflict, regenerate it from the
+# resolved slices rather than hand-editing the concatenation. Driver registered by `make setup`.
+# (If a SLICE also conflicts, resolve that first; `make build-check` backstops a stale bin/sluice.)
+bin/sluice merge=sluicebuild
