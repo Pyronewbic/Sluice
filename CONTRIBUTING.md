@@ -32,6 +32,7 @@ make test            # gate: CLI/init/install units + egress + security invarian
 make test-nightly    # heavy suites: lock, learn, runtimes, nix, agents, control-plane
 make structure       # base-image invariants (no sudo, uid 1000, firewall packages) via container-structure-test
 make lint-ci         # advisory: actionlint over .github/workflows (mirrors the scans.yml lane)
+make test-awk        # re-run the no-Docker lane under every installed awk (see Style: awk portability)
 ```
 
 Each suite is `test/<name>.bats` (gate) or `test/nightly-<name>.bats` (heavy); shared helpers live in
@@ -48,6 +49,21 @@ macOS, so avoid bashisms newer than 3.2 (no associative arrays, no `${var^^}`), 
 won't catch it, so run the real command, not just the syntax check. `sluice.config.sh` is sourced as
 POSIX `sh` (space/newline strings, no bash arrays). `make lint` runs **shellcheck** (the gate;
 `brew install shellcheck`); run it on what you touch, and keep comments terse.
+
+**awk** is the other portability trap: macOS ships one-true-awk, Debian and CI ship mawk, and gawk is
+common - they are not interchangeable. Three rules, each of which has already cost a bug:
+
+- JSON strings go through `_json_esc` (shell), **never** an awk escaper - a `gsub` replacement
+  containing a backslash is interpreted differently per awk.
+- Formatting numbers? Prefix the invocation with `LC_ALL=C` - `printf "%f"` takes its radix from the
+  locale in bwk/mawk but not gawk, so a comma-decimal host renders `5,10 GB` on one awk and `5.10 GB`
+  on another.
+- Passing data in? Use the environment and `ENVIRON["x"]`, not `-v x=...` - awk escape-processes a
+  `-v` value (bwk drops a backslash, mawk keeps it, gawk drops it *and* warns).
+
+Also avoid gawk-only builtins (`gensub`) and `{n}` regex intervals (mawk without `--re-interval` never
+matches them - spell the repeat out). `make test-awk` re-runs the no-Docker lane under every awk you
+have installed (`brew install mawk gawk`) - run it when you touch awk.
 
 ## Pull requests
 
