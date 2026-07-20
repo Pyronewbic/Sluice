@@ -8,6 +8,9 @@ setup_file() {
   echo "SECRET=hunter2" > "$WORK/mask/.env"
   echo "key-material" > "$WORK/mask/secrets/private.pem"
   echo "readable" > "$WORK/mask/normal.txt"
+  mkdir -p "$WORK/mask/config"
+  echo "LINKSECRET=hunter3" > "$WORK/mask/config/real.env"
+  ( cd "$WORK/mask" && ln -s config/real.env .env.link )   # a .env*-matching symlink to an in-project secret
   cat > "$WORK/mask/sluice.config.sh" <<CFG
 SLUICE_NAME="sectest-mask"
 SLUICE_MASK=".env* secrets"
@@ -43,6 +46,13 @@ teardown_file() {
 @test "mask: the masked path still exists in the box (name visible, content shadowed)" {
   run bash -c "cd '$WORK/mask' && '$SLUICE' run sh -c 'test -e .env && test -d secrets && echo present' 2>/dev/null"
   assert_output "present"
+}
+
+@test "mask: a masked symlink shadows its in-project target (unreadable via the link)" {
+  run bash -c "cd '$WORK/mask' && '$SLUICE' run sh -c 'wc -c < .env.link' 2>/dev/null"
+  assert_output "0"                                        # reading THROUGH the link hits the emptied target
+  run bash -c "cd '$WORK/mask' && '$SLUICE' run cat config/real.env 2>/dev/null"
+  refute_output --partial "hunter3"                        # the real target file is shadowed empty
 }
 
 @test "mask: an unmasked sibling is untouched" {

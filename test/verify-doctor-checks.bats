@@ -47,6 +47,37 @@ teardown() { rm -rf "$WORK"; }
   assert_output --partial ".env"
 }
 
+@test "doctor: git-tracked mask note flags that committed history stays readable in-box" {
+  printf 'SLUICE_MASK=".env*"\nSLUICE_RUN_CMD="bash"\n' > "$WORK/sluice.config.sh"
+  echo "SECRET=1" > "$WORK/.env"
+  ( cd "$WORK" && git init -q && git add .env \
+      && git -c user.email=t@t -c user.name=t commit -qm x )
+  run bash -c "cd '$WORK' && '$SLUICE' doctor"
+  assert_success
+  assert_output --partial "git history"
+}
+
+# A tracked .env SYMLINK to an in-project secret: the mask must shadow the real TARGET (not skip the
+# link), so the target file - which is git-tracked here - shows up in the git-tracked mask note.
+@test "doctor: a masked symlink shadows its in-project target, not the link" {
+  printf 'SLUICE_MASK=".env*"\nSLUICE_RUN_CMD="bash"\n' > "$WORK/sluice.config.sh"
+  mkdir -p "$WORK/secrets"
+  echo "SECRET=1" > "$WORK/secrets/app.env"
+  ( cd "$WORK" && ln -s secrets/app.env .env && git init -q && git add secrets/app.env \
+      && git -c user.email=t@t -c user.name=t commit -qm x )
+  run bash -c "cd '$WORK' && '$SLUICE' doctor"
+  assert_success
+  assert_output --partial "secrets/app.env"
+}
+
+@test "doctor: a masked symlink whose target escapes the project masks nothing" {
+  printf 'SLUICE_MASK=".env*"\nSLUICE_RUN_CMD="bash"\n' > "$WORK/sluice.config.sh"
+  ( cd "$WORK" && ln -s /etc/hosts .env )
+  run bash -c "cd '$WORK' && '$SLUICE' doctor"
+  assert_success
+  assert_output --partial "0 path(s) masked"
+}
+
 @test "doctor: an untracked masked file raises no git-tracked warning" {
   printf 'SLUICE_MASK=".env*"\nSLUICE_RUN_CMD="bash"\n' > "$WORK/sluice.config.sh"
   echo "SECRET=1" > "$WORK/.env"
