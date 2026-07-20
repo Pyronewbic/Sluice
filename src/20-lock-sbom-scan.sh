@@ -81,7 +81,7 @@ EOF
     # (reached): reached first (by bytes desc), then blocked. Counts/total computed in the same awk pass.
     local nblocked; nblocked="$(printf '%s\n' "$rows" | awk -F"$TAB" '$1=="blocked"' | grep -c . || true)"
     printf '%s\n' "$rows" | sort -t"$TAB" -k1,1r -k4,4nr -k2,2 \
-      | awk -F"$TAB" -v box="$container" -v grn="$C_GRN" -v red="$C_RED" -v dim="$C_DIM" -v bld="$C_BLD" -v rst="$C_RST" '
+      | LC_ALL=C awk -F"$TAB" -v box="$container" -v grn="$C_GRN" -v red="$C_RED" -v dim="$C_DIM" -v bld="$C_BLD" -v rst="$C_RST" '
           function human(b){ if(b<1024) return b" B"; else if(b<1048576) return sprintf("%.1f KB",b/1024); else return sprintf("%.1f MB",b/1048576) }
           { c[NR]=$1; h[NR]=$2; n[NR]=$3; b[NR]=$4; total+=$4; if($1=="reached") nr++; else nb++; if(length($2)>w) w=length($2) }
           END { printf "%s%s egress%s   %d reached, %d blocked, %s\n", bld, box, rst, nr, nb, human(total);
