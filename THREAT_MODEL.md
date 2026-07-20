@@ -280,6 +280,12 @@ checks the chain). Precisely what that buys:
   below). Volumes render in GB/TB and a single reached host over `SLUICE_EGRESS_FLAG_BYTES` (default
   1 GiB) is flagged **high volume** in the receipt (`high_volume` in the JSON), so a bulk transfer
   doesn't blend into an allowlisted row - a visibility aid, not a bound (the opt-in byte caps bound it).
+- **HTTP/S egress only; the DNS lane isn't in the default record.** The receipt is built from squid's
+  access log, so it attests what left over HTTP/HTTPS. DNS queries dnsmasq forwards upstream for an
+  *allowlisted* parent (an agent can smuggle labels as `<data>.api.anthropic.com`) are **not** in the
+  default record - `SLUICE_DNS_AUDIT=1` logs them and flags a tunnel pattern (many unique labels under
+  one parent). Exfil bandwidth there is small (the queried domain's nameserver is the vendor's, not the
+  attacker's), so this is a record-completeness gap, not a bulk channel.
 
 ## Residual risk, one line
 
