@@ -47,3 +47,37 @@ cfg() { printf 'SLUICE_NAME="sectest-laundering"\nSLUICE_ALLOW_DOMAINS="gist.git
   refute_output --partial "laundered"
   refute_output --partial "refusing"
 }
+
+# A PARENT wildcard `sluice learn` can write by collapsing a non-storage sibling (e.g. play.googleapis.com)
+# covers storage.googleapis.com - a cloud-storage exfil host - so it must trip the gate, not slip past.
+@test "laundering: parent wildcard .googleapis.com is flagged (covers storage.googleapis.com)" {
+  printf 'SLUICE_NAME="sectest-laundering"\nSLUICE_ALLOW_DOMAINS=".googleapis.com"\nSLUICE_RUN_CMD="true"\n' > "$WORK/p/sluice.config.sh"
+  run bash -c "cd '$WORK/p' && SLUICE_ENGINE=false '$SLUICE' run true"
+  assert_output --partial "laundered"
+  assert_output --partial ".googleapis.com"
+  refute_output --partial "refusing"
+}
+
+@test "laundering: strict mode refuses the covering wildcard .googleapis.com" {
+  printf 'SLUICE_NAME="sectest-laundering"\nSLUICE_ALLOW_DOMAINS=".googleapis.com"\nSLUICE_STRICT_LAUNDERING=1\nSLUICE_RUN_CMD="true"\n' > "$WORK/p/sluice.config.sh"
+  run bash -c "cd '$WORK/p' && SLUICE_ENGINE=false '$SLUICE' run true"
+  assert_failure
+  assert_output --partial "refusing"
+  assert_output --partial ".googleapis.com"
+}
+
+@test "laundering: parent wildcard .amazonaws.com is flagged (covers s3.amazonaws.com)" {
+  printf 'SLUICE_NAME="sectest-laundering"\nSLUICE_ALLOW_DOMAINS=".amazonaws.com"\nSLUICE_RUN_CMD="true"\n' > "$WORK/p/sluice.config.sh"
+  run bash -c "cd '$WORK/p' && SLUICE_ENGINE=false '$SLUICE' run true"
+  assert_output --partial "laundered"
+  refute_output --partial "refusing"
+}
+
+# Precision guard: the bare apex (exact host, no leading dot) matches ONLY googleapis.com itself in squid
+# dstdomain - it cannot reach storage.googleapis.com - so it must NOT be over-flagged as a launderer.
+@test "laundering: bare apex googleapis.com (exact, no subdomains) is NOT flagged" {
+  printf 'SLUICE_NAME="sectest-laundering"\nSLUICE_ALLOW_DOMAINS="googleapis.com"\nSLUICE_RUN_CMD="true"\n' > "$WORK/p/sluice.config.sh"
+  run bash -c "cd '$WORK/p' && SLUICE_ENGINE=false '$SLUICE' run true"
+  refute_output --partial "laundered"
+  refute_output --partial "refusing"
+}

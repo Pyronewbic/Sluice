@@ -347,11 +347,23 @@ arm_receipt() {
 # This project's effective egress allowlist: config domains + the always-on base.
 allowed_domains() { printf '%s %s' "${SLUICE_ALLOW_DOMAINS:-}" "$(base_domains)"; }
 
+# Concrete launderer anchor hosts for the wildcard-cover check below (the case patterns stay the primary
+# matcher for exact + leading-dot-subdomain entries). Anchors are the launderers a collapsible PARENT
+# wildcard could cover - e.g. `.googleapis.com` covers storage.googleapis.com.
+_LAUNDER_COVER="storage.googleapis.com generativelanguage.googleapis.com s3.amazonaws.com blob.core.windows.net r2.cloudflarestorage.com digitaloceanspaces.com gist.github.com raw.githubusercontent.com api.openai.com api.anthropic.com api.cohere.ai"
+
 # True if a host is a known shared/public endpoint an attacker could also WRITE to - so data can be
 # laundered out through it even though it's allowlisted (THREAT_MODEL "allowed-host laundering"; we
-# splice, never decrypt). Heuristic + non-exhaustive; doctor nudges, never blocks.
+# splice, never decrypt). Heuristic + non-exhaustive; doctor nudges, never blocks. $1 may be a leading-dot
+# WILDCARD (what `sluice learn` writes): flagged if it IS/sits-under a launderer OR - like doh_listed -
+# COVERS one (`.googleapis.com` covers storage.googleapis.com), so a parent-wildcard collapse can't slip
+# a launderer past the gate / a forbid-laundering policy.
 laundering_host() {
-  set -- "${1#.}"   # a leading-dot wildcard (.host, what `sluice learn` writes) covers the bare host
+  local lh
+  case "$1" in
+    .*) for lh in $_LAUNDER_COVER; do case ".$lh" in *"$1") return 0 ;; esac; done ;;
+  esac
+  set -- "${1#.}"   # else match the bare host (a .host wildcard also covers the bare host)
   case "$1" in
     *s3.amazonaws.com|*.s3.*.amazonaws.com|storage.googleapis.com|*.blob.core.windows.net|*.r2.cloudflarestorage.com|*.digitaloceanspaces.com) return 0 ;;
     gist.github.com|gist.githubusercontent.com|raw.githubusercontent.com|*pastebin.com|paste.*|transfer.sh|0x0.st|file.io|*.tmpfiles.org) return 0 ;;
