@@ -277,7 +277,9 @@ checks the chain). Precisely what that buys:
   reach (your SIEM).
 - **Records egress seen, not payload.** Spliced (never decrypted) traffic is counted by host + bytes;
   data laundered inside an allowed-host request is in the byte total but not inspected (laundering,
-  below).
+  below). Volumes render in GB/TB and a single reached host over `SLUICE_EGRESS_FLAG_BYTES` (default
+  1 GiB) is flagged **high volume** in the receipt (`high_volume` in the JSON), so a bulk transfer
+  doesn't blend into an allowlisted row - a visibility aid, not a bound (the opt-in byte caps bound it).
 
 ## Residual risk, one line
 

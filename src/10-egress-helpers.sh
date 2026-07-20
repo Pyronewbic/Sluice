@@ -168,10 +168,20 @@ egress_rows() {
     }'
 }
 
-# bytes -> human (B / KB / MB, one decimal for KB+).
+# bytes -> human (B / KB / MB / GB / TB; one decimal KB-MB, two GB+). GB/TB matter: a bulk exfil that
+# would print as "~5222.4 MB" reads clearly as "5.10 GB".
 _human_bytes() {
-  awk -v b="${1:-0}" 'BEGIN{ if (b<1024) printf "%d B", b; else if (b<1048576) printf "%.1f KB", b/1024; else printf "%.1f MB", b/1048576 }'
+  awk -v b="${1:-0}" 'BEGIN{
+    if (b<1024) printf "%d B", b;
+    else if (b<1048576) printf "%.1f KB", b/1024;
+    else if (b<1073741824) printf "%.1f MB", b/1048576;
+    else if (b<1099511627776) printf "%.2f GB", b/1073741824;
+    else printf "%.2f TB", b/1099511627776 }'
 }
+
+# Byte threshold above which a single reached host is flagged "high volume" in the receipt - a bulk
+# transfer that would otherwise blend into a normal allowlisted row. Default 1 GiB; SLUICE_EGRESS_FLAG_BYTES overrides.
+_egress_flag_bytes() { local t="${SLUICE_EGRESS_FLAG_BYTES:-1073741824}"; case "$t" in ''|*[!0-9]*) t=1073741824 ;; esac; printf '%s' "$t"; }
 
 # Total bytes the box SENT OUT to hosts it actually reached (tx=%>st, the upload/request side) - the
 # exfil-relevant volume for the SLUICE_EGRESS_MAX_BYTES budget. Blocked requests never left the proxy,
