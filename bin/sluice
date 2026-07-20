@@ -553,7 +553,7 @@ allowed_domains() { printf '%s %s' "${SLUICE_ALLOW_DOMAINS:-}" "$(base_domains)"
 # Concrete launderer anchor hosts for the wildcard-cover check below (the case patterns stay the primary
 # matcher for exact + leading-dot-subdomain entries). Anchors are the launderers a collapsible PARENT
 # wildcard could cover - e.g. `.googleapis.com` covers storage.googleapis.com.
-_LAUNDER_COVER="storage.googleapis.com generativelanguage.googleapis.com s3.amazonaws.com blob.core.windows.net r2.cloudflarestorage.com digitaloceanspaces.com gist.github.com raw.githubusercontent.com api.openai.com api.anthropic.com api.cohere.ai ampcode.com dashscope.aliyuncs.com dashscope-intl.aliyuncs.com api2.cursor.sh api5.cursor.sh catwalk.charm.land"
+_LAUNDER_COVER="storage.googleapis.com generativelanguage.googleapis.com s3.amazonaws.com blob.core.windows.net r2.cloudflarestorage.com digitaloceanspaces.com gist.github.com raw.githubusercontent.com api.openai.com api.anthropic.com api.cohere.ai ampcode.com dashscope.aliyuncs.com dashscope-intl.aliyuncs.com api2.cursor.sh api5.cursor.sh catwalk.charm.land api-v2.plandex.ai"
 
 # True if a host is a known shared/public endpoint an attacker could also WRITE to - so data can be
 # laundered out through it even though it's allowlisted (THREAT_MODEL "allowed-host laundering"; we
@@ -572,7 +572,7 @@ laundering_host() {
     gist.github.com|gist.githubusercontent.com|raw.githubusercontent.com|*pastebin.com|paste.*|transfer.sh|0x0.st|file.io|*.tmpfiles.org) return 0 ;;
     webhook.site|*.ngrok.io|*.ngrok-free.app|hooks.slack.com|*.requestbin.com|*.pipedream.net) return 0 ;;
     api.openai.com|api.anthropic.com|generativelanguage.googleapis.com|api.cohere.ai) return 0 ;;
-    ampcode.com|dashscope.aliyuncs.com|dashscope-intl.aliyuncs.com|api2.cursor.sh|api5.cursor.sh|*.api5.cursor.sh|catwalk.charm.land) return 0 ;;  # agent-provider model/stream hosts shipped presets allow (POST-capable)
+    ampcode.com|dashscope.aliyuncs.com|dashscope-intl.aliyuncs.com|api2.cursor.sh|api5.cursor.sh|*.api5.cursor.sh|catwalk.charm.land|api-v2.plandex.ai) return 0 ;;  # agent-provider model/stream hosts shipped presets allow (POST-capable)
   esac
   return 1
 }

@@ -100,3 +100,19 @@ cfg() { printf 'SLUICE_NAME="sectest-laundering"\nSLUICE_ALLOW_DOMAINS="gist.git
   assert_output --partial "laundered"
   assert_output --partial ".api5.cursor.sh"
 }
+
+# The shipped plandex preset allowlists api-v2.plandex.ai (Plandex Cloud's model-proxy backend) - a
+# POST-capable stream host of the same class as the cursor/amp/crush hosts, so plandex users get the nudge.
+@test "laundering: plandex's api-v2.plandex.ai model-proxy host is flagged" {
+  printf 'SLUICE_NAME="sectest-laundering"\nSLUICE_ALLOW_DOMAINS="api-v2.plandex.ai"\nSLUICE_RUN_CMD="true"\n' > "$WORK/p/sluice.config.sh"
+  run bash -c "cd '$WORK/p' && SLUICE_ENGINE=false '$SLUICE' run true"
+  assert_output --partial "laundered"
+  assert_output --partial "api-v2.plandex.ai"
+}
+
+@test "laundering: a .plandex.ai parent wildcard covering api-v2.plandex.ai is flagged" {
+  printf 'SLUICE_NAME="sectest-laundering"\nSLUICE_ALLOW_DOMAINS=".plandex.ai"\nSLUICE_RUN_CMD="true"\n' > "$WORK/p/sluice.config.sh"
+  run bash -c "cd '$WORK/p' && SLUICE_ENGINE=false '$SLUICE' run true"
+  assert_output --partial "laundered"
+  assert_output --partial ".plandex.ai"
+}
