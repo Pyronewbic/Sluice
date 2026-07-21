@@ -37,8 +37,9 @@ jobs:
         run: |
           v="${TAG#v}"
           tarball="sluice-${v}.tar.gz"
-          # Entry mtimes come from the commit; gzip -n drops its own name/timestamp. So anyone can
-          # `git archive` the tag and regenerate a byte-identical tarball to check this sha.
+          # Entry mtimes come from the commit; gzip -n drops its own name/timestamp. The TAR layer is
+          # therefore reproducible from the tag, but the gzip wrapper is NOT: DEFLATE differs between
+          # implementations, so re-gzipping does not reproduce this sha. See SECURITY.md.
           git archive --format=tar --prefix="sluice-${v}/" "$TAG" | gzip -n9 > "$tarball"
           sha256sum "$tarball" > SHA256SUMS
           echo "TARBALL=$tarball" >> "$GITHUB_ENV"
