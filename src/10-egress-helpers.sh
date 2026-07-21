@@ -175,9 +175,11 @@ egress_rows() {
 # not apply): the row renderers in cmd_egress and the at-exit receipt each format inside a single awk
 # pass, so calling _human_bytes per row would fork an awk per host. They prepend this instead - one
 # definition, no fork. Any renderer that formats bytes must use it, or two surfaces disagree on a unit.
-# The B branch is %d, not b" B": it coerces a non-numeric byte count to 0 rather than echoing it back
-# into the render. The two inline renderers previously concatenated it raw; this unifies on the safer form.
-_AWK_HUMAN='function human(b){ if(b<1024) return sprintf("%d B",b); else if(b<1048576) return sprintf("%.1f KB",b/1024); else if(b<1073741824) return sprintf("%.1f MB",b/1048576); else if(b<1099511627776) return sprintf("%.2f GB",b/1073741824); else return sprintf("%.2f TB",b/1099511627776) }'
+# `b+=0` first: without it a non-numeric field string-compares past every rung and falls out the bottom
+# as "0.00 TB" - a garbage byte count rendering as petabytes on an audit surface. Callers all gate on
+# *[!0-9]* today, so this is defence for the next call site that forgets. The B branch is then %d rather
+# than b" B" so an empty field reads "0 B", not a bare " B" (what the inline renderers used to print).
+_AWK_HUMAN='function human(b){ b+=0; if(b<1024) return sprintf("%d B",b); else if(b<1048576) return sprintf("%.1f KB",b/1024); else if(b<1073741824) return sprintf("%.1f MB",b/1048576); else if(b<1099511627776) return sprintf("%.2f GB",b/1073741824); else return sprintf("%.2f TB",b/1099511627776) }'
 
 _human_bytes() {
   # LC_ALL=C: bwk/mawk honour a comma-decimal locale in printf %f, gawk does not - pin the radix to '.'.
@@ -186,7 +188,16 @@ _human_bytes() {
 
 # Byte threshold above which a single reached host is flagged "high volume" in the receipt - a bulk
 # transfer that would otherwise blend into a normal allowlisted row. Default 1 GiB; SLUICE_EGRESS_FLAG_BYTES overrides.
-_egress_flag_bytes() { local t="${SLUICE_EGRESS_FLAG_BYTES:-1073741824}"; case "$t" in ''|*[!0-9]*) t=1073741824 ;; esac; printf '%s' "$t"; }
+# Bounded to 15 digits, not just all-digits: an all-digit 2^63 makes `[ x -ge $t ]` a bash "integer
+# expected" error on stderr, and anything past 2^53 compares exactly in the shell but as an IEEE double
+# in awk - so the JSON and human renders would disagree. 15 digits keeps both exact. ~1 PB is already
+# far past any real threshold.
+_egress_flag_bytes() {
+  local t="${SLUICE_EGRESS_FLAG_BYTES:-1073741824}"
+  case "$t" in ''|*[!0-9]*) t=1073741824 ;; esac
+  if [ "${#t}" -gt 15 ]; then t=1073741824; fi
+  printf '%s' "$t"
+}
 
 # Total bytes the box SENT OUT to hosts it actually reached (tx=%>st, the upload/request side) - the
 # exfil-relevant volume for the SLUICE_EGRESS_MAX_BYTES budget. Blocked requests never left the proxy,

@@ -177,10 +177,15 @@ _fixture_log() {
   assert_output --partial "(high volume)"
 }
 
+# The refute needs an anchor: cmd_egress early-returns "(nothing yet - exercise the app...)" on an
+# empty log and still exits 0, so a bare refute_output passes having rendered no row at all - green
+# on main, and green against a regression that dropped reached rows entirely. Assert the row IS there.
 @test "high-volume: an under-threshold human render carries no tag" {
   _squid_log() { _fixture_log; }
   run cmd_egress
   assert_success
+  assert_output --partial "evil.example.com"
+  assert_output --partial "210 B"
   refute_output --partial "(high volume)"
 }
 

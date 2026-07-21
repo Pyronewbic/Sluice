@@ -84,8 +84,10 @@ motion - inside the box `cat .env` prints nothing and `wc -c .env` is 0 bytes.
 
 Limits: matches are evaluated at launch, so a secret created mid-run is not masked; a slash-less
 pattern matches root-level entries only (use `packages/*/.env` to reach deeper); a matched symlink
-masks the file it resolves to, not the link itself - a target resolving outside the mount, or one
-that cannot be resolved, is left alone (it already dangles in the box). More:
+masks the file it resolves to, not the link itself - a target resolving outside the **project dir**,
+or one that cannot be resolved, is left **unmasked**. Note a git worktree mounts the git common dir
+too, and symlink resolution does not cover it: a matched link pointing into that dir stays readable
+in the box, and `doctor` will not flag it. More:
 [what it does not defend against](../THREAT_MODEL.md#what-it-does-not-defend-against-be-explicit).
 
 ## `SLUICE_OVERLAY_DIRS`: box-local dirs
