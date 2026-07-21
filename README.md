@@ -12,7 +12,7 @@ Run any project - or a coding agent in full YOLO mode - in a locked-down contain
 firewall** (only the hosts you allow, by name, are reachable) - and ends every run with a
 **receipt** of exactly what it reached and what the firewall blocked.
 
-<p align="center"><img src="assets/agent-demo.gif" width="680" alt="sluice agent lists nine sandboxed coding-agent presets with auth status read live from the host env (the claude row green, key set); inside the box 'cat .env' prints nothing because SLUICE_MASK shadows the secret; and the egress receipt shows api.anthropic.com reached in green and pypi.org blocked in red - one command, the agent caged"></p>
+<p align="center"><img src="assets/agent-demo.gif" width="680" alt="sluice agent runs a coding agent caged: the presets listed with auth status read live from the host env, 'cat .env' inside the box printing nothing because SLUICE_MASK shadows the secret, and an egress receipt showing api.anthropic.com reached in green and pypi.org blocked in red"></p>
 
 The same cage contains any untrusted **dependency**, too. Here a poisoned npm package's module
 code runs the moment your app imports it and tries to steal your `.env` and SSH key and POST them

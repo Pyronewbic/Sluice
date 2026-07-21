@@ -76,6 +76,14 @@ config (and any `sluice learn` edits) - so policy wins:
   silently trimmed because the firewall reads the baked list - a host-side trim wouldn't reach a
   running box, so a hard refuse is the honest contract.
 
+  Know what `forbid-laundering` costs before you deploy it: **every shipped `sluice agent` preset
+  allowlists a model or stream API that is classified laundering-capable**, so a policy carrying it
+  refuses all of them. That is the directive working - a model endpoint the agent can POST to is
+  exactly the shape it names - but it means the directive and the agent presets are mutually
+  exclusive. `SLUICE_LAUNDERING_OK=1` silences the session warning and does **not** override a policy
+  refusal. The directive takes no argument and cannot be scoped to particular hosts, so the remedy is
+  to deploy it selectively rather than to relax it.
+
 ## Signing
 
 A `SLUICE_POLICY_URL` body is fetched over the network, so it can be **authenticated** before use

@@ -131,8 +131,8 @@ nightly surfaced and fixed: bind mounts keeping the host uid (the entrypoint cho
 squid Host-forgery 409 on rotating-CDN hosts (fixed by the in-box caching dnsmasq pinning a name to
 one IP set per session). The real dev-box smoke ran clean 2026-06-02.
 
-### 3. Agent-native wrapping (the wedge) - 9 presets verified, sessions persist
-`sluice agent <name>` scaffolds a preset and drops you in; nine ship, all defaulting to skip-approvals
+### 3. Agent-native wrapping (the wedge) - 10 presets verified, sessions persist
+`sluice agent <name>` scaffolds a preset and drops you in; ten ship, all defaulting to skip-approvals
 since the sandbox is the gate. Cred-free harness (`nightly-agents.bats` + a weekly drift smoke) plus
 live keyed round-trips (manual, 2026-06-03). Sessions persist via `SLUICE_STATE_DIRS`. Running agents:
 [docs/agents.md](docs/agents.md); the preset contract: [agents/README.md](agents/README.md).
