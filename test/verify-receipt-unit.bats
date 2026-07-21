@@ -69,6 +69,31 @@ RCPT() { printf '%s' "$XDG_STATE_HOME/sluice/$slug/egress-receipt.json"; }
   assert_output --partial '"high_volume":true'
 }
 
+# =0 is all-digits, so it survives _egress_flag_bytes' numeric guard and reaches the comparison as a
+# real 0 - every reached host is then >= 0. The human renderer always guarded this; the JSON did not.
+@test "receipt: SLUICE_EGRESS_FLAG_BYTES=0 disables the flag instead of flagging everything" {
+  SLUICE_EGRESS_FLAG_BYTES=0 _recb tiny.example.com 100
+  run cat "$(RCPT)"
+  assert_output --partial '"high_volume":false'
+}
+
+# The 0-byte row is the sharp edge of the same bug: with thr=0 it satisfies `bytes >= thr` exactly.
+@test "receipt: SLUICE_EGRESS_FLAG_BYTES=0 does not flag a zero-byte reached host" {
+  SLUICE_EGRESS_FLAG_BYTES=0 _recb quiet.example.com 0
+  run cat "$(RCPT)"
+  assert_output --partial '"high_volume":false'
+}
+
+# A non-numeric value must fall back to the 1 GiB default, never die - this knob bounds nothing.
+@test "receipt: a malformed SLUICE_EGRESS_FLAG_BYTES falls back to the default threshold" {
+  SLUICE_EGRESS_FLAG_BYTES=banana _recb small.example.com 100
+  run cat "$(RCPT)"
+  assert_output --partial '"high_volume":false'
+  SLUICE_EGRESS_FLAG_BYTES=banana _recb big.example.com 2147483648   # 2 GiB > the 1 GiB fallback
+  run cat "$(RCPT)"
+  assert_output --partial '"high_volume":true'
+}
+
 @test "receipt-chain: a byte flip in a record body trips the self-hash branch" {
   _rec a.example.com; _rec b.example.com
   sed -i.bak '1s/a\.example\.com/a.evil.com/' "$LOG"

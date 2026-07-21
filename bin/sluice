@@ -3914,7 +3914,12 @@ _persist_receipt() {
   while IFS="$TAB" read -r _cls _host _cnt _byt; do
     [ -n "$_host" ] || continue
     [ "$_first" = 1 ] && _first=0 || _hj="$_hj,"
-    _hv=false; case "$_byt" in ''|*[!0-9]*) ;; *) [ "$_cls" = reached ] && [ "$_byt" -ge "$_flagthr" ] && _hv=true ;; esac
+    # thr=0 disables the flag, matching the human renderer's `thr+0>0` guard; without it every reached
+    # row flags, including a 0-byte one. Wrapped in `if` so the && chain can't trip errexit.
+    _hv=false
+    case "$_byt" in ''|*[!0-9]*) ;; *)
+      if [ "$_cls" = reached ] && [ "$_flagthr" -gt 0 ] && [ "$_byt" -ge "$_flagthr" ]; then _hv=true; fi ;;
+    esac
     _hj="$_hj{\"host\":\"$(_json_esc "$_host")\",\"class\":\"$_cls\",\"requests\":$_cnt,\"bytes\":$_byt,\"high_volume\":$_hv}"
   done <<EOF
 $rows
