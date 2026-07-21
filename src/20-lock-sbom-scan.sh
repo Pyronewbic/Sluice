@@ -17,7 +17,8 @@ cmd_egress() {
   # SLUICE_EGRESS_MAX_BYTES: a volume budget on what LEFT the box (tx to reached hosts). Over the cap,
   # this command exits non-zero so CI can gate it - bounds how much can be laundered through an
   # allowed host. Unset -> no gate (always exit 0, unchanged).
-  local cap="${SLUICE_EGRESS_MAX_BYTES:-}" tx over=0
+  local cap="${SLUICE_EGRESS_MAX_BYTES:-}" tx over=0 _flagthr
+  _flagthr="$(_egress_flag_bytes)"   # both renderers below flag on it; declare-then-assign keeps its status
   case "$cap" in *[!0-9]*) cap="";; esac   # non-numeric (or empty) -> no budget
   tx="$(egress_tx_total 2>/dev/null || echo 0)"; case "$tx" in ''|*[!0-9]*) tx=0;; esac
   [ -n "$cap" ] && [ "$tx" -gt "$cap" ] && over=1
@@ -50,7 +51,7 @@ EOF
     [ "$over" = 1 ] && over_json=true
     allowed="$(printf '%s\n' "$rows" | awk -F"$TAB" '$1=="reached"{print $2}')"
     blocked="$(printf '%s\n' "$rows" | awk -F"$TAB" '$1=="blocked"{print $2}')"
-    local _bud _ovb _htx
+    local _bud _ovb _htx _hv
     while IFS="$TAB" read -r cls host cnt byt; do
       [ -n "$host" ] || continue
       [ "$first" = 1 ] && first=0 || hosts_json="$hosts_json,"
@@ -63,7 +64,13 @@ EOF
           [ "$_htx" -gt "$_bud" ] && _ovb=true
         else _bud=null; fi
       fi
-      hosts_json="$hosts_json{\"host\":\"$(_json_esc "$host")\",\"class\":\"$cls\",\"requests\":$cnt,\"bytes\":$byt,\"budget\":$_bud,\"over_budget\":$_ovb}"
+      # Same rule as the at-exit receipt (src/80-learn.sh): reached + bytes >= threshold, thr=0 off.
+      # Note the windows differ - this command reads the whole boot, the receipt is run-scoped.
+      _hv=false
+      case "$byt" in ''|*[!0-9]*) ;; *)
+        if [ "$cls" = reached ] && [ "$_flagthr" -gt 0 ] && [ "$byt" -ge "$_flagthr" ]; then _hv=true; fi ;;
+      esac
+      hosts_json="$hosts_json{\"host\":\"$(_json_esc "$host")\",\"class\":\"$cls\",\"requests\":$cnt,\"bytes\":$byt,\"budget\":$_bud,\"over_budget\":$_ovb,\"high_volume\":$_hv}"
     done <<EOF
 $rows
 EOF
@@ -81,12 +88,14 @@ EOF
     # (reached): reached first (by bytes desc), then blocked. Counts/total computed in the same awk pass.
     local nblocked; nblocked="$(printf '%s\n' "$rows" | awk -F"$TAB" '$1=="blocked"' | grep -c . || true)"
     printf '%s\n' "$rows" | sort -t"$TAB" -k1,1r -k4,4nr -k2,2 \
-      | LC_ALL=C awk -F"$TAB" -v box="$container" -v grn="$C_GRN" -v red="$C_RED" -v dim="$C_DIM" -v bld="$C_BLD" -v rst="$C_RST" '
-          function human(b){ if(b<1024) return b" B"; else if(b<1048576) return sprintf("%.1f KB",b/1024); else return sprintf("%.1f MB",b/1048576) }
+      | LC_ALL=C awk -F"$TAB" -v box="$container" -v grn="$C_GRN" -v red="$C_RED" -v dim="$C_DIM" -v bld="$C_BLD" -v rst="$C_RST" -v ylw="$C_YEL" -v thr="$_flagthr" "$_AWK_HUMAN"'
           { c[NR]=$1; h[NR]=$2; n[NR]=$3; b[NR]=$4; total+=$4; if($1=="reached") nr++; else nb++; if(length($2)>w) w=length($2) }
           END { printf "%s%s egress%s   %d reached, %d blocked, %s\n", bld, box, rst, nr, nb, human(total);
                 for(i=1;i<=NR;i++){
-                  if(c[i]=="reached") printf "  %-*s  %s[reached]%s  %3d req   %s\n", w, h[i], grn, rst, n[i], human(b[i]);
+                  if(c[i]=="reached"){
+                    hv = (thr+0>0 && b[i]>=thr+0) ? sprintf("   %s(high volume)%s", ylw, rst) : "";
+                    printf "  %-*s  %s[reached]%s  %3d req   %s%s\n", w, h[i], grn, rst, n[i], human(b[i]), hv;
+                  }
                   else                printf "  %-*s  %s[blocked]%s  %3d req\n",        w, h[i], red, rst, n[i];
                 } }'
     # C1: blocked rows carry no next step here (unlike the receipt's per-row annotation) - one trailing nudge.
