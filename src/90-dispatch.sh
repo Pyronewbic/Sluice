@@ -89,7 +89,8 @@ case "${1:-run-default}" in
     banner
     # F2: snapshot image freshness BEFORE ensure_up may rebuild, so the plan line can say up-to-date vs rebuilt.
     _fresh=1
-    [ "$("$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.confighash" }}' "$tag" 2>/dev/null || true)" = "$(config_hash)" ] || _fresh=""
+    _ch_plan="$(config_hash 2>/dev/null || true)"   # see doctor: "" must not compare equal to an empty label
+    { [ -n "$_ch_plan" ] && [ "$("$ENGINE" image inspect -f '{{ index .Config.Labels "sluice.confighash" }}' "$tag" 2>/dev/null || true)" = "$_ch_plan" ]; } || _fresh=""
     ensure_up
     _nhosts="$(allowed_domains | wc -w | tr -d ' ')"
     _state="up-to-date"; [ -n "$_fresh" ] || _state="rebuilt"
