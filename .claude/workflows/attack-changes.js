@@ -9,9 +9,12 @@ export const meta = {
   ],
 }
 
-// args: { base?: string, focus?: string }   (default base 'main')
-// args may arrive as an object OR a JSON string depending on invocation path - tolerate both.
-const A = (typeof args === 'string' && args.trim()) ? JSON.parse(args) : (args || {})
+// args: a bare base ref ("main"), an object { base?, focus? }, or that object as a JSON string -
+// which one arrives depends on the invocation path, so tolerate all three. Parsing unconditionally
+// throws on the documented `args: "main"` form before a single agent starts.
+const A = (typeof args === 'string' && args.trim())
+  ? (args.trim().startsWith('{') ? JSON.parse(args) : { base: args.trim() })
+  : (args || {})
 const BASE = A.base || 'main'
 const FOCUS = A.focus || ''
 
