@@ -14,7 +14,7 @@ Run `sluice agent` with no name to list the presets, each with its auth var and 
 your host. Each preset is a normal `sluice.config.sh` (knob reference: [configuration.md](configuration.md));
 the contract a preset must follow lives in [`agents/README.md`](../agents/README.md).
 
-<p align="center"><img src="../assets/agent-demo.gif" width="680" alt="sluice agent lists nine sandboxed coding-agent presets with auth status read live from the host env (the claude row green, key set); inside the box 'cat .env' prints nothing because SLUICE_MASK shadows the secret; and the egress receipt shows api.anthropic.com reached in green and pypi.org blocked in red - one command, the agent caged"></p>
+<p align="center"><img src="../assets/agent-demo.gif" width="680" alt="sluice agent lists the sandboxed coding-agent presets with auth status read live from the host env (the claude row green, key set); inside the box 'cat .env' prints nothing because SLUICE_MASK shadows the secret; and the egress receipt shows api.anthropic.com reached in green and pypi.org blocked in red - one command, the agent caged"></p>
 
 ## The presets
 
@@ -50,7 +50,11 @@ as root, and can't reach hosts off the allowlist, so approving each shell comman
 
 Honest caveat: the sandbox bounds the blast radius but does not zero it. A YOLO agent can still
 rewrite the mounted repo and spend any creds you forward, and the allowlist is host-granular - an
-allowed API is also an exfiltration channel for whatever the box can read. Work on a committed
+allowed API is also an exfiltration channel for whatever the box can read. Every preset's model API
+is such a host, so each session opens with a note naming it; that note is the caveat above made
+concrete, not a fault in the preset. Silence it or turn it into a refusal with the
+[laundering knobs](configuration.md), and see the
+[gate it feeds](hardening.md) for how a policy can forbid the whole class. Work on a committed
 branch, and see the threat model for exactly what is and isn't contained:
 [what it defends against](../THREAT_MODEL.md#what-it-defends-against-today),
 [what it does not](../THREAT_MODEL.md#what-it-does-not-defend-against-be-explicit).
