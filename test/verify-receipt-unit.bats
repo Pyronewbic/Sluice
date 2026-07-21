@@ -13,7 +13,9 @@ setup() {
   source "$src/00-prelude.sh"; source "$src/10-egress-helpers.sh"
   source "$src/20-lock-sbom-scan.sh"; source "$src/80-learn.sh"
   export XDG_STATE_HOME; XDG_STATE_HOME="$(mktemp -d)"
-  slug="utrcpt"; container="sluice-utrcpt"; SLUICE_ALLOW_DOMAINS=""
+  # unset, not just unassigned: an exported value in the dev's/CI's env silently rewrites what the
+  # default-threshold assertions below mean (=0 makes them vacuous, a small value makes them false reds).
+  slug="utrcpt"; container="sluice-utrcpt"; SLUICE_ALLOW_DOMAINS=""; unset SLUICE_EGRESS_FLAG_BYTES
   LOG="$XDG_STATE_HOME/sluice/$slug/egress-log.jsonl"
 }
 teardown() { rm -rf "$XDG_STATE_HOME"; }
@@ -82,6 +84,31 @@ RCPT() { printf '%s' "$XDG_STATE_HOME/sluice/$slug/egress-receipt.json"; }
   SLUICE_EGRESS_FLAG_BYTES=0 _recb quiet.example.com 0
   run cat "$(RCPT)"
   assert_output --partial '"high_volume":false'
+}
+
+# An all-digit value past 2^63 makes `[ x -ge $t ]` a bash "integer expected" error on stderr (once per
+# reached host), and anything past 2^53 compares exactly in the shell but as an IEEE double in awk - so
+# the JSON and human renders would disagree. The threshold is length-bounded to keep both exact.
+@test "flag-bytes: an absurdly long all-digit threshold falls back instead of erroring" {
+  run _egress_flag_bytes                                        # positive control: the guard is reachable
+  assert_output "1073741824"
+  SLUICE_EGRESS_FLAG_BYTES=999999999999999 run _egress_flag_bytes   # 15 digits: still honoured
+  assert_output "999999999999999"
+  SLUICE_EGRESS_FLAG_BYTES=9999999999999999 run _egress_flag_bytes  # 16 digits: bounded out
+  assert_output "1073741824"
+  SLUICE_EGRESS_FLAG_BYTES=99999999999999999999999 run _egress_flag_bytes
+  assert_output "1073741824"
+}
+
+# The stderr leak the bound exists to prevent - a marker on stdout would not catch it, and production
+# sends this stderr nowhere, so assert on the captured stream directly.
+@test "flag-bytes: an out-of-range threshold leaves no shell diagnostic on stderr" {
+  SLUICE_EGRESS_FLAG_BYTES=99999999999999999999999 _recb big.example.com 2147483648 2>"$BATS_TEST_TMPDIR/err"
+  run cat "$BATS_TEST_TMPDIR/err"
+  refute_output --partial "integer expected"
+  refute_output --partial "integer expression expected"
+  run cat "$(RCPT)"
+  assert_output --partial '"high_volume":true'   # and it still flags, on the fallback default
 }
 
 # A non-numeric value must fall back to the 1 GiB default, never die - this knob bounds nothing.

@@ -16,7 +16,7 @@ _persist_receipt() {
     [ -n "$_host" ] || continue
     [ "$_first" = 1 ] && _first=0 || _hj="$_hj,"
     # thr=0 disables the flag, matching the human renderer's `thr+0>0` guard; without it every reached
-    # row flags, including a 0-byte one. Wrapped in `if` so the && chain can't trip errexit.
+    # row flags, including a 0-byte one.
     _hv=false
     case "$_byt" in ''|*[!0-9]*) ;; *)
       if [ "$_cls" = reached ] && [ "$_flagthr" -gt 0 ] && [ "$_byt" -ge "$_flagthr" ]; then _hv=true; fi ;;
