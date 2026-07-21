@@ -271,7 +271,10 @@ _learn_review() {
   local parents p subs ya; parents="$(printf '%s\n' "$hosts" | while read -r h; do [ -n "$h" ] && parent_of "$h"; done | sort | uniq -c | awk '$1>=2{print $2}')"
   for p in $parents; do
     _collapsible "$p" || continue   # never offer a wildcard equal to a public suffix (foo.github.io -> .github.io)
-    subs="$(printf '%s\n' "$hosts" | while read -r h; do [ "$(parent_of "$h")" = "$p" ] && echo "$h"; done)"
+    # `if`, not `&&`: a failed test on the LAST line leaves the while loop - and so the whole command
+    # substitution - at status 1, which this plain assignment propagates into errexit. That killed the
+    # review mid-screen, with no error text, whenever the last blocked host wasn't a child of $p.
+    subs="$(printf '%s\n' "$hosts" | while read -r h; do if [ "$(parent_of "$h")" = "$p" ]; then echo "$h"; fi; done)"
     # shellcheck disable=SC2086
     printf '  %s subdomains of %s: %s\n' "$(printf '%s\n' "$subs" | awk 'END{print NR}')" "$p" "$(printf '%s ' $subs)"
     printf '  collapse to .%s (matches all its subdomains)? [y/N] ' "$p"
