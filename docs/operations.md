@@ -72,7 +72,7 @@ the suffix. So a `/v1` consumer keeps working as sluice grows.
 | `sluice.version/v1` | `version --json` | version, engine, os, install |
 | `sluice.doctor/v1` | `doctor --json` | single-box posture |
 | `sluice.box/v1` | each `ls --json` element | adds `confighash`, `state_dir`, and `last_receipt` (a verbatim embed of the box's latest egress receipt - a fleet↔audit join; its integrity is attested by `egress --verify`, not by `ls`) |
-| `sluice.egress/v1` | `egress --json`, each receipt record | per-host reached/blocked + bytes; always-on `fw_dropped {packets,bytes}` + `denied_ip_requests` (raw-IP / non-HTTP drops the proxy log can't see); `budget`/`over_budget` per host when `SLUICE_EGRESS_HOST_BUDGETS` is set; `allow_ips[]` when `SLUICE_ALLOW_IPS` is set; `dns` volume/tunnel fields when `SLUICE_DNS_AUDIT=1` |
+| `sluice.egress/v1` | `egress --json`, each receipt record | per-host reached/blocked + bytes; always-on `fw_dropped {packets,bytes}` + `denied_ip_requests` (raw-IP / non-HTTP drops the proxy log can't see); `budget`/`over_budget` per host when `SLUICE_EGRESS_HOST_BUDGETS` is set; `high_volume` per host, on its bytes vs [`SLUICE_EGRESS_FLAG_BYTES`](configuration.md); `allow_ips[]` when `SLUICE_ALLOW_IPS` is set; `dns` volume/tunnel fields when `SLUICE_DNS_AUDIT=1` |
 | `sluice.egress-verify/v1` | `egress --verify --json` | one box's chain result |
 | `sluice.fleet-verify/v1` | `egress --verify --all --json` | every box's chain result |
 

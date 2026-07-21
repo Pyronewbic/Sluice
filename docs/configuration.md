@@ -115,10 +115,15 @@ What the filter guarantees - and does not - is in
   longest wildcard wins. Over any single host's cap, `sluice egress` exits non-zero and the receipt
   warns. Unlike `SLUICE_EGRESS_MAX_BYTES` (silently ignored when malformed), a malformed token here
   **dies** (fail closed) - a silently-void security budget is worse than a stop.
-- `SLUICE_EGRESS_FLAG_BYTES` - a **visibility aid**, not a bound: when a single reached host's tx bytes
-  meet or exceed it, the receipt tags that host `(high volume)` and `sluice egress --json` emits
-  `"high_volume":true` on its row - flagging a bulk transfer to an allowlisted host that would
-  otherwise blend into a normal row. It bounds nothing (the byte caps do that); default 1 GiB.
+- `SLUICE_EGRESS_FLAG_BYTES` - a **visibility aid**, not a bound: when a single reached host's bytes
+  meet or exceed it, that host is tagged `(high volume)` and carries `"high_volume":true` - flagging a
+  bulk transfer to an allowlisted host that would otherwise blend into a normal row. Counts bytes in
+  **both** directions, so a large download trips it as readily as an upload. Tagged on the at-exit
+  receipt and on `sluice egress`, in both their human and `--json` renders, and on the persisted record
+  (`sluice egress --export`, and `last_receipt` in `sluice ls --json`). `sluice egress` reads the whole
+  boot while the receipt is run-scoped, so the same threshold can flag on one and not the other. `0`
+  disables the flag; a non-numeric value falls back to the default. It bounds nothing (the byte caps do
+  that); default 1 GiB.
 
 - `SLUICE_EGRESS_HARD_CAP_BYTES` - a **preventive** per-boot ceiling on all proxied egress, enforced
   in-box with an `xt_quota` iptables rule on squid's uid: once the quota is spent, egress is DROPped
