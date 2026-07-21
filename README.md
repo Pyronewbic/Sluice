@@ -230,6 +230,8 @@ first** (a warning for at least one minor release) before removal in the next ma
 (Dockerfile, squid / firewall / entrypoint), the image layout and base-image contents,
 and exact log/console text.
 
+Release history and per-version notes: [Releases](https://github.com/Pyronewbic/Sluice/releases).
+
 ## Examples
 
 The **[gallery](examples/README.md)** is self-contained demos, everyday tasks first: serve
