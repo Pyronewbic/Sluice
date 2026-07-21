@@ -8,6 +8,22 @@ load test_helper/common
 
 _want() { [ -z "${AGENTS:-}" ] && return 0; case " ${AGENTS} " in *" $1 "*) return 0;; *) return 1;; esac; }
 
+# The agent binary out of a preset's SLUICE_RUN_CMD. Not `${cmd%% *}`: a preset may carry a shell
+# prelude (`export PATH=...; aider ...`) or an env prefix (`PLANDEX_SKIP_UPGRADE=1 plandex ...`), and
+# taking the first word yielded `export` / `PLANDEX_SKIP_UPGRADE=1` - the former silently PASSES the
+# on-PATH check (a shell builtin), so aider/qwen were never really probed. Drop everything up to the
+# last `;`, then skip leading VAR=VAL assignments.
+_run_bin() {
+  local c="${1##*;}" tok IFS=$' \t\n'   # pin IFS: word-splitting here must not follow the caller's
+  for tok in $c; do
+    case "$tok" in
+      *=*) ;;                                  # env assignment prefix - keep looking
+      *) printf '%s' "$tok"; return 0 ;;
+    esac
+  done
+  printf '%s' "${c%% *}"
+}
+
 # best-guess non-interactive invocation per agent (override with <NAME>_PROBE).
 _agent_probe() {
   case "$1" in
@@ -20,6 +36,9 @@ _agent_probe() {
     aider)    echo 'aider --yes-always --no-auto-commits --message "reply with OK"' ;;
     qwen)     echo 'qwen --yolo -p "reply with the single word OK"' ;;
     crush)    echo 'crush run --yolo "reply with the single word OK"' ;;
+    # plandex has no entry on purpose: Cloud auth is an in-terminal email-pin sign-in that cannot
+    # complete headless, so there is no cred-gated round-trip to probe (steps 1-4 still run). An empty
+    # probe skips step 5 rather than failing it.
     *)        echo '' ;;
   esac
 }
@@ -33,7 +52,7 @@ _agent_teardown() {
 _verify_agent() {
   local name="$1" preset="$ROOT/agents/$1.config.sh" work c bin hosts envvars firstvar h nc got
   [ -f "$preset" ] || { echo "no preset for $name"; return 1; }
-  bin="$(. "$preset"; printf '%s' "${SLUICE_RUN_CMD%% *}")"
+  bin="$(. "$preset"; _run_bin "$SLUICE_RUN_CMD")"
   hosts="$(. "$preset"; printf '%s' "${SLUICE_ALLOW_DOMAINS:-}")"
   envvars="$(. "$preset"; printf '%s' "${SLUICE_ENV:-}")"
   firstvar="${envvars%% *}"
@@ -115,3 +134,4 @@ _verify_agent() {
 @test "agent: amp preset (cred-free + optional live)"      { _want amp      || skip "not in AGENTS"; _verify_agent amp; }
 @test "agent: qwen preset (cred-free + optional live)"     { _want qwen     || skip "not in AGENTS"; _verify_agent qwen; }
 @test "agent: crush preset (cred-free + optional live)"    { _want crush    || skip "not in AGENTS"; _verify_agent crush; }
+@test "agent: plandex preset (cred-free)"                  { _want plandex  || skip "not in AGENTS"; _verify_agent plandex; }
