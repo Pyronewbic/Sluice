@@ -183,6 +183,11 @@ How-to and trade-offs: [hardening](hardening.md).
 - `SLUICE_ENV` - names of host env vars forwarded into each session. Values are read from
   your shell at exec time, never baked into the image.
 - `SLUICE_MOUNTS` - extra bind mounts, newline-separated `host:container[:ro]`.
+- `SLUICE_ALLOW_HOME` - `=1` permits a project dir that is `$HOME`, `/`, or an ancestor of `$HOME`,
+  which otherwise **refuses to run**. Mounting one of those would hand the box your whole home tree -
+  `~/.ssh`, cloud credentials, every other project - so the refusal is the default and this is the
+  deliberate override. See the mount-scope guarantee in the
+  [threat model](../THREAT_MODEL.md#what-it-defends-against-today).
 - `SLUICE_STATE_DIRS` - home-relative dirs persisted across container recreation, backed by
   a per-project host store (`$XDG_STATE_HOME/sluice/<name>`). The
   [agent presets](agents.md) use this for sessions/auth. Dirs only, relative paths only;

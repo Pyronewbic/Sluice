@@ -83,8 +83,9 @@ is masked now and warns about secret-looking files (`.env*`, `*.pem`, key JSON, 
 motion - inside the box `cat .env` prints nothing and `wc -c .env` is 0 bytes.
 
 Limits: matches are evaluated at launch, so a secret created mid-run is not masked; a slash-less
-pattern matches root-level entries only (use `packages/*/.env` to reach deeper); symlink matches
-are skipped (a mount over a link would shadow its target). More:
+pattern matches root-level entries only (use `packages/*/.env` to reach deeper); a matched symlink
+masks the file it resolves to, not the link itself - a target resolving outside the mount, or one
+that cannot be resolved, is left alone (it already dangles in the box). More:
 [what it does not defend against](../THREAT_MODEL.md#what-it-does-not-defend-against-be-explicit).
 
 ## `SLUICE_OVERLAY_DIRS`: box-local dirs
