@@ -62,3 +62,21 @@ setup() {
   rm -rf "$shim" "$pdir" "$core"
 }
 
+# The freshness gates must not embed $(config_hash) directly in a test: inside $( ) errexit is OFF, so a
+# broken hasher yields "" and an unlabelled/unreadable image also reads "" - the two compare EQUAL and a
+# stale box reports as current, never rebuilding. Every gate must hoist the hash and require it non-empty.
+@test "build-hash: no freshness gate compares a bare \$(config_hash) (structural, fail-closed)" {
+  local hits
+  # only a COMPARISON inside a [ ] test is wrong; a hoisted assignment (want="$(config_hash)") is the
+  # correct form, and comment lines quoting the bad shape must not trip this.
+  hits="$(grep -rnE '^[^#]*\[[^]]*"\$\(config_hash\)"' "$ROOT"/src/*.sh || true)"
+  [ -z "$hits" ] || { echo "gate still inlines config_hash:"; echo "$hits"; return 1; }
+}
+
+@test "build-hash: each config_hash gate requires a non-empty hash before claiming fresh" {
+  local f
+  for f in src/30-doctor-ls.sh src/90-dispatch.sh; do
+    grep -q 'config_hash 2>/dev/null || true' "$ROOT/$f" || { echo "$f does not hoist config_hash"; return 1; }
+    grep -qE '\[ -n "\$_ch_(doc|ls|plan)" \]' "$ROOT/$f" || { echo "$f does not guard on a non-empty hash"; return 1; }
+  done
+}

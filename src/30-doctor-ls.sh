@@ -514,7 +514,11 @@ EOF
 
   if [ -n "$eng" ]; then
     if _with_timeout 5 "$eng" image inspect "$tag" >/dev/null 2>&1; then
-      if [ "$(_with_timeout 5 "$eng" image inspect -f '{{ index .Config.Labels "sluice.confighash" }}' "$tag" 2>/dev/null || true)" = "$(config_hash)" ]; then
+      # Hoist the hash: inside $( ) errexit is OFF, so a broken/missing hasher yields "" and the label
+      # read (also "" for an unlabelled image) would compare equal - reporting a stale box as current.
+      # An uncomputable hash must never read as fresh, so require a non-empty hash to claim "current".
+      _ch_doc="$(config_hash 2>/dev/null || true)"
+      if [ -n "$_ch_doc" ] && [ "$(_with_timeout 5 "$eng" image inspect -f '{{ index .Config.Labels "sluice.confighash" }}' "$tag" 2>/dev/null || true)" = "$_ch_doc" ]; then
         _doc image "$tag built (${C_GRN}config current${C_RST})"
       else
         _attn=$((_attn+1))
@@ -702,7 +706,8 @@ cmd_doctor_json() {
   local img_built=false img_stale=false
   if [ -n "$eng" ] && _with_timeout 5 "$eng" image inspect "$tag" >/dev/null 2>&1; then
     img_built=true
-    [ "$(_with_timeout 5 "$eng" image inspect -f '{{ index .Config.Labels "sluice.confighash" }}' "$tag" 2>/dev/null || true)" = "$(config_hash)" ] || img_stale=true
+    _ch_ls="$(config_hash 2>/dev/null || true)"   # see doctor: "" must not compare equal to an empty label
+    { [ -n "$_ch_ls" ] && [ "$(_with_timeout 5 "$eng" image inspect -f '{{ index .Config.Labels "sluice.confighash" }}' "$tag" 2>/dev/null || true)" = "$_ch_ls" ]; } || img_stale=true
   fi
 
   local lock="none"
