@@ -115,3 +115,30 @@ EOF
   assert_output --partial "pkgA"
   assert_output --partial "pkgB"
 }
+
+# SECURITY.md tells a user to re-derive a release and compare shas. That check must be one that
+# actually holds on every platform: `git archive` is deterministic, but the gzip wrapper is NOT
+# (GNU gzip on the release runner vs Apple gzip on macOS produce different DEFLATE for identical
+# input), so documenting the .tar.gz sha as reproducible makes a macOS user conclude the release was
+# tampered with. Verified against v0.10.0: tar layers identical, .tar.gz shas differ.
+@test "supplychain: the documented release repro compares the TAR layer, not the gzip" {
+  run grep -c 'gunzip -c sluice-<version>.tar.gz' "$ROOT/SECURITY.md"
+  assert_output "1"
+  # the retired claim - gzip -n9 regenerating "the same bytes" - must not come back
+  run grep -c 'gzip -n9` regenerates the same bytes' "$ROOT/SECURITY.md"
+  assert_output "0"
+  # and the repro pipeline must not hash with shasum alone: Alpine and *-slim have sha256sum, no shasum
+  run grep -cE '^(gunzip -c|git archive).*\| shasum' "$ROOT/SECURITY.md"
+  assert_output "0"
+  # the retired claim must not survive in the RELEASE WORKFLOW either - it documents the same artifact,
+  # and a guard that only greps SECURITY.md leaves the contradiction in place (found by review).
+  run grep -c 'byte-identical' "$ROOT/.github/workflows/release.yml"
+  assert_output "0"
+}
+
+@test "supplychain: git archive is byte-stable, so the documented tar comparison is sound" {
+  local a b
+  a="$(git -C "$ROOT" archive --format=tar --prefix=s/ HEAD | shasum -a 256 | cut -d' ' -f1)"
+  b="$(git -C "$ROOT" archive --format=tar --prefix=s/ HEAD | shasum -a 256 | cut -d' ' -f1)"
+  [ -n "$a" ] && [ "$a" = "$b" ]
+}
