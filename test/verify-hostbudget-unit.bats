@@ -130,3 +130,67 @@ _fixture_log() {
   assert_success
   jq -e '.hosts[]|select(.host=="evil.example.com")|.budget==null and .over_budget==false' <<<"$output"
 }
+
+# --- high_volume: the flag the receipt has always carried, now on `sluice egress` too ---------------
+# docs/configuration.md documented `sluice egress --json` as emitting this field before it did, so a CI
+# gate written against the documented contract silently never fired. The fixture row is tx=200 rx=10;
+# the flag compares field 4 (tx+rx = 210), NOT tx - a large download trips it just as an upload does.
+
+@test "high-volume --json: a reached host at or over the threshold carries high_volume:true" {
+  _squid_log() { _fixture_log; }
+  SLUICE_EGRESS_FLAG_BYTES=210   # == tx+rx: the boundary is inclusive, matching the receipt
+  run cmd_egress --json
+  assert_success
+  jq -e '.hosts[]|select(.host=="evil.example.com")|.high_volume==true' <<<"$output"
+}
+
+# Pins the measure: a threshold ABOVE tx but BELOW tx+rx still flags, so a large inbound transfer
+# trips it. Documenting this as "tx bytes" understated what the flag actually catches.
+@test "high-volume --json: a threshold between tx and tx+rx still flags (the flag counts both)" {
+  _squid_log() { _fixture_log; }
+  SLUICE_EGRESS_FLAG_BYTES=205   # above tx (200), below tx+rx (210)
+  run cmd_egress --json
+  assert_success
+  jq -e '.hosts[]|select(.host=="evil.example.com")|.high_volume==true' <<<"$output"
+}
+
+@test "high-volume --json: a host under the threshold carries high_volume:false" {
+  _squid_log() { _fixture_log; }
+  run cmd_egress --json            # default threshold is 1 GiB; the fixture moved 210 B
+  assert_success
+  jq -e '.hosts[]|select(.host=="evil.example.com")|.high_volume==false' <<<"$output"
+}
+
+@test "high-volume --json: =0 disables the flag rather than flagging every reached host" {
+  _squid_log() { _fixture_log; }
+  SLUICE_EGRESS_FLAG_BYTES=0
+  run cmd_egress --json
+  assert_success
+  jq -e '.hosts[]|select(.host=="evil.example.com")|.high_volume==false' <<<"$output"
+}
+
+@test "high-volume: the human render tags the row, matching the receipt's wording" {
+  _squid_log() { _fixture_log; }
+  SLUICE_EGRESS_FLAG_BYTES=100
+  run cmd_egress
+  assert_success
+  assert_output --partial "(high volume)"
+}
+
+@test "high-volume: an under-threshold human render carries no tag" {
+  _squid_log() { _fixture_log; }
+  run cmd_egress
+  assert_success
+  refute_output --partial "(high volume)"
+}
+
+# The GB/TB ladder landed in the receipt renderer only, so `sluice egress` still printed a
+# multi-gigabyte transfer as "5222.4 MB". LC_ALL=C is already pinned on this awk (bwk/mawk take the
+# %f radix from the locale); this asserts the ladder itself.
+@test "high-volume: the human render carries the GB ladder, not a four-digit MB" {
+  _squid_log() { printf '1700000000.000 1 10.0.0.2 TCP_TUNNEL/200 210 CONNECT bulk.example.com:443 - HIER_DIRECT/1.2.3.4 - ssl_sni=bulk.example.com tx=5476083302 rx=0\n'; }
+  run cmd_egress
+  assert_success
+  assert_output --partial "5.10 GB"
+  refute_output --partial "5222.4 MB"
+}

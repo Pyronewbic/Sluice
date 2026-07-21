@@ -170,14 +170,18 @@ egress_rows() {
 
 # bytes -> human (B / KB / MB / GB / TB; one decimal KB-MB, two GB+). GB/TB matter: a bulk exfil that
 # would print as "~5222.4 MB" reads clearly as "5.10 GB".
+#
+# The unit ladder lives here ONCE, as awk PROGRAM text (not data, so the -v escape-processing rule does
+# not apply): the row renderers in cmd_egress and the at-exit receipt each format inside a single awk
+# pass, so calling _human_bytes per row would fork an awk per host. They prepend this instead - one
+# definition, no fork. Any renderer that formats bytes must use it, or two surfaces disagree on a unit.
+# The B branch is %d, not b" B": it coerces a non-numeric byte count to 0 rather than echoing it back
+# into the render. The two inline renderers previously concatenated it raw; this unifies on the safer form.
+_AWK_HUMAN='function human(b){ if(b<1024) return sprintf("%d B",b); else if(b<1048576) return sprintf("%.1f KB",b/1024); else if(b<1073741824) return sprintf("%.1f MB",b/1048576); else if(b<1099511627776) return sprintf("%.2f GB",b/1073741824); else return sprintf("%.2f TB",b/1099511627776) }'
+
 _human_bytes() {
   # LC_ALL=C: bwk/mawk honour a comma-decimal locale in printf %f, gawk does not - pin the radix to '.'.
-  LC_ALL=C awk -v b="${1:-0}" 'BEGIN{
-    if (b<1024) printf "%d B", b;
-    else if (b<1048576) printf "%.1f KB", b/1024;
-    else if (b<1073741824) printf "%.1f MB", b/1048576;
-    else if (b<1099511627776) printf "%.2f GB", b/1073741824;
-    else printf "%.2f TB", b/1099511627776 }'
+  LC_ALL=C awk -v b="${1:-0}" "$_AWK_HUMAN"'BEGIN{ printf "%s", human(b) }'
 }
 
 # Byte threshold above which a single reached host is flagged "high volume" in the receipt - a bulk

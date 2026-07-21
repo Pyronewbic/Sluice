@@ -82,8 +82,7 @@ show_egress_receipt() {
   _ft="$(_egress_flag_bytes)"
   # Render summary header + aligned rows on stderr (so it never pollutes the app's stdout).
   printf '%s\n' "$ordered" | LC_ALL=C awk -F"$TAB" \
-    -v box="$container" -v grn="$grn" -v red="$red" -v dim="$dim" -v bld="$bld" -v rst="$rst" -v ylw="$ylw" -v thr="$_ft" '
-    function human(b){ if(b<1024) return b" B"; else if(b<1048576) return sprintf("%.1f KB",b/1024); else if(b<1073741824) return sprintf("%.1f MB",b/1048576); else if(b<1099511627776) return sprintf("%.2f GB",b/1073741824); else return sprintf("%.2f TB",b/1099511627776) }
+    -v box="$container" -v grn="$grn" -v red="$red" -v dim="$dim" -v bld="$bld" -v rst="$rst" -v ylw="$ylw" -v thr="$_ft" "$_AWK_HUMAN"'
     { cls[NR]=$1; host[NR]=$2; cnt[NR]=$3; byt[NR]=$4; total+=$4;
       if($1=="reached"){ nr++; if(nr<=10 && length($2)>w) w=length($2) } else { nb++; if(length($2)>w) w=length($2) } }
     END {

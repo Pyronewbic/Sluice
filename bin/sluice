@@ -404,14 +404,18 @@ egress_rows() {
 
 # bytes -> human (B / KB / MB / GB / TB; one decimal KB-MB, two GB+). GB/TB matter: a bulk exfil that
 # would print as "~5222.4 MB" reads clearly as "5.10 GB".
+#
+# The unit ladder lives here ONCE, as awk PROGRAM text (not data, so the -v escape-processing rule does
+# not apply): the row renderers in cmd_egress and the at-exit receipt each format inside a single awk
+# pass, so calling _human_bytes per row would fork an awk per host. They prepend this instead - one
+# definition, no fork. Any renderer that formats bytes must use it, or two surfaces disagree on a unit.
+# The B branch is %d, not b" B": it coerces a non-numeric byte count to 0 rather than echoing it back
+# into the render. The two inline renderers previously concatenated it raw; this unifies on the safer form.
+_AWK_HUMAN='function human(b){ if(b<1024) return sprintf("%d B",b); else if(b<1048576) return sprintf("%.1f KB",b/1024); else if(b<1073741824) return sprintf("%.1f MB",b/1048576); else if(b<1099511627776) return sprintf("%.2f GB",b/1073741824); else return sprintf("%.2f TB",b/1099511627776) }'
+
 _human_bytes() {
   # LC_ALL=C: bwk/mawk honour a comma-decimal locale in printf %f, gawk does not - pin the radix to '.'.
-  LC_ALL=C awk -v b="${1:-0}" 'BEGIN{
-    if (b<1024) printf "%d B", b;
-    else if (b<1048576) printf "%.1f KB", b/1024;
-    else if (b<1073741824) printf "%.1f MB", b/1048576;
-    else if (b<1099511627776) printf "%.2f GB", b/1073741824;
-    else printf "%.2f TB", b/1099511627776 }'
+  LC_ALL=C awk -v b="${1:-0}" "$_AWK_HUMAN"'BEGIN{ printf "%s", human(b) }'
 }
 
 # Byte threshold above which a single reached host is flagged "high volume" in the receipt - a bulk
@@ -700,7 +704,8 @@ cmd_egress() {
   # SLUICE_EGRESS_MAX_BYTES: a volume budget on what LEFT the box (tx to reached hosts). Over the cap,
   # this command exits non-zero so CI can gate it - bounds how much can be laundered through an
   # allowed host. Unset -> no gate (always exit 0, unchanged).
-  local cap="${SLUICE_EGRESS_MAX_BYTES:-}" tx over=0
+  local cap="${SLUICE_EGRESS_MAX_BYTES:-}" tx over=0 _flagthr
+  _flagthr="$(_egress_flag_bytes)"   # both renderers below flag on it; declare-then-assign keeps its status
   case "$cap" in *[!0-9]*) cap="";; esac   # non-numeric (or empty) -> no budget
   tx="$(egress_tx_total 2>/dev/null || echo 0)"; case "$tx" in ''|*[!0-9]*) tx=0;; esac
   [ -n "$cap" ] && [ "$tx" -gt "$cap" ] && over=1
@@ -733,7 +738,7 @@ EOF
     [ "$over" = 1 ] && over_json=true
     allowed="$(printf '%s\n' "$rows" | awk -F"$TAB" '$1=="reached"{print $2}')"
     blocked="$(printf '%s\n' "$rows" | awk -F"$TAB" '$1=="blocked"{print $2}')"
-    local _bud _ovb _htx
+    local _bud _ovb _htx _hv
     while IFS="$TAB" read -r cls host cnt byt; do
       [ -n "$host" ] || continue
       [ "$first" = 1 ] && first=0 || hosts_json="$hosts_json,"
@@ -746,7 +751,13 @@ EOF
           [ "$_htx" -gt "$_bud" ] && _ovb=true
         else _bud=null; fi
       fi
-      hosts_json="$hosts_json{\"host\":\"$(_json_esc "$host")\",\"class\":\"$cls\",\"requests\":$cnt,\"bytes\":$byt,\"budget\":$_bud,\"over_budget\":$_ovb}"
+      # Same rule as the at-exit receipt (src/80-learn.sh): reached + bytes >= threshold, thr=0 off.
+      # Note the windows differ - this command reads the whole boot, the receipt is run-scoped.
+      _hv=false
+      case "$byt" in ''|*[!0-9]*) ;; *)
+        if [ "$cls" = reached ] && [ "$_flagthr" -gt 0 ] && [ "$byt" -ge "$_flagthr" ]; then _hv=true; fi ;;
+      esac
+      hosts_json="$hosts_json{\"host\":\"$(_json_esc "$host")\",\"class\":\"$cls\",\"requests\":$cnt,\"bytes\":$byt,\"budget\":$_bud,\"over_budget\":$_ovb,\"high_volume\":$_hv}"
     done <<EOF
 $rows
 EOF
@@ -764,12 +775,14 @@ EOF
     # (reached): reached first (by bytes desc), then blocked. Counts/total computed in the same awk pass.
     local nblocked; nblocked="$(printf '%s\n' "$rows" | awk -F"$TAB" '$1=="blocked"' | grep -c . || true)"
     printf '%s\n' "$rows" | sort -t"$TAB" -k1,1r -k4,4nr -k2,2 \
-      | LC_ALL=C awk -F"$TAB" -v box="$container" -v grn="$C_GRN" -v red="$C_RED" -v dim="$C_DIM" -v bld="$C_BLD" -v rst="$C_RST" '
-          function human(b){ if(b<1024) return b" B"; else if(b<1048576) return sprintf("%.1f KB",b/1024); else return sprintf("%.1f MB",b/1048576) }
+      | LC_ALL=C awk -F"$TAB" -v box="$container" -v grn="$C_GRN" -v red="$C_RED" -v dim="$C_DIM" -v bld="$C_BLD" -v rst="$C_RST" -v ylw="$C_YEL" -v thr="$_flagthr" "$_AWK_HUMAN"'
           { c[NR]=$1; h[NR]=$2; n[NR]=$3; b[NR]=$4; total+=$4; if($1=="reached") nr++; else nb++; if(length($2)>w) w=length($2) }
           END { printf "%s%s egress%s   %d reached, %d blocked, %s\n", bld, box, rst, nr, nb, human(total);
                 for(i=1;i<=NR;i++){
-                  if(c[i]=="reached") printf "  %-*s  %s[reached]%s  %3d req   %s\n", w, h[i], grn, rst, n[i], human(b[i]);
+                  if(c[i]=="reached"){
+                    hv = (thr+0>0 && b[i]>=thr+0) ? sprintf("   %s(high volume)%s", ylw, rst) : "";
+                    printf "  %-*s  %s[reached]%s  %3d req   %s%s\n", w, h[i], grn, rst, n[i], human(b[i]), hv;
+                  }
                   else                printf "  %-*s  %s[blocked]%s  %3d req\n",        w, h[i], red, rst, n[i];
                 } }'
     # C1: blocked rows carry no next step here (unlike the receipt's per-row annotation) - one trailing nudge.
@@ -3981,8 +3994,7 @@ show_egress_receipt() {
   _ft="$(_egress_flag_bytes)"
   # Render summary header + aligned rows on stderr (so it never pollutes the app's stdout).
   printf '%s\n' "$ordered" | LC_ALL=C awk -F"$TAB" \
-    -v box="$container" -v grn="$grn" -v red="$red" -v dim="$dim" -v bld="$bld" -v rst="$rst" -v ylw="$ylw" -v thr="$_ft" '
-    function human(b){ if(b<1024) return b" B"; else if(b<1048576) return sprintf("%.1f KB",b/1024); else if(b<1073741824) return sprintf("%.1f MB",b/1048576); else if(b<1099511627776) return sprintf("%.2f GB",b/1073741824); else return sprintf("%.2f TB",b/1099511627776) }
+    -v box="$container" -v grn="$grn" -v red="$red" -v dim="$dim" -v bld="$bld" -v rst="$rst" -v ylw="$ylw" -v thr="$_ft" "$_AWK_HUMAN"'
     { cls[NR]=$1; host[NR]=$2; cnt[NR]=$3; byt[NR]=$4; total+=$4;
       if($1=="reached"){ nr++; if(nr<=10 && length($2)>w) w=length($2) } else { nb++; if(length($2)>w) w=length($2) } }
     END {
