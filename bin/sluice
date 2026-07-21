@@ -63,16 +63,57 @@ sluice_version() {       # git tag if $ROOT is our own checkout, else the baked 
 # Passive "you're behind" notice for `sluice version`. Best-effort 2s GitHub check; silent on any
 # failure/offline/opt-out (SLUICE_NO_UPDATE_CHECK=1), never aborts. Field-numeric compare (BSD sort
 # has no -V); a dev build (X.Y.Z-N-g...) compares by its X.Y.Z base, so it won't nag.
+# True only for a plausible dotted-numeric version. A character class alone ([!0-9.]) enforces no SHAPE:
+# "9..9", ".9", "9." and a 200KB run of digits all pass it, and this value is printed to the terminal as
+# an upgrade instruction. Require N.N[.N...], no empty segments, and a sane length.
+_version_ok() {
+  case "$1" in
+    ''|*[!0-9.]*|.*|*.|*..*) return 1 ;;
+    *.*) [ "${#1}" -le 32 ] ;;
+    *) return 1 ;;                      # needs at least one dot: a bare "99" is not a version here
+  esac
+}
 check_update_notice() {
   [ -z "${SLUICE_NO_UPDATE_CHECK:-}" ] || return 0
   command -v curl >/dev/null 2>&1 || return 0
-  local cur_base latest newest
+  local cur_base latest newest cache now ts cached statedir tmp
   cur_base="$(sluice_version | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' || true)"
   [ -n "$cur_base" ] || return 0
-  latest="$(curl -fsS --max-time 2 https://api.github.com/repos/Pyronewbic/Sluice/releases/latest 2>/dev/null \
-            | grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 \
-            | sed -E 's/.*"([^"]*)"$/\1/' 2>/dev/null || true)"
-  latest="${latest#v}"
+  # Answer from a <24h cache rather than calling GitHub on every `version`: the network round-trip was
+  # ~160ms of the command, and a security tool should not phone home each time you ask what it is.
+  # ${HOME:-}: HOME can be unset (cron/CI), and a bare $HOME aborts the whole command under set -u.
+  statedir="${XDG_STATE_HOME:-}"; [ -n "$statedir" ] || { [ -n "${HOME:-}" ] && statedir="$HOME/.local/state"; }
+  cache=""; [ -n "$statedir" ] && cache="$statedir/sluice/update-check"
+  now="$(date +%s 2>/dev/null || true)"; case "$now" in ''|*[!0-9]*) now=0 ;; esac
+  latest=""
+  if [ -n "$cache" ] && [ -f "$cache" ]; then
+    ts=""; cached=""
+    read -r ts cached < "$cache" 2>/dev/null || true
+    # Digits alone are not enough: a 2^63 stamp is all-digits, becomes INT64_MIN under 10#, and then
+    # `now - ts` overflows to a large NEGATIVE number that is < 86400 - pinning the cache fresh for
+    # every possible clock value and silencing updates forever. Epoch seconds are 10 digits until 2286.
+    case "$ts" in ''|*[!0-9]*) ts=0 ;; esac
+    [ "${#ts}" -le 11 ] || ts=0
+    # 10#: a leading-zero stamp (08/09) is OCTAL to $(( )) and would abort `version` outright. Reject a
+    # FUTURE stamp too - clock skew or a crafted file would otherwise pin the cache as fresh forever
+    # and silently stop update checks.
+    [ "$now" -gt 0 ] && [ "$((10#$ts))" -le "$now" ] && [ "$(( now - 10#$ts ))" -lt 86400 ] && latest="$cached"
+  fi
+  # Only ever trust a dotted-numeric version. This string is printed to the terminal as an upgrade
+  # INSTRUCTION, so a crafted cache file must not be able to forge a line telling the user what to run.
+  _version_ok "$latest" || latest=""
+  if [ -z "$latest" ]; then
+    latest="$(curl -fsS --max-time 2 https://api.github.com/repos/Pyronewbic/Sluice/releases/latest 2>/dev/null \
+              | grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 \
+              | sed -E 's/.*"([^"]*)"$/\1/' 2>/dev/null || true)"
+    latest="${latest#v}"
+    _version_ok "$latest" || latest=""   # the tag is remote input - same rule applies
+    # mktemp+mv, never `> "$cache"`: a plain redirect FOLLOWS a symlink and would truncate its target.
+    if [ -n "$latest" ] && [ -n "$cache" ] && [ "$now" -gt 0 ] && mkdir -p "${cache%/*}" 2>/dev/null; then
+      tmp="$(mktemp "$cache.XXXXXX" 2>/dev/null || true)"
+      [ -n "$tmp" ] && { printf '%s %s\n' "$now" "$latest" > "$tmp" 2>/dev/null && mv -f "$tmp" "$cache" 2>/dev/null; } || rm -f "$tmp" 2>/dev/null || true
+    fi
+  fi
   [ -n "$latest" ] || return 0
   newest="$(printf '%s\n%s\n' "$cur_base" "$latest" | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)"
   [ "$newest" = "$latest" ] && [ "$latest" != "$cur_base" ] \
