@@ -6,6 +6,7 @@ export const meta = {
     { title: 'Run' },
     { title: 'Cluster' },
     { title: 'Root-cause' },
+    { title: 'Verify' },
   ],
 }
 
@@ -67,6 +68,21 @@ const ROOTCAUSE_SCHEMA = {
   },
 }
 
+// A root cause is a CLAIM until someone re-derives it. Acting on a plausible-but-wrong diagnosis means
+// editing the wrong file, or - worse here - rewriting a test to agree with broken code, which CLAUDE.md
+// names as how a broken `ls` shipped green. Every other workflow in this dir verifies; this one did not.
+const VERDICT_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['holds', 'why'],
+  properties: {
+    holds: { type: 'boolean', description: 'true only if you independently reproduced the causal link' },
+    why: { type: 'string', description: 'what you ran/read and what you found' },
+    correction: { type: 'string', description: 'the corrected root cause, if the original was wrong' },
+    test_is_the_bug: { type: 'boolean', description: 'true if the TEST is wrong rather than the code - flag loudly, never silently rewrite a test to pass' },
+  },
+}
+
 phase('Run')
 const suite = args && args.suite ? args.suite : null
 const cmd = suite ? `test/bats/bin/bats --print-output-on-failure ${suite}` : 'make test'
@@ -111,4 +127,41 @@ Read the named .bats files under test/ and the relevant src/*.sh slices (bin/slu
     { label: `rootcause:${c.label}`, phase: 'Root-cause', schema: ROOTCAUSE_SCHEMA })
 }))
 
-return { failures: run.failures, diagnoses: diagnoses.filter(Boolean) }
+phase('Verify')
+const found = diagnoses.filter(Boolean)
+log(`${found.length} diagnosis/es - re-deriving each independently before it is acted on`)
+
+const checked = await parallel(found.map(d => () =>
+  agent(`You are an independent SKEPTIC. Another agent diagnosed a cluster of failing sluice bats tests.
+Your job is to REFUTE the diagnosis. Default to holds=false when you cannot independently reproduce it.
+
+CLAIMED ROOT CAUSE: ${d.rootCause}
+PROPOSED FIX: ${d.fix}
+CLUSTER: ${d.cluster}
+
+Do NOT trust the claim. Re-derive it yourself:
+- Read the named .bats files and the relevant src/*.sh slices. Run the failing test and read its FULL
+  output, not a tail.
+- Establish the CAUSAL link, not a correlation: would the proposed fix actually make these tests pass,
+  and does the claimed cause actually produce this failure signature? Prove it - e.g. apply the change
+  in a scratch copy, or revert the suspect line and watch the signature change.
+- Check the failure is not environmental (Docker down, a missing hasher, a stale bin/sluice out of sync
+  with src/ - 'make build-check'), which would make the whole diagnosis moot.
+- Decide whether the TEST or the CODE is wrong. If the test encodes the correct contract and the code
+  broke it, say so - a test that fails after a refactor is evidence about the contract, and rewriting
+  it to agree with new code is how a real regression ships green. Set test_is_the_bug accordingly.
+- If the fix would touch bin/sluice directly, that is wrong by construction: it is generated from src/.`,
+    { label: `verify:${d.cluster}`, phase: 'Verify', schema: VERDICT_SCHEMA })
+      .then(v => ({ ...d, verdict: v }))))
+
+const results = checked.filter(Boolean)
+const confirmed = results.filter(r => r.verdict?.holds)
+const refuted = results.filter(r => !r.verdict?.holds)
+log(`${confirmed.length}/${results.length} diagnoses survived; ${refuted.length} refuted`)
+
+return {
+  failures: run.failures,
+  diagnoses: confirmed,
+  refuted,
+  test_is_the_bug: confirmed.filter(r => r.verdict?.test_is_the_bug).map(r => r.cluster),
+}

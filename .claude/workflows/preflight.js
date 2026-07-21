@@ -22,7 +22,7 @@ const base = (typeof args === 'string' && args.trim()) ? args.trim()
 const GATE_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['checks', 'src_or_core_touched', 'engine_lanes_due', 'new_test_files'],
+  required: ['checks', 'src_or_core_touched', 'engine_lanes_due', 'new_test_files', 'security_path_touched'],
   properties: {
     checks: {
       type: 'array',
@@ -40,6 +40,7 @@ const GATE_SCHEMA = {
     src_or_core_touched: { type: 'boolean', description: 'diff touches src/*.sh or core/* (launcher review is warranted)' },
     engine_lanes_due: { type: 'boolean', description: 'diff touches engine/security behavior (core/*, firewall, entrypoint, security bats) so the Docker lanes must run in CI' },
     new_test_files: { type: 'array', items: { type: 'string' }, description: 'test/*.bats files ADDED in this diff' },
+    security_path_touched: { type: 'boolean', description: 'diff touches a security path (egress, receipts, freshness/staleness gates, policy, the firewall, release verification) or refactors a hot helper - the attack-changes workflow is warranted' },
   },
 }
 
@@ -126,7 +127,7 @@ Checks:
 2. "shellcheck" - run \`make lint\`; pass iff clean.
 3. "unit lane" - run \`make test-unit\`; pass iff all tests ok (this lane also runs verify-lane-membership-unit, so a passing lane means new suites are registered).
 4. "maintainer author" - \`git log ${base}..HEAD --format='%an <%ae>'\` are ALL 'Kanishka Nambiar <36982731+Pyronewbic@users.noreply.github.com>'; and \`git log ${base}..HEAD --format=%B | grep -c 'Co-Authored-By'\` is 0. pass iff both.
-Then determine: does the diff (\`git diff --name-only ${base}...HEAD\`) touch src/*.sh or core/* (src_or_core_touched)? Does it touch core/*, the firewall/entrypoint, or verify-security-*.bats such that the Docker engine/security lanes must run in CI (engine_lanes_due)? Which test/*.bats files are ADDED (git diff --name-status --diff-filter=A ${base}...HEAD -- 'test/*.bats')?
+Then determine: does the diff (\`git diff --name-only ${base}...HEAD\`) touch src/*.sh or core/* (src_or_core_touched)? Does it touch core/*, the firewall/entrypoint, or verify-security-*.bats such that the Docker engine/security lanes must run in CI (engine_lanes_due)? Which test/*.bats files are ADDED (git diff --name-status --diff-filter=A ${base}...HEAD -- 'test/*.bats')? Does it touch a SECURITY PATH - egress, receipts, freshness/staleness gates, policy, the firewall, release verification - or refactor a hot helper shared by several call sites (security_path_touched)? Judge that from what the changed lines DO, not from the filename alone.
 Do NOT run the Docker lanes (make test-engine/-security/structure) - they are CI's job; just report engine_lanes_due so the human runs them. Return the structured result.`,
   { label: 'gate', phase: 'Gate', schema: GATE_SCHEMA }
 )
@@ -182,6 +183,14 @@ if (gate?.src_or_core_touched) {
   log('no src/core changes - skipping the launcher review')
 }
 
+// Recommend the adversarial pass rather than invoking it: attack-changes runs ~20 agents for ~20
+// minutes, an order of magnitude past this gate's cost, and CLAUDE.md only warrants it on a security
+// path. Escalating silently would hide that spend inside a check people run on every branch.
+const attack_recommended = !!gate?.security_path_touched
+if (attack_recommended) {
+  log(`security-path change vs ${base} - run the attack-changes workflow before the PR (a green suite only covers the path you exercised)`)
+}
+
 const rank = { blocker: 0, warning: 1 }
 blockers.sort((a, b) => (rank[a.kind] ?? 2) - (rank[b.kind] ?? 2))
 
@@ -193,6 +202,7 @@ return {
   base,
   gate: gate?.checks || [],
   engine_lanes_due: !!gate?.engine_lanes_due,
+  attack_recommended,
   blockers,
   warnings,
   unverified,
