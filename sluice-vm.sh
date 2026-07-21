@@ -31,8 +31,16 @@ vmstatus() { gc compute instances describe "$VM" --zone="$ZONE" --format='value(
 
 sync_tree() {
   [ "$(vmstatus)" = RUNNING ] || { echo "VM is $(vmstatus) - run: sluice-vm.sh start" >&2; exit 1; }
+  # MIRROR, not overlay: clear the previous sync before extracting, so a file that no longer exists
+  # locally cannot linger on the VM. `tar -x` alone left a stale test/*.bats from whichever branch was
+  # synced last, which then ran as an orphan (and trips the lane-membership check). Only the VM-only
+  # paths survive - .git and the vendored bats submodules, all three excluded from the tar below.
   tar -cf - -C "$LOCAL" --exclude='.git' --exclude='test/bats' --exclude='test/test_helper' . \
-    | vmssh --command 'mkdir -p ~/sluice && tar -xf - -C ~/sluice'
+    | vmssh --command 'set -e
+        mkdir -p ~/sluice/test
+        find ~/sluice      -mindepth 1 -maxdepth 1 ! -name .git ! -name test        -exec rm -rf {} +
+        find ~/sluice/test -mindepth 1 -maxdepth 1 ! -name bats ! -name test_helper -exec rm -rf {} +
+        tar -xf - -C ~/sluice'
 }
 
 cmd="${1:-}"; shift || true
