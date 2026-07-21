@@ -578,7 +578,18 @@ mark_run_start()  { _root_exec "$container" sh -c 'wc -c < /var/log/squid/access
 # sha256 of stdin (hex only). Prefer coreutils sha256sum (Linux: Alpine, *-slim, most CI images have
 # no perl-based `shasum`); fall back to `shasum -a 256` (macOS ships that, not sha256sum). Both are
 # SHA-256, so the digest is identical whichever tool runs - a hard requirement for config_hash.
-_sha256() { if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi 2>/dev/null | awk '{print $1}'; }
+# Trailing `| awk` dropped: this is called once per record on the chain walk, so its fork showed up in
+# the profile. Shell-strip the filename field instead; output is byte-identical (first field + newline).
+# MUST return the hasher's status: the old body ended in a pipeline, so pipefail propagated a broken or
+# missing hasher and config_hash died. A body ending in printf always exits 0, which would let
+# config_hash return EMPTY and make every `[ "$label" = "$(config_hash)" ]` freshness gate compare
+# "" = "" - forever fresh, so a box with a stale firewall/seccomp would never rebuild. Fail closed.
+_sha256() {
+  local _h _rc
+  if command -v sha256sum >/dev/null 2>&1; then _h="$(sha256sum 2>/dev/null)"; else _h="$(shasum -a 256 2>/dev/null)"; fi
+  _rc=$?; [ "$_rc" = 0 ] || return "$_rc"
+  printf '%s\n' "${_h%% *}"
+}
 
 # Arm the at-exit egress receipt for a session: snapshot the proxy-log position so the receipt is
 # scoped to THIS run (not the box's whole boot), mark the run start so a later `learn` can scope to it,
@@ -839,9 +850,19 @@ _verify_chain_file() {
   while IFS= read -r line || [ -n "$line" ]; do
     [ -n "$line" ] || continue   # tolerate blank lines (don't hash "" into a bogus TAMPERED); count only real records
     n=$((n+1))
-    self="$(printf '%s' "$line"   | sed -n 's/.*,"self":"\([0-9a-f]*\)"}$/\1/p')"
-    payload="$(printf '%s' "$line" | sed 's/,"self":"[0-9a-f]*"}$/}/')"
-    pfield="$(printf '%s' "$line"  | sed -n 's/.*,"prev":"\([0-9a-f]*\)".*/\1/p')"
+    # Field extraction by shell expansion, NOT sed: three forks per record dominated this walk, and it
+    # is the one audit path that makes no engine call, so the forks WERE the runtime. Same outcomes -
+    # a line that does not match leaves self/pfield empty, which the checks below already treat as a
+    # break, so dropping sed's [0-9a-f] class costs nothing (a non-hex self simply fails the compare).
+    case "$line" in
+      *',"self":"'*'"}') self="${line##*,\"self\":\"}"; self="${self%\"\}}" ;;
+      *)                 self="" ;;
+    esac
+    payload="${line%,\"self\":\"*}}"
+    case "$line" in
+      *',"prev":"'*) pfield="${line##*,\"prev\":\"}"; pfield="${pfield%%\"*}" ;;
+      *)             pfield="" ;;
+    esac
     if [ -z "$self" ] || [ "$(printf '%s' "$payload" | _sha256)" != "$self" ]; then
       _VCF_RECORDS="$n"; _VCF_BROKEN="$n"; _VCF_REASON="self-hash"; return 1
     fi

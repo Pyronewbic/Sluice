@@ -167,9 +167,19 @@ _verify_chain_file() {
   while IFS= read -r line || [ -n "$line" ]; do
     [ -n "$line" ] || continue   # tolerate blank lines (don't hash "" into a bogus TAMPERED); count only real records
     n=$((n+1))
-    self="$(printf '%s' "$line"   | sed -n 's/.*,"self":"\([0-9a-f]*\)"}$/\1/p')"
-    payload="$(printf '%s' "$line" | sed 's/,"self":"[0-9a-f]*"}$/}/')"
-    pfield="$(printf '%s' "$line"  | sed -n 's/.*,"prev":"\([0-9a-f]*\)".*/\1/p')"
+    # Field extraction by shell expansion, NOT sed: three forks per record dominated this walk, and it
+    # is the one audit path that makes no engine call, so the forks WERE the runtime. Same outcomes -
+    # a line that does not match leaves self/pfield empty, which the checks below already treat as a
+    # break, so dropping sed's [0-9a-f] class costs nothing (a non-hex self simply fails the compare).
+    case "$line" in
+      *',"self":"'*'"}') self="${line##*,\"self\":\"}"; self="${self%\"\}}" ;;
+      *)                 self="" ;;
+    esac
+    payload="${line%,\"self\":\"*}}"
+    case "$line" in
+      *',"prev":"'*) pfield="${line##*,\"prev\":\"}"; pfield="${pfield%%\"*}" ;;
+      *)             pfield="" ;;
+    esac
     if [ -z "$self" ] || [ "$(printf '%s' "$payload" | _sha256)" != "$self" ]; then
       _VCF_RECORDS="$n"; _VCF_BROKEN="$n"; _VCF_REASON="self-hash"; return 1
     fi

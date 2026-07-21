@@ -30,3 +30,35 @@ setup() {
   printf '%s\n' "$body" | grep -qF '_chash="$(config_hash)"'                                  # hoisted onto its own assignment
   ! printf '%s\n' "$body" | grep -qF 'local args=(--label "sluice.confighash=$(config_hash)"' # not inline (masked) in the array
 }
+
+# The test above stubs config_hash, so it proves build() propagates a failure - it CANNOT prove
+# config_hash actually fails when the hasher does. That gap let a regression through: _sha256 was
+# rewritten to end in `printf` instead of a pipeline, so a broken/missing hasher returned 0 with EMPTY
+# output. config_hash then yielded "", and every freshness gate compares `[ "$label" = "$(config_hash)" ]`
+# -> "" = "" -> forever fresh, so a box with a stale firewall/seccomp would never rebuild. Stub the
+# HASHER (PATH-shadow both tools), never config_hash, and assert the failure actually propagates.
+@test "build-hash: _sha256 fails closed when the hasher is broken (not empty output, rc 0)" {
+  local shim; shim="$(mktemp -d)"
+  printf '#!/bin/sh\nexit 2\n' > "$shim/sha256sum"; printf '#!/bin/sh\nexit 2\n' > "$shim/shasum"
+  chmod +x "$shim/sha256sum" "$shim/shasum"
+  # _sha256 must be the LAST command so bash -c exits with its status (a trailing echo would mask it).
+  run env PATH="$shim:$PATH" bash -c '. "'"$SRC"'/00-prelude.sh"; . "'"$SRC"'/10-egress-helpers.sh"; printf x | _sha256'
+  assert_failure                                   # must NOT exit 0
+  assert_output ""                                 # and must not emit an empty "digest"
+  rm -rf "$shim"
+}
+
+@test "build-hash: a broken hasher kills config_hash under set -e, so no empty label is baked" {
+  local shim pdir core; shim="$(mktemp -d)"; pdir="$(mktemp -d)"; core="$(mktemp -d)"
+  printf '#!/bin/sh\nexit 2\n' > "$shim/sha256sum"; printf '#!/bin/sh\nexit 2\n' > "$shim/shasum"
+  chmod +x "$shim/sha256sum" "$shim/shasum"
+  : > "$pdir/sluice.config.sh"; : > "$core/Dockerfile"
+  run env PATH="$shim:$PATH" bash -euo pipefail -c '
+    . "'"$SRC"'/00-prelude.sh"; . "'"$SRC"'/10-egress-helpers.sh"
+    PROJECT_CONFIG="'"$pdir"'/sluice.config.sh"; CORE="'"$core"'"; PROJECT_DIR="'"$pdir"'"
+    _c="$(config_hash)"; printf "SURVIVED label=[%s]\n" "$_c"'
+  assert_failure                                   # config_hash must abort, not return ""
+  refute_output --partial "SURVIVED"
+  rm -rf "$shim" "$pdir" "$core"
+}
+
