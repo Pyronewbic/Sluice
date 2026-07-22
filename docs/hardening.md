@@ -112,7 +112,7 @@ Protects against: a runaway agent or build exhausting the host
 The default posture is default-drop with an allowlist; these knobs gate or bound what an allowed
 host can still carry ([residual risk](../THREAT_MODEL.md#residual-risk-one-line)).
 
-<p align="center"><img src="../assets/hard-cap-demo.gif" width="720" alt="with SLUICE_EGRESS_HARD_CAP_BYTES set just above the 1 MiB floor, a warm GET proves httpbin.org is genuinely allowlisted, then a 4 MiB upload to that same allowed host is killed mid-flight by the in-box xt_quota - curl aborts non-zero after ~2 MB and the egress receipt shows the bytes bounded near the cap, not the full 4 MiB: even a host you permit can't be used to launder unlimited volume out"></p>
+<p align="center"><img src="../assets/hard-cap-demo.gif" width="720" alt="with SLUICE_EGRESS_HARD_CAP_BYTES=1258291 a warm GET returns http 200, proving httpbin.org is genuinely allowlisted; an upload to that same allowed host then puts 1556480 bytes on the wire before it dies (curl exit 28); re-running the warm GET that had just succeeded now times out with http 000, showing egress is dead box-wide rather than one flow being slow - which is what confirms the cap fired; the receipt closes at 1 reached, 0 blocked, 1.4 MB"></p>
 
 - `SLUICE_EGRESS_MAX_BYTES` - a **detective** budget on bytes sent to reached hosts. Over the cap,
   `sluice egress` exits non-zero (a CI gate) and `sluice learn` warns. Bounds laundering volume.

@@ -15,7 +15,8 @@
 #
 # Reproduce (from the repo root; .demos/ is gitignored recording scratch):
 #   d=.demos/hard-cap; rm -rf "$d"; mkdir -p "$d" .demos/render
-#   cp assets/demos/hard-cap-demo.config.sh "$d/sluice.config.sh"
+#   cp assets/demos/hard-cap-demo.config.sh   "$d/sluice.config.sh"
+#   cp assets/demos/hard-cap-demo.workload.sh "$d/demo.sh"        # SLUICE_RUN_CMD='sh demo.sh'
 #   printf 'export PATH="$PWD/bin:$PATH"\nexport SLUICE_NO_BANNER=1 SLUICE_NO_UPDATE_CHECK=1 DOCKER_CLI_HINTS=false\nexport PS1="$ "\ncd .demos/hard-cap\n' > .demos/hard-cap-setup.sh
 #   ( cd "$d" && git init -q )                                                                 # own .git => no git-common-dir warning
 #   ( cd "$d" && PATH="$PWD/../../bin:$PATH" SLUICE_NO_BANNER=1 SLUICE_YES=1 sluice build )     # build off-camera
@@ -63,12 +64,15 @@ Enter
 Sleep 200ms
 Show
 
-# beat 2: run it. warm GET proves httpbin.org is reachable; the 4 MiB launder-out dies mid-upload -
-# curl exits non-zero with a truncated body. The at-exit receipt bounds httpbin.org's bytes.
+# beat 2: run it. The warm GET proves httpbin.org is genuinely reachable; the launder-out then runs
+# until the wire dies; and the RE-RUN of that same warm GET fails, which is what makes it conclusive
+# (curl's exit 28 is a timeout, and a slow upstream would produce that too - only a box-wide egress
+# death distinguishes the cap). The workload derives every verdict; nothing is narrated.
+# Timing: warm GET ~1s + upload to --max-time 15 + re-check to --max-time 8 => ~26s of run.
 Type "sluice"
 Sleep 600ms
 Enter
-Sleep 10500ms
+Sleep 30000ms
 
 Hide
 Type "clear"

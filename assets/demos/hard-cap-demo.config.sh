@@ -7,4 +7,4 @@
 SLUICE_DESC="hard-cap: preventive per-boot egress byte ceiling"
 SLUICE_ALLOW_DOMAINS="httpbin.org"
 SLUICE_EGRESS_HARD_CAP_BYTES=1258291
-SLUICE_RUN_CMD='printf ">> httpbin.org is allowlisted - the box really can reach it:\n"; curl -sS --max-time 8 -o /dev/null -w "   warm GET ok (http %{http_code})\n" https://httpbin.org/get; printf ">> now launder 4 MiB OUT to that same allowed host (the honest caveat):\n"; head -c 4194304 /dev/urandom | curl -sS --max-time 8 -o /dev/null -w "   uploaded %{size_upload} of 4194304 bytes before the wire went dead\n" -T - https://httpbin.org/anything; printf "   curl exit=%s (non-zero: killed mid-flight by the cap)\n" "$?"; sleep 1'
+SLUICE_RUN_CMD='sh demo.sh'
