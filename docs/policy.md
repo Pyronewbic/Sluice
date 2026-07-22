@@ -5,7 +5,18 @@ it can **add** and **deny** allowlist hosts and **refuse to run** when local con
 Inert unless a policy is configured. Signing is planned (v2.1); today integrity rests on the source
 (see [the managed-mode boundary](#managed-mode-the-honest-boundary)).
 
-<p align="center"><img src="../assets/policy-refusal.gif" width="680" alt="an org policy denies a host and sets deny-ip for the cloud-metadata IP 169.254.169.254/32; a developer's local config crosses both lines - it allowlists the denied host and opens a direct-IP supernet 169.254.169.0/24 that overlaps the denied /32 - so sluice refuses to run before any box is built, naming the overlapping deny-ip and exiting non-zero; swapping to a compliant config then runs clean under the same policy"></p>
+A local config that opens a direct-IP **supernet** containing a denied address is refused
+**pre-build** - no box is ever started - and the violated directive is named:
+
+```
+$ sluice run true            # local config sets SLUICE_ALLOW_IPS="169.254.169.0/24:80"
+[sluice] policy denies SLUICE_ALLOW_IPS '169.254.169.0/24:80' (overlaps deny-ip 169.254.169.254/32)
+$ echo $?
+1
+```
+
+The overlap check is what closes the bypass: `169.254.169.0/24` contains the denied
+cloud-metadata `/32`, so a base-address-only comparison would have let it through.
 
 ## Sources and precedence
 

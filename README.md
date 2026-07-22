@@ -86,8 +86,6 @@ detects the stack (**Node, Python, Deno, Ruby/Rails, Rust, Go, Java, PHP, .NET, 
 Dart** - anything else runs via the generic base), scaffolds the config, and on confirm
 builds + runs it.
 
-<p align="center"><img src="assets/onboard-demo.gif" width="680" alt="a config-less node project: bare sluice finds no config, detects the stack (node/npm), scaffolds sluice.config.sh and previews the knobs it chose (ports, run command, an empty allowlist pointing at sluice learn), asks [Y/n], then builds and runs it sandboxed - ending on the egress receipt with registry.npmjs.org reached in green and a first-run nudge to sluice learn and sluice lock"></p>
-
 When a run exits, sluice prints an **egress receipt**: the hosts it reached and any it
 tried but the firewall blocked. `sluice learn` then turns the blocked list into your
 allowlist with a **per-host review** - allow / skip / collapse to a `.domain` wildcard -
@@ -100,9 +98,8 @@ The firewall is not just a claim - an allowlisted host gets through, an exfil PO
 raw-IP bypass are blocked, and the run's audit log is **tamper-evident** (`egress --verify`
 flips from green to red if a record is altered).
 
-When a host you actually need is blocked, `sluice learn` allows it from the receipt, live:
-
-<p align="center"><img src="assets/learn-demo.gif" width="680" alt="a real run is blocked by the firewall: curl fails and the egress receipt shows pypi.org in red as 'blocked, not allowlisted'; sluice learn then reviews the host with an allow/skip/domain/quit prompt, 'a' allows it and the running box is reloaded live with no rebuild; the rerun returns HTTP 200 and the receipt flips to green 'reached pypi.org, all egress was allowlisted'"></p>
+When a host you actually need is blocked, `sluice learn` allows it from the receipt, live -
+see [examples/](examples/README.md) for the full walkthrough.
 
 ```bash
 sluice                 # build (if needed) + run SLUICE_RUN_CMD in the sandbox

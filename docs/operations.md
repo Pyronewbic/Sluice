@@ -59,8 +59,6 @@ sourced, `--all` is chain-integrity only: per-box egress knobs (host budgets, by
 it, and `-b <box>` is rejected for `--all` (it spans every box by definition). An unreadable log reports
 `verified:false, reason:"unreadable"` - never a silent pass.
 
-<p align="center"><img src="../assets/fleet-audit.gif" width="760" alt="with the container engine down, sluice egress --verify --all walks every box's append-only hash chain host-side and reports all 3 boxes intact; --verify --all --json emits the sluice.fleet-verify/v1 schema per box; --export --all concatenates every box's JSONL each record tagged with its box; then one dropped log line flips one box to TAMPERED with a non-zero exit - never a silent pass"></p>
-
 ## Machine-readable contracts
 
 Every JSON surface carries a `schema` id so a consumer (a dashboard, a CI gate, the future control plane)
