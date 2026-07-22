@@ -18,17 +18,13 @@ everyday task it stands in for. Bread-and-butter first; skim down for the securi
 
 The [overlay](overlay.config.sh) preset is the human gate in motion - the box edits a
 throwaway copy, you review with `sluice diff`, and only `sluice apply` (with a `[y/N]`
-confirm) touches your real files:
-
-<p align="center"><img src="../assets/overlay-demo.gif" width="720" alt="with SLUICE_WORKSPACE=overlay the box edits a throwaway copy: on the host notes.txt still reads 'original' and created.txt does not exist; sluice diff shows the box's changes (notes.txt modified, created.txt added); sluice apply prompts [y/N] and on 'y' writes them back - applied 1 added, 1 modified, 0 deleted"></p>
+confirm) touches your real files.
 
 ## Your own stack
 
 No preset needed: `sluice init` detects 11 stacks (list in the [main README](../README.md#use);
 anything else runs via the generic base) and scaffolds the config, then `sluice learn` (below)
 fills the egress allowlist from what the app actually tried to reach.
-
-<p align="center"><img src="../assets/onboard-demo.gif" width="680" alt="bare sluice in a config-less node project finds no config, detects the stack (node/npm), scaffolds sluice.config.sh and previews the knobs it chose, asks [Y/n], then builds and runs it sandboxed - ending on the egress receipt with registry.npmjs.org reached in green and a first-run nudge to sluice learn / sluice lock"></p>
 
 ## Stronger isolation (Linux)
 
@@ -58,8 +54,6 @@ $ sluice learn
 [sluice] wrote /home/you/my-app/sluice.config.sh
 [sluice] reloaded the running box (squid reconfigure) - live now, no rebuild.
 ```
-
-<p align="center"><img src="../assets/learn-demo.gif" width="680" alt="a real run is blocked by the firewall: curl fails and the egress receipt shows the host in red as 'blocked, not allowlisted'; sluice learn then reviews it with an allow/skip/domain/quit prompt, 'a' allows it and the running box is reloaded live with no rebuild; the rerun returns HTTP 200 and the receipt flips to green"></p>
 
 Picks are written to the config **and** hot-loaded into the running box - no rebuild.
 `[d]omain` allows the whole `.parent` wildcard, and when 2+ blocked hosts share a parent,
