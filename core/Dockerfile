@@ -13,11 +13,13 @@ ARG WOLFI_BASE=cgr.dev/chainguard/wolfi-base
 # ============ base: generic sluice core (published + cosign-signed) =====================
 FROM ${WOLFI_BASE} AS base
 
-# Add the full Wolfi OS repo (+ signing key) so SLUICE_EXTRA_PKGS can pull anything Wolfi ships.
-RUN apk add --no-cache curl \
-    && curl -fsSL https://packages.wolfi.dev/os/wolfi-signing.rsa.pub \
-        -o /etc/apk/keys/wolfi-signing.rsa.pub \
-    && echo "https://packages.wolfi.dev/os" >> /etc/apk/repositories
+# Add the full Wolfi OS repo so SLUICE_EXTRA_PKGS can pull anything Wolfi ships. The signing key is
+# VENDORED (sha256 pinned in test/verify-ci-supplychain-unit.bats), never fetched at build; if upstream
+# rotates it, apk fails closed until the copy is refreshed (re-fetch from packages.wolfi.dev AND the
+# wolfi-base image, require byte-identity, update file + test constant in one commit).
+COPY wolfi-signing.rsa.pub /etc/apk/keys/wolfi-signing.rsa.pub
+RUN grep -qxF "https://packages.wolfi.dev/os" /etc/apk/repositories \
+    || echo "https://packages.wolfi.dev/os" >> /etc/apk/repositories
 
 # --- Base tooling: node/git/gh + the firewall (iptables, squid, dnsmasq, openssl) ---------
 RUN apk add --no-cache \

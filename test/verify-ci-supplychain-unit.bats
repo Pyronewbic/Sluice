@@ -142,3 +142,26 @@ EOF
   b="$(git -C "$ROOT" archive --format=tar --prefix=s/ HEAD | shasum -a 256 | cut -d' ' -f1)"
   [ -n "$a" ] && [ "$a" = "$b" ]
 }
+
+# The Wolfi repo signing key is VENDORED (core/wolfi-signing.rsa.pub), never TOFU-fetched at build.
+# Refresh procedure lives in the Dockerfile comment: re-fetch from packages.wolfi.dev AND the
+# wolfi-base image, require byte-identity, update the file + the constant here in one commit.
+WOLFI_KEY_SHA256=f0031424cf46f7db780ce63a45f0fd6aa6f85f601e6bb3b7a91fe3d4d5b7d2cc
+
+_sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
+  else shasum -a 256 "$1" | awk '{print $1}'; fi
+}
+
+@test "supplychain: the vendored Wolfi signing key matches its pinned checksum" {
+  [ -f "$ROOT/core/wolfi-signing.rsa.pub" ]
+  local got; got="$(_sha256_file "$ROOT/core/wolfi-signing.rsa.pub")"
+  [ "$got" = "$WOLFI_KEY_SHA256" ] || { echo "vendored key checksum drift: $got"; return 1; }
+}
+
+@test "supplychain: the Dockerfile COPYs the vendored key and never fetches it" {
+  run grep -E '^COPY[[:space:]]+wolfi-signing\.rsa\.pub[[:space:]]+/etc/apk/keys/' "$ROOT/core/Dockerfile"
+  assert_success
+  run grep -E 'curl.*wolfi-signing' "$ROOT/core/Dockerfile"
+  assert_failure
+}

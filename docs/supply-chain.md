@@ -103,6 +103,9 @@ Note: `sluice doctor` reports lock drift but never gates on it (it always exits 
 
 A local build constructs everything from `cgr.dev/chainguard/wolfi-base`
 ([core/Dockerfile](../core/Dockerfile)) - an unpinned, rolling base, the same honesty as the lock.
+The Wolfi repo signing key is vendored and checksum-pinned in the repo
+([core/wolfi-signing.rsa.pub](../core/wolfi-signing.rsa.pub)), never fetched at build - a rotated
+upstream key fails the build closed until the vendored copy is deliberately refreshed.
 To build your project layer on the published, signed core instead:
 
 ```bash
