@@ -29,22 +29,32 @@ for f in "$CAND_SCAN" "$CUR_SCAN"; do
   jq -e '.matches | type == "array"' "$f" >/dev/null 2>&1 || fail4 "not a grype matches document: $f"
 done
 
-purls() { jq -r '.components[].purl // empty' "$1" | LC_ALL=C sort; }
+# The purl SET as a single-line JSON array (jq `unique` dedups; embedded newlines stay escaped as the
+# two chars backslash-n, so a forged multi-line purl can never equal two separate purls - a raw-line
+# `sort -u` would be blind to both).
+purls() { jq -c '[.components[].purl // empty] | unique' "$1"; }
 cand_purls="$(purls "$CAND_SBOM")" || fail4 "purl extraction failed: $CAND_SBOM"
 cur_purls="$(purls "$CUR_SBOM")"   || fail4 "purl extraction failed: $CUR_SBOM"
 # a hollow SBOM must fail, not SKIP-by-emptiness: two masked inventory reads compare equal forever.
-[ -n "$cand_purls" ] || fail4 "hollow SBOM (zero purls): $CAND_SBOM"
-[ -n "$cur_purls" ]  || fail4 "hollow SBOM (zero purls): $CUR_SBOM"
+[ "$cand_purls" != "[]" ] || fail4 "hollow SBOM (zero purls): $CAND_SBOM"
+[ "$cur_purls" != "[]" ]  || fail4 "hollow SBOM (zero purls): $CUR_SBOM"
 if [ "$cand_purls" = "$cur_purls" ]; then
   echo "[scan-gate] SKIP: candidate inventory is purl-identical to the published base" >&2
   exit 2
 fi
 
-# findings at exactly this severity (case-insensitive; absent severity counts as unknown)
+# findings at exactly this severity. Two fail-open traps closed: (1) bind the "unknown" fallback
+# PER ELEMENT - a top-level `.severity // "unknown"` on an EMPTY match stream yields one phantom
+# "unknown" (jq's // treats empty as absent), miscounting a clean scan as one finding; (2) fold any
+# present-but-unrecognized string ("", "Moderate", a future grype vocab) into "unknown", so an
+# off-list severity can never be invisible to every tier and let a worse candidate through.
 count_sev() {
   local n
   n="$(jq -r --arg s "$2" \
-    '[.matches[].vulnerability.severity // "unknown" | ascii_downcase | select(. == $s)] | length' \
+    '[ .matches[]
+       | ( .vulnerability.severity // "unknown" | ascii_downcase )
+       | ( if IN("critical","high","medium","low","negligible","unknown") then . else "unknown" end )
+       | select(. == $s) ] | length' \
     "$1" 2>/dev/null)" || return 1
   case "$n" in '' | *[!0-9]*) return 1 ;; esac
   printf '%s' "$n"

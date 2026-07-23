@@ -1,0 +1,1 @@
+{"metadata": {"component": {"name": "sluice-base:smoke"}}, "components": [{"purl": "pkg:apk/wolfi/bash@5.2-r1\npkg:apk/wolfi/curl@8.9.0-r0"}]}
