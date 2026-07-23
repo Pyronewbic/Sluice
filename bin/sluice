@@ -394,10 +394,13 @@ egress_rows() {
       if (status ~ /NONE_NONE/ || status ~ /TCP_DENIED/ || status ~ /\/000/) deny[host]++; else succ[host]++;
     }
     END {
+      # bytes use %.0f, not %d: mawk casts %d to int32 and truncates a byte total past 2^31 to
+      # 2147483647 (~2 GB), so a multi-GB transfer both mis-rendered and could slip under a >2 GiB
+      # high-volume flag; %.0f formats the double exactly to 2^53.
       for (h in seen) {
         if (h ~ /^example\.(com|net|org)$/) continue;
-        if (succ[h] > 0)        printf "reached\t%s\t%d\t%d\n", h, succ[h], bytes[h];
-        else if (!allowed(h))   printf "blocked\t%s\t%d\t%d\n", h, deny[h], bytes[h];
+        if (succ[h] > 0)        printf "reached\t%s\t%d\t%.0f\n", h, succ[h], bytes[h];
+        else if (!allowed(h))   printf "blocked\t%s\t%d\t%.0f\n", h, deny[h], bytes[h];
       }
     }'
 }
@@ -461,7 +464,7 @@ egress_tx_by_host() {
       if (host !~ /^\.?[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$/) next;   # drop non-hostname chars (SNI/Host can carry $(),",ESC)
       tot[host] += tx;
     }
-    END { for (h in tot) printf "%s\t%d\n", h, tot[h] }'
+    END { for (h in tot) printf "%s\t%.0f\n", h, tot[h] }'   # %.0f: mawk %d truncates bytes past 2^31
 }
 
 # Resolve a host to its SLUICE_EGRESS_HOST_BUDGETS cap in bytes (empty = no budget for this host).
@@ -499,7 +502,7 @@ allowips_rows() {
       dst=$9; port="";
       for (i=10;i<=NF;i++) if ($i ~ /^dpt:/) port=substr($i,5);
       entry=(port=="") ? dst : dst":"port;
-      printf "%s\t%d\t%d\n", entry, $1, $2;
+      printf "%s\t%d\t%.0f\n", entry, $1, $2;   # bytes as %.0f: mawk %d truncates past 2^31
     }'
 }
 
@@ -510,7 +513,7 @@ fw_dropped() {
     /^Chain OUTPUT / {
       p=0; b=0;
       for (i=1;i<=NF;i++) { if ($i ~ /^packets,?$/) p=$(i-1); if ($i ~ /^bytes\)?$/) b=$(i-1); }
-      printf "%d\t%d\n", p, b; exit;
+      printf "%d\t%.0f\n", p, b; exit;   # bytes as %.0f: mawk %d truncates past 2^31
     }'
 }
 

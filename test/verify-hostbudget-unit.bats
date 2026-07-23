@@ -199,3 +199,14 @@ _fixture_log() {
   assert_output --partial "5.10 GB"
   refute_output --partial "5222.4 MB"
 }
+
+# The row's byte total also feeds the high-volume flag. On mawk %d truncated a 5.10 GB transfer to
+# ~2.0 GB, sliding it UNDER a 3 GiB threshold so the exfil never flagged - a security dodge, not just
+# a cosmetic render. (Only fails on truncating mawk; the VM lane is the one that catches it.)
+@test "high-volume: a >2GiB transfer over a >2GiB threshold IS flagged (no int32 truncation dodge)" {
+  _squid_log() { printf '1700000000.000 1 10.0.0.2 TCP_TUNNEL/200 210 CONNECT bulk.example.com:443 - HIER_DIRECT/1.2.3.4 - ssl_sni=bulk.example.com tx=5476083302 rx=0\n'; }
+  SLUICE_EGRESS_FLAG_BYTES=3221225472    # 3 GiB: above the truncated 2.0 GB, below the real 5.10 GB
+  run cmd_egress
+  assert_success
+  assert_output --partial "(high volume)"
+}
