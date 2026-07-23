@@ -46,7 +46,8 @@ ENV PATH=${PATH}:/home/sluice/.npm-global/bin
 RUN { getent group squid  >/dev/null 2>&1 || groupadd -r squid; } \
     && { getent passwd squid >/dev/null 2>&1 || useradd -r -g squid -d /var/cache/squid -s /bin/false squid; } \
     && mkdir -p /etc/squid/ssl /var/log/squid /var/cache/squid /run/squid \
-    && chown -R squid:squid /etc/squid/ssl /var/log/squid /var/cache/squid /run/squid
+    && chown -R squid:squid /etc/squid/ssl /var/log/squid /var/cache/squid /run/squid \
+    && apk del shadow
 COPY squid.conf /etc/squid.conf
 COPY doh-endpoints.txt /etc/squid/doh-endpoints.txt
 
@@ -60,10 +61,10 @@ COPY dns-allow.sh     /usr/local/bin/sluice-dns-allow
 COPY replay.sh        /usr/local/bin/sluice-replay
 RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh /usr/local/bin/smoke-test.sh /usr/local/bin/sluice-dns-allow /usr/local/bin/sluice-replay
 
-# Defense in depth: strip setuid/setgid from EVERY base binary. shadow ships chfn/chsh/passwd/gpasswd/
-# chage/expiry setuid-root, but the box runs as root at boot and execs sessions as uid 1000, which
-# never needs them. So uid 1000 has no setuid-root primitive even independent of no-new-privileges.
-# (shadow stays - useradd needs it at build - only its setuid bits go.) The structure test asserts none remain.
+# Defense in depth: strip setuid/setgid from EVERY base binary. shadow (build-time only, deleted after
+# its last useradd above) shipped the classic setuid set; other packages can still ship bits, so the
+# sweep stays. uid 1000 has no setuid-root primitive even independent of no-new-privileges.
+# The structure test asserts none remain, and that shadow's tools are gone from the shipped image.
 RUN find / -xdev -type f \( -perm -4000 -o -perm -2000 \) -exec chmod -s {} + 2>/dev/null || true
 
 # Starts as root (entrypoint configures iptables, then idles); sessions exec in as sluice.
