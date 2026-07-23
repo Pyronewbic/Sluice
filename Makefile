@@ -19,6 +19,7 @@ UNIT_BATS     := test/init-detection.bats test/verify-init-quoting.bats test/ver
                  test/verify-seccomp-leak-unit.bats test/verify-setf-noglob-unit.bats \
                  test/verify-egress-allowlist-failopen.bats test/verify-ls-egress-unit.bats \
                  test/verify-lane-membership-unit.bats test/verify-ci-supplychain-unit.bats \
+                 test/verify-scan-gate-unit.bats \
                  test/verify-fleet-audit-unit.bats test/verify-hostbudget-unit.bats \
                  test/verify-pin-unit.bats test/verify-hardcap-unit.bats \
                  test/verify-allowips-rows-unit.bats test/verify-dnsaudit-unit.bats \
