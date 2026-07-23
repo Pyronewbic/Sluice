@@ -121,10 +121,12 @@ The guarantees below hold only while these do:
   `sluice doctor` warns when secret-looking files (`.env*`, `*.pem`, `*key*.json`, ...) are present
   in the mount and unmasked, and when a masked file is git-tracked.
 - **Host privilege escalation** -> sessions run non-root (uid 1000) with **no effective
-  capabilities**; no Docker socket, no Docker-in-Docker, no in-box `sudo`. The base image is built
-  with **every setuid/setgid bit stripped** (the shadow package's `passwd`/`chsh`/... are de-setuid
-  at build), so uid 1000 has no setuid-root primitive *even independent of* `no-new-privileges` -
-  which is also set, blocking any setuid path to root as a second layer. The container
+  capabilities**; no Docker socket, no Docker-in-Docker, no in-box `sudo`. The image ships **no
+  setuid/setgid binaries**: the `shadow` package (`passwd`/`chsh`/... are setuid-root) is removed
+  after its build-time `useradd`, and both the base and project stages sweep any remaining bit, so a
+  re-added package (`SLUICE_EXTRA_PKGS="shadow"`) or a pin replay cannot reintroduce one. uid 1000 has
+  no setuid-root primitive *even independent of* `no-new-privileges` - which is also set, blocking any
+  setuid path to root as a second layer. The container
   drops ALL capabilities and adds back only what the root entrypoint needs at boot (chown the mount,
   drop squid to its uid, run the firewall, bind DNS, reload squid). So even a compromised in-box
   process has no route to the capabilities or to root. `--pids-limit` (`SLUICE_PIDS_LIMIT`) and optional `--memory` (`SLUICE_MEMORY`) keep a runaway
