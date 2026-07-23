@@ -146,7 +146,7 @@ EOF
 # The Wolfi repo signing key is VENDORED (core/wolfi-signing.rsa.pub), never TOFU-fetched at build.
 # Refresh procedure lives in the Dockerfile comment: re-fetch from packages.wolfi.dev AND the
 # wolfi-base image, require byte-identity, update the file + the constant here in one commit.
-WOLFI_KEY_SHA256=f0031424cf46f7db780ce63a45f0fd6aa6f85f601e6bb3b7a91fe3d4d5b7d2cc  # gitleaks:allow - sha256 of a PUBLIC signing key, not a secret
+WOLFI_KEY_SHA256=f0031424cf46f7db780ce63a45f0fd6aa6f85f601e6bb3b7a91fe3d4d5b7d2cc
 
 _sha256_file() {
   if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'

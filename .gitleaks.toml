@@ -1,0 +1,13 @@
+# Keep the full default rule set; allowlist the public checksum pin the generic-api-key rule
+# mis-flags. WOLFI_KEY_SHA256 is the sha256 of the PUBLIC Wolfi signing key (core/wolfi-signing.rsa.pub),
+# committed in a CI test as a tamper pin - a hash of a public key, not a secret. Allowlisting by line
+# pattern (not the literal digest) so a key refresh needs no change here.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "public-key/binary checksum pins in CI tests are not secrets"
+regexTarget = "line"
+regexes = [
+  '''WOLFI_KEY_SHA256=[0-9a-f]{64}''',
+]
