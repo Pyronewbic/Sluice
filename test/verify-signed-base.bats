@@ -29,6 +29,9 @@ _build_with_stubs() {
   run bash -c "cd '$W/p' && PATH='$W/bin:$PATH' SLUICE_ENGINE=docker '$SLUICE' build 2>&1"
 }
 
+# Isolate from an ambient SLUICE_REQUIRE_SIGNED in the invoking shell: a leaked =1 would flip the
+# default-posture tests (a warn becomes a die). Tests that need it set it in their own body/config.
+setup() { export SLUICE_REQUIRE_SIGNED=; }
 teardown() { rm -rf "$W"; }
 
 @test "signed-base: REQUIRE_SIGNED=1 makes a failed cosign verify fatal" {
@@ -39,8 +42,7 @@ teardown() { rm -rf "$W"; }
 }
 
 @test "signed-base: a FAILED verify dies by default - fail closed, no knob needed" {
-  # cosign is present and says the official base does not verify: that is a strong tamper signal,
-  # not a soft condition. The old warn-and-continue default was fail-open.
+  # cosign present + official base fails to verify = tamper; the old default warn-and-continued (open).
   _build_with_stubs 'SLUICE_REQUIRE_SIGNED=' 1
   assert_failure
   assert_output --partial "cosign verification failed"
@@ -48,8 +50,7 @@ teardown() { rm -rf "$W"; }
 }
 
 @test "signed-base: cosign's failure reason reaches the user (offline != tamper), no bypass advice" {
-  # A transient outage and a real mismatch both exit nonzero; the die must surface cosign's own words
-  # so they are distinguishable, and must not steer the user to disable verification.
+  # an outage and a real mismatch both exit nonzero: the die must surface cosign's words, not bury them.
   W="$(mktemp -d)"; mkdir -p "$W/bin" "$W/p"
   _docker_stub > "$W/bin/docker"
   cat > "$W/bin/cosign" <<'EOF'
@@ -124,14 +125,24 @@ EOF
   assert_output --partial "WARNING"              # the silent fallback was a quiet TOCTOU re-opening
 }
 
+@test "signed-base: the fallback warning stays on stderr - STDOUT is exactly the ref" {
+  # the caller captures base_dig="$(resolve_base_digest ...)"; a warning leaking to stdout would be
+  # baked into --build-arg BASE_IMAGE. Capture stdout ALONE and require it is precisely the ref.
+  eval "$(sed -n '/^resolve_base_digest()/,/^}/p' "$ROOT/bin/sluice")"
+  E_YEL=""; E_RST=""; die() { echo "die: $*" >&2; exit 9; }
+  ENGINE=eng; eng() { return 0; }
+  local out; out="$(resolve_base_digest "local/img:tag" 2>/dev/null)"
+  [ "$out" = "local/img:tag" ]
+}
+
 @test "signed-base: digest fallback is FATAL under REQUIRE_SIGNED=1 (the pin is part of the guarantee)" {
   eval "$(sed -n '/^resolve_base_digest()/,/^}/p' "$ROOT/bin/sluice")"
   E_YEL=""; E_RST=""; die() { echo "die: $*" >&2; exit 9; }
   ENGINE=eng; eng() { return 0; }
   SLUICE_REQUIRE_SIGNED=1
   run resolve_base_digest "ghcr.io/x/sluice-base:latest"
-  assert_failure
-  assert_output --partial "digest"
+  assert_failure 9                                       # the die's exit, not a vacuous 127
+  assert_output --partial "cannot be resolved to a @sha256 digest"
 }
 
 
