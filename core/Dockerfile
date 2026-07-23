@@ -125,3 +125,9 @@ WORKDIR /home/sluice
 RUN if [ "${SLUICE_PIN}" = 1 ]; then SLUICE_PIN=1 /usr/local/bin/sluice-replay user; fi
 USER root
 WORKDIR /
+
+# Mirror the base stage's setuid strip as the LAST root layer: SLUICE_EXTRA_PKGS (e.g. the documented
+# shadow re-add for useradd), SLUICE_SETUP_ROOT_CMDS, or a pin replay can each install a package that
+# ships setuid-root bits INTO this stage, which the base stage's earlier sweep never saw. Without this,
+# the shipped project image silently loses the no-setuid guarantee while every base-stage gate stays green.
+RUN find / -xdev -type f \( -perm -4000 -o -perm -2000 \) -exec chmod -s {} + 2>/dev/null || true
