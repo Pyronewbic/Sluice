@@ -195,7 +195,8 @@ weaknesses** in [`THREAT_MODEL.md`](THREAT_MODEL.md):
   plus detective per-host budgets and an opt-in DNS-tunnel audit - see [docs/hardening.md](docs/hardening.md).
 - **Supply chain**: the sandbox builds on Chainguard's `wolfi-base`; an opt-in
   cosign-signed, multi-arch (amd64 + arm64) base image with an SBOM attestation replaces
-  the local core build (`SLUICE_BASE_IMAGE`, enforced by `SLUICE_REQUIRE_SIGNED=1`),
+  the local core build (`SLUICE_BASE_IMAGE`; a failed signature refuses the build, and
+  `SLUICE_REQUIRE_SIGNED=1` tightens the rest),
   `sluice lock` records what's inside, and `sluice lock --pin` + `SLUICE_PIN=1` builds a
   **verified** pinned replay - see [docs/supply-chain.md](docs/supply-chain.md).
 - **Centralized policy**: an org can enforce a deny-capable egress policy (deny hosts, refuse a

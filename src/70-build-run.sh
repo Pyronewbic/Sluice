@@ -27,8 +27,9 @@ verify_base() {
       echo "[sluice] ${E_YEL}note${E_RST}: $img is signed but has no verifiable SBOM attestation (continuing)" >&2
     fi
   else
-    [ "${SLUICE_REQUIRE_SIGNED:-}" = 1 ] && die "cosign verification failed for $img"
-    echo "[sluice] ${E_YEL}WARNING:${E_RST} could not verify $img (continuing; SLUICE_REQUIRE_SIGNED=1 to enforce)" >&2
+    # Fail CLOSED: cosign is present and the official base does not verify - a tamper signal, not a
+    # soft condition. (Missing cosign above stays a warning; a mirror ref skips verification entirely.)
+    die "cosign verification failed for $img - refusing to build on it (use a mirror ref to skip verification, or fix the ref)"
   fi
 }
 
@@ -38,14 +39,22 @@ config_stack() { grep -oE 'detected: [^)]+' "$PROJECT_CONFIG" 2>/dev/null | head
 
 # Resolve a base ref to its content digest (repo@sha256:...) so verify + the Dockerfile FROM pin the
 # SAME bytes: a same-tag republish (or a MITM) between the verify pull and the FROM pull can't slip an
-# unverified base in. An already-pinned ref passes through; a local-only image with no RepoDigest falls
-# back to the tag (verify still runs on it).
+# unverified base in. An already-pinned ref passes through. A ref with no RepoDigest falls back to the
+# tag LOUDLY (the TOCTOU pin is lost) - and fatally under SLUICE_REQUIRE_SIGNED=1, where it is part of
+# the guarantee.
 resolve_base_digest() {
   local ref="$1" d
   case "$ref" in *@sha256:*) printf '%s' "$ref"; return 0 ;; esac
   "$ENGINE" pull "$ref" >/dev/null 2>&1 || true
   d="$("$ENGINE" image inspect "$ref" --format '{{ if .RepoDigests }}{{ index .RepoDigests 0 }}{{ end }}' 2>/dev/null || true)"
-  case "$d" in *@sha256:*) printf '%s' "$d" ;; *) printf '%s' "$ref" ;; esac
+  case "$d" in
+    *@sha256:*) printf '%s' "$d" ;;
+    *) if [ "${SLUICE_REQUIRE_SIGNED:-}" = 1 ]; then
+         die "SLUICE_REQUIRE_SIGNED=1 but '$ref' cannot be resolved to a @sha256 digest - the verify/build pin would be lost"
+       fi
+       echo "[sluice] ${E_YEL}WARNING:${E_RST} could not resolve '$ref' to a digest - building from the mutable tag (verify/build TOCTOU window)" >&2
+       printf '%s' "$ref" ;;
+  esac
 }
 
 build() {

@@ -6,9 +6,23 @@ load test_helper/common
 
 # Write a project whose base is a ghcr sluice-base ref (the only refs verify_base acts on) and build
 # it behind stub docker+cosign. $1 = extra config lines; $2 = cosign stub exit code.
+# The docker stub answers `image inspect` with a RepoDigest (resolve_base_digest requires one under
+# REQUIRE_SIGNED=1, and dying there would mask the verify-layer contract these tests pin) and fails
+# everything else, so "image build failed" still marks the flow reaching the build.
+_docker_stub() {
+  cat <<'EOF'
+#!/bin/sh
+if [ "$1" = image ] && [ "$2" = inspect ]; then
+  ref="${3%%@*}"
+  printf '%s@sha256:0000000000000000000000000000000000000000000000000000000000000000\n' "${ref%:*}"
+  exit 0
+fi
+exit 1
+EOF
+}
 _build_with_stubs() {
   W="$(mktemp -d)"; mkdir -p "$W/bin" "$W/p"
-  printf '#!/bin/sh\nexit 1\n' > "$W/bin/docker"
+  _docker_stub > "$W/bin/docker"
   printf '#!/bin/sh\nexit %s\n' "$2" > "$W/bin/cosign"
   chmod +x "$W/bin/docker" "$W/bin/cosign"
   { printf 'SLUICE_NAME="sb"\nSLUICE_BASE_IMAGE="ghcr.io/pyronewbic/sluice-base:test"\nSLUICE_RUN_CMD="true"\n'; printf '%s\n' "$1"; } > "$W/p/sluice.config.sh"
@@ -24,17 +38,36 @@ teardown() { rm -rf "$W"; }
   refute_output --partial "image build failed"   # died on the signature, never reached the build
 }
 
-@test "signed-base: without REQUIRE_SIGNED a failed verify only warns (build proceeds)" {
+@test "signed-base: a FAILED verify dies by default - fail closed, no knob needed" {
+  # cosign is present and says the official base does not verify: that is a strong tamper signal,
+  # not a soft condition. The old warn-and-continue default was fail-open.
   _build_with_stubs 'SLUICE_REQUIRE_SIGNED=' 1
-  assert_output --partial "could not verify"     # the warn path
-  assert_output --partial "image build failed"   # proceeded to the (stub) build, which then fails
+  assert_failure
+  assert_output --partial "cosign verification failed"
+  refute_output --partial "image build failed"   # died on the signature, never reached the build
+}
+
+@test "signed-base: a GOOD signature proceeds to the build (positive control for the gate)" {
+  _build_with_stubs '' 0                         # cosign exits 0: signature + attestation verify
+  assert_output --partial "cosign-verified"
+  assert_output --partial "image build failed"   # reached the (stub) build - the gate did not overblock
+}
+
+@test "signed-base: absent cosign warns and proceeds (missing tool is not a tamper signal)" {
+  W="$(mktemp -d)"; mkdir -p "$W/bin" "$W/p"
+  printf '#!/bin/sh\nexit 1\n' > "$W/bin/docker"; chmod +x "$W/bin/docker"
+  printf 'SLUICE_NAME="sb"\nSLUICE_BASE_IMAGE="ghcr.io/pyronewbic/sluice-base:test"\nSLUICE_RUN_CMD="true"\n' > "$W/p/sluice.config.sh"
+  PATH="$W/bin:/usr/bin:/bin" command -v cosign >/dev/null 2>&1 && skip "cosign resolvable even on the restricted PATH"
+  run bash -c "cd '$W/p' && PATH='$W/bin:/usr/bin:/bin' SLUICE_ENGINE=docker '$SLUICE' build 2>&1"
+  assert_output --partial "cosign not installed - skipping"
+  assert_output --partial "image build failed"   # proceeded (warn, not die)
 }
 
 @test "signed-base: REQUIRE_SIGNED=1 with a non-official (mirror) base REFUSES (no silent no-op)" {
   # An off-pattern ref (ECR/Harbor mirror) carries no signature sluice can verify; REQUIRE_SIGNED must
   # die, not pass verification by skipping it. cosign stub would succeed - the ref, not cosign, gates.
   W="$(mktemp -d)"; mkdir -p "$W/bin" "$W/p"
-  printf '#!/bin/sh\nexit 1\n' > "$W/bin/docker"
+  _docker_stub > "$W/bin/docker"
   printf '#!/bin/sh\nexit 0\n' > "$W/bin/cosign"
   chmod +x "$W/bin/docker" "$W/bin/cosign"
   printf 'SLUICE_NAME="sb"\nSLUICE_BASE_IMAGE="registry.example.com/mirror/sluice-base:1"\nSLUICE_REQUIRE_SIGNED=1\nSLUICE_RUN_CMD="true"\n' > "$W/p/sluice.config.sh"
@@ -60,11 +93,24 @@ teardown() { rm -rf "$W"; }
   assert_output "ghcr.io/x/sluice-base@sha256:deadbeef"
 }
 
-@test "signed-base: resolve_base_digest falls back to the tag when the image has no RepoDigest" {
+@test "signed-base: resolve_base_digest falls back to the tag LOUDLY (the lost pin is announced)" {
   eval "$(sed -n '/^resolve_base_digest()/,/^}/p' "$ROOT/bin/sluice")"
+  E_YEL=""; E_RST=""; die() { echo "die: $*" >&2; exit 9; }
   ENGINE=eng; eng() { return 0; }   # inspect yields nothing (local-only image)
   run resolve_base_digest "local/img:tag"
-  assert_output "local/img:tag"
+  assert_success
+  assert_output --partial "local/img:tag"
+  assert_output --partial "WARNING"              # the silent fallback was a quiet TOCTOU re-opening
+}
+
+@test "signed-base: digest fallback is FATAL under REQUIRE_SIGNED=1 (the pin is part of the guarantee)" {
+  eval "$(sed -n '/^resolve_base_digest()/,/^}/p' "$ROOT/bin/sluice")"
+  E_YEL=""; E_RST=""; die() { echo "die: $*" >&2; exit 9; }
+  ENGINE=eng; eng() { return 0; }
+  SLUICE_REQUIRE_SIGNED=1
+  run resolve_base_digest "ghcr.io/x/sluice-base:latest"
+  assert_failure
+  assert_output --partial "digest"
 }
 
 

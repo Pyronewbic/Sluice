@@ -46,7 +46,8 @@ SLUICE_PREFETCH_FILES=""
 SLUICE_PREFETCH_CMD=""
 
 # Build FROM a prebuilt, cosign-signed base instead of rebuilding core/ locally (faster;
-# auditable; SLUICE_REQUIRE_SIGNED=1 makes a missing/failed signature fatal). Unset = build from core/.
+# auditable; a FAILED signature refuses the build, and SLUICE_REQUIRE_SIGNED=1 also makes a
+# missing cosign/attestation fatal). Unset = build from core/.
 # e.g. "ghcr.io/pyronewbic/sluice-base:0.2.1"
 SLUICE_BASE_IMAGE=""
 

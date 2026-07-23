@@ -440,5 +440,6 @@ validate_bump_controls() {
 case "${1:-run-default}" in run-default|run|shell|build|rebuild|update|diff) validate_bump_controls ;; esac
 
 # build: assemble a temp context (core + this project's config) and build
-# Verify a published base image's cosign signature (keyless/OIDC). Soft by default: warn if
-# cosign is absent or the image is unsigned; SLUICE_REQUIRE_SIGNED=1 makes either case fatal.
+# Verify a published base image's cosign signature (keyless/OIDC). A FAILED verification is fatal by
+# default (fail closed); only a missing cosign is a warning. SLUICE_REQUIRE_SIGNED=1 additionally
+# requires cosign, the SBOM attestation, a digest-resolvable ref, and an official base.
