@@ -117,11 +117,18 @@ For a reproducible pin, point `SLUICE_BASE_IMAGE` at an immutable ref instead of
 tag (`sluice-base:v0.10.0`, pushed alongside `:latest` on every release) or a `@sha256:...` digest.
 
 The published base is multi-arch (`linux/amd64` + `linux/arm64`), built from the Dockerfile's
-`base` stage on every version tag, cosign-signed keyless via GitHub OIDC, and carries a CycloneDX
-SBOM attestation ([publish-base.yml](../.github/workflows/publish-base.yml)). Before pushing, CI
-structure-tests the base invariants (uid 1000, no sudo, the firewall packages, no baked key) on the
-**amd64** build; arm64 shares the same Dockerfile (the invariants are arch-invariant), and the
-CycloneDX SBOM is derived from the amd64 image.
+`base` stage, cosign-signed keyless via GitHub OIDC, and carries a CycloneDX SBOM attestation
+([publish-base.yml](../.github/workflows/publish-base.yml)). Before pushing, CI structure-tests
+the base invariants (uid 1000, no sudo, the firewall packages, no baked key) on **both** arches
+(arm64 emulated under qemu); the CycloneDX SBOM is derived from the amd64 image (the package set
+is arch-invariant).
+
+`:latest` does not fossilize between releases: a **weekly gated refresh** rebuilds it from rolling
+Wolfi and republishes only when the rebuild is inventory-different and scans **no worse than the
+published `:latest` at every severity tier** (identical inventory skips the push; a worse or
+unevaluable scan fails the job - the gate fails closed). Version tags are built only at release
+and stay frozen; a release moves `:latest` unconditionally. Pin a version tag or digest if you
+want a base that never moves; ride `:latest` for one that picks up upstream CVE fixes weekly.
 
 When `SLUICE_BASE_IMAGE` points at a `sluice-base` ref and cosign is installed, the launcher
 verifies the signature automatically - a FAILED verification refuses the build (fail closed);
