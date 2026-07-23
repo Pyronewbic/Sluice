@@ -21,6 +21,10 @@ command -v jq >/dev/null 2>&1 || fail4 "jq not found - cannot evaluate"
 CAND_SBOM=$1 CUR_SBOM=$2 CAND_SCAN=$3 CUR_SCAN=$4
 for f in "$CAND_SBOM" "$CUR_SBOM" "$CAND_SCAN" "$CUR_SCAN"; do
   [ -f "$f" ] || fail4 "missing input: $f"
+  # Require EXACTLY ONE JSON document: a multi-doc stream ('{...}\n{...}') otherwise slips the checks
+  # below (jq -c runs per-doc, jq -e reflects only the last), smuggling a zero-purl SBOM past the
+  # hollow guard as the two-line "[]\n[]". jq -s errors on invalid JSON too, so this gates both.
+  [ "$(jq -s 'length' "$f" 2>/dev/null)" = 1 ] || fail4 "not a single JSON document: $f"
 done
 for f in "$CAND_SBOM" "$CUR_SBOM"; do
   jq -e '.components | type == "array"' "$f" >/dev/null 2>&1 || fail4 "not a CycloneDX components document: $f"

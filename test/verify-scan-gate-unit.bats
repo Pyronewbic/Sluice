@@ -96,3 +96,17 @@ setup() {
   run "$GATE" "$FIX/cdx-newline.json" "$FIX/cdx-a-ref1.json" "$FIX/grype-clean.json" "$FIX/grype-clean.json"
   [ "$status" -ne 2 ]
 }
+
+# --- attack-changes round 2: multi-document JSON smuggling ---
+
+@test "scan-gate: a multi-document SBOM stream fails closed (4), not smuggled past the hollow guard" {
+  # '{"components":[]}\n{"components":[]}' made purls() emit "[]\n[]" (two lines) != "[]", so the
+  # zero-purl SBOM sailed past the hollow guard and PUSHed.
+  run "$GATE" "$FIX/cdx-multidoc-hollow.json" "$FIX/cdx-a-ref1.json" "$FIX/grype-clean.json" "$FIX/grype-clean.json"
+  [ "$status" -eq 4 ]
+}
+
+@test "scan-gate: a multi-document grype stream fails closed (4)" {
+  run "$GATE" "$FIX/cdx-b.json" "$FIX/cdx-a-ref1.json" "$FIX/grype-multidoc.json" "$FIX/grype-clean.json"
+  [ "$status" -eq 4 ]
+}
