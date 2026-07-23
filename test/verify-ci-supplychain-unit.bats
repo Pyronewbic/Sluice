@@ -166,6 +166,27 @@ _sha256_file() {
   assert_failure
 }
 
+# The weekly refresh may only move :latest, behind the scan gate, on the shared concurrency group -
+# and grype only via the pinned installer. Structural, in the nightly guard's style: a future edit
+# can't quietly widen the refresh to version tags or bypass the gate without failing here.
+@test "supplychain: publish-base refresh mode is gated, scheduled, serialized, and :latest-only" {
+  local wf="$ROOT/.github/workflows/publish-base.yml"
+  run grep -F 'raw.githubusercontent.com/anchore' "$wf"
+  assert_failure
+  run grep -F 'scripts/install-grype.sh' "$wf"
+  assert_success
+  run grep -F 'scripts/base-scan-gate.sh' "$wf"
+  assert_success
+  run grep -E 'cron:' "$wf"
+  assert_success
+  run grep -F 'group: publish-base' "$wf"
+  assert_success
+  run grep -F 'TAGS=(-t "${IMAGE}:latest")' "$wf"
+  assert_success   # refresh pushes ONLY :latest; version tags stay frozen
+  run grep -F 'TAGS=(-t "${IMAGE}:${REF_NAME}" -t "${IMAGE}:latest")' "$wf"
+  assert_success   # a release moves both, ungated (the human override)
+}
+
 # The BASE cosign identity regexp appears in the launcher (x2, via bin/sluice), the publish workflow
 # (x2) and two docs (supply-chain x2, SECURITY x1). All 7 must be BYTE-IDENTICAL - a drifted copy
 # verifies against a different signer set - and must accept BOTH legitimate signing refs: a v tag

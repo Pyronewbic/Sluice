@@ -1,20 +1,35 @@
 name: publish base image
 
-# Tag a version (git tag v0.2.1 && git push --tags) -> build the generic `base` stage of
-# core/Dockerfile for linux/amd64 + arm64, push it to ghcr.io/<owner>/sluice-base, and
-# cosign-sign it (keyless, via GitHub OIDC - no key secrets to manage). bin/sluice can then
-# build a project layer FROM the signed base (SLUICE_BASE_IMAGE) instead of rebuilding the core.
-# See ROADMAP #5. NOTE: after the first publish, set the GHCR package to Public (one-time, in the
-# package settings) so users can pull without auth.
+# Two modes, one signing identity (this file at refs/tags/v* or refs/heads/main - the launcher
+# pins exactly these two refs of exactly this workflow):
+#
+#   release (a v* tag): build amd64+arm64, structure-test BOTH arches, push :<tag> AND :latest,
+#     sign + attest. No scan gate - release day moves :latest unconditionally (the human override).
+#
+#   refresh (weekly schedule / manual dispatch): rebuild from rolling Wolfi, structure-test both
+#     arches, then push :latest ONLY if scripts/base-scan-gate.sh rules the candidate purl-different
+#     and no worse than the published :latest at every severity tier. Identical inventory skips the
+#     push; a worse scan or an unevaluable gate fails the job (fail closed). Version tags stay frozen.
+#
+# The refresh exists because the base used to fossilize between releases: rolling Wolfi ships CVE
+# fixes continuously (a gh rebuilt against a patched grpc, a fixed libnghttp2) that a tag-only
+# :latest never picked up, so the published base scanned worse than a fresh local build.
+# NOTE: after the first publish, set the GHCR package to Public (one-time, in the package settings).
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+  schedule:
+    - cron: "0 5 * * 1"   # Mondays 05:00 UTC - the weekly gated refresh
 
 permissions:
   contents: read
   packages: write       # push to GHCR
   id-token: write       # cosign keyless signing (Sigstore OIDC)
+
+concurrency:
+  group: publish-base   # a tag release and a weekly refresh serialize, never interleave
+  cancel-in-progress: false
 
 env:
   IMAGE: ghcr.io/pyronewbic/sluice-base
@@ -22,11 +37,12 @@ env:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 30   # the arm64 leg runs the find / invariant walk under qemu (slow, not stuck)
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
-      - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v3.7.0 (arm64 emulation for the multi-arch build)
+      - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v3.7.0 (arm64 emulation for build + structure test)
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
@@ -35,57 +51,141 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # --- gate: build amd64 and assert the base has its tooling, the non-root user, and NO
-      #     baked key (the splice cert is generated at runtime) before publishing anything. ---
-      - name: Smoke the base (amd64)
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        with:
-          context: core
-          target: base
-          load: true
-          tags: sluice-base:smoke
+      - name: Mode (release on a v* tag, refresh on schedule/dispatch)
+        id: mode
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+        run: |
+          set -euo pipefail
+          if [ "$REF_TYPE" = tag ]; then echo "mode=release"; else echo "mode=refresh"; fi >> "$GITHUB_OUTPUT"
+
+      # --- gate 1: build amd64 and assert the baked invariants before publishing anything.
+      #     Retried: base layers pull from registries that occasionally time out on shared runners. ---
+      - name: Build the base (amd64, retried)
+        run: |
+          set -euo pipefail
+          for i in 1 2 3; do
+            if timeout 240 docker build --target base -t sluice-base:smoke core/; then exit 0; fi
+            echo "::warning::amd64 base build attempt $i failed or timed out; retrying"
+            sleep $((i * 10))
+          done
+          echo "::error::amd64 base build failed after 3 attempts"
+          exit 1
       - name: Install container-structure-test (pinned, checksummed)
         run: bash scripts/install-cst.sh
-      - name: Assert base invariants
+      - name: Assert base invariants (amd64)
         # Same spec the PR gate runs (acceptance.yml) - no sudo, uid 1000, firewall packages, keyless.
         run: container-structure-test test --image sluice-base:smoke --config test/structure.yaml
 
-      # --- build + push the multi-arch base, then cosign-sign the pushed digest ---
-      - name: Build + push (amd64 + arm64)
-        id: push
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        with:
-          context: core
-          target: base
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: |
-            ${{ env.IMAGE }}:${{ github.ref_name }}
-            ${{ env.IMAGE }}:latest
-      - name: cosign sign (keyless)
-        run: cosign sign --yes "${IMAGE}@${DIGEST}"
-        env:
-          DIGEST: ${{ steps.push.outputs.digest }}
-
-      # --- attest sluice's own CycloneDX SBOM to the signed index digest (keyless). The SBOM comes from
-      #     the amd64 smoke image loaded above; the apk/npm set is arch-invariant (only the purl arch
-      #     qualifier differs), so one predicate covers the multi-arch index. ---
-      - name: Generate base SBOM
-        run: bin/sluice __sbom sluice-base:smoke > base.cdx.json
-      - name: cosign attest (CycloneDX SBOM)
-        run: cosign attest --yes --type cyclonedx --predicate base.cdx.json "${IMAGE}@${DIGEST}"
-        env:
-          DIGEST: ${{ steps.push.outputs.digest }}
-      - name: cosign verify-attestation (sanity)
+      # --- gate 2: the arm64 image is PUSHED, so it gets the same invariants (emulated via qemu) ---
+      - name: Build the base (arm64 under qemu, retried)
         run: |
+          set -euo pipefail
+          for i in 1 2 3; do
+            if timeout 900 docker buildx build --platform linux/arm64 --target base --load -t sluice-base:smoke-arm64 core/; then exit 0; fi
+            echo "::warning::arm64 base build attempt $i failed or timed out; retrying"
+            sleep $((i * 10))
+          done
+          echo "::error::arm64 base build failed after 3 attempts"
+          exit 1
+      - name: Assert base invariants (arm64, emulated)
+        run: container-structure-test test --image sluice-base:smoke-arm64 --config test/structure.yaml
+
+      # --- the candidate SBOM: the attest predicate and the refresh gate share it. Derived from the
+      #     amd64 smoke image; the apk/npm set is arch-invariant (only the purl arch qualifier differs). ---
+      - name: Generate base SBOM (from the amd64 smoke image)
+        run: bin/sluice __sbom sluice-base:smoke > base.cdx.json
+
+      # --- refresh mode only: the scan gate against the published :latest ---
+      - name: Pull the published :latest (refresh baseline, retried)
+        if: steps.mode.outputs.mode == 'refresh'
+        run: |
+          set -euo pipefail
+          for i in 1 2 3; do
+            if docker pull "${IMAGE}:latest"; then exit 0; fi
+            echo "::warning::pull of ${IMAGE}:latest attempt $i failed; retrying"
+            sleep $((i * 10))
+          done
+          echo "::error::cannot pull ${IMAGE}:latest - refusing to refresh blind"
+          exit 1
+      - name: Install grype (pinned, checksummed)
+        if: steps.mode.outputs.mode == 'refresh'
+        run: bash scripts/install-grype.sh
+      - name: Scan gate (push only if no worse than the published base)
+        id: gate
+        if: steps.mode.outputs.mode == 'refresh'
+        run: |
+          set -euo pipefail
+          bin/sluice __sbom "${IMAGE}:latest" > current.cdx.json
+          grype "sbom:base.cdx.json"    -o json > cand.grype.json
+          grype "sbom:current.cdx.json" -o json > cur.grype.json
+          rc=0; scripts/base-scan-gate.sh base.cdx.json current.cdx.json cand.grype.json cur.grype.json || rc=$?
+          case "$rc" in
+            0) echo "push=yes" >> "$GITHUB_OUTPUT" ;;
+            2) echo "::notice::scan gate SKIP - inventory identical to the published :latest"
+               echo "push=no" >> "$GITHUB_OUTPUT" ;;
+            3) echo "::error::scan gate REFUSE - the candidate scans worse than the published :latest"
+               exit 3 ;;
+            *) echo "::error::scan gate could not evaluate (rc=$rc) - failing closed"
+               exit "$rc" ;;
+          esac
+
+      - name: Decide push (release always; refresh only on a gate PUSH)
+        id: decide
+        env:
+          MODE: ${{ steps.mode.outputs.mode }}
+          GATE_PUSH: ${{ steps.gate.outputs.push }}
+        run: |
+          set -euo pipefail
+          if [ "$MODE" = release ]; then echo "push=yes"; else echo "push=${GATE_PUSH:-no}"; fi >> "$GITHUB_OUTPUT"
+
+      # --- build + push the multi-arch base (layers cached from the smoke builds), then sign the digest ---
+      - name: Build + push (amd64 + arm64, retried)
+        id: push
+        if: steps.decide.outputs.push == 'yes'
+        env:
+          MODE: ${{ steps.mode.outputs.mode }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ "$MODE" = release ]; then
+            TAGS=(-t "${IMAGE}:${REF_NAME}" -t "${IMAGE}:latest")
+          else
+            TAGS=(-t "${IMAGE}:latest")
+          fi
+          for i in 1 2 3; do
+            if timeout 900 docker buildx build --platform linux/amd64,linux/arm64 --target base \
+                 "${TAGS[@]}" --push --metadata-file push-meta.json core/; then
+              digest="$(jq -r '."containerimage.digest" // empty' push-meta.json)"
+              case "$digest" in
+                sha256:*) echo "digest=$digest" >> "$GITHUB_OUTPUT"; exit 0 ;;
+              esac
+              echo "::error::push succeeded but no digest in the metadata - refusing to sign blind"
+              exit 1
+            fi
+            echo "::warning::multi-arch push attempt $i failed or timed out; retrying"
+            sleep $((i * 10))
+          done
+          echo "::error::multi-arch push failed after 3 attempts"
+          exit 1
+      - name: cosign sign (keyless)
+        if: steps.decide.outputs.push == 'yes'
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+      - name: cosign attest (CycloneDX SBOM)
+        if: steps.decide.outputs.push == 'yes'
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: cosign attest --yes --type cyclonedx --predicate base.cdx.json "${IMAGE}@${DIGEST}"
+      - name: cosign verify + verify-attestation (sanity, against the exact pushed digest)
+        if: steps.decide.outputs.push == 'yes'
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          cosign verify "${IMAGE}@${DIGEST}" \
+            --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+            --certificate-identity-regexp='^https://github\.com/Pyronewbic/Sluice/\.github/workflows/publish-base\.yml@(refs/tags/v|refs/heads/main$)'
           cosign verify-attestation --type cyclonedx "${IMAGE}@${DIGEST}" \
             --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
             --certificate-identity-regexp='^https://github\.com/Pyronewbic/Sluice/\.github/workflows/publish-base\.yml@(refs/tags/v|refs/heads/main$)' >/dev/null
-        env:
-          DIGEST: ${{ steps.push.outputs.digest }}
-
-      - name: cosign verify (sanity)
-        run: |
-          cosign verify "${IMAGE}:${GITHUB_REF_NAME}" \
-            --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
-            --certificate-identity-regexp='^https://github\.com/Pyronewbic/Sluice/\.github/workflows/publish-base\.yml@(refs/tags/v|refs/heads/main$)'
