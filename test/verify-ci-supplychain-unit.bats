@@ -181,14 +181,23 @@ _sha256_file() {
   assert_success
   run grep -F 'group: publish-base' "$wf"
   assert_success
-  run grep -F 'TAGS=(-t "${IMAGE}:latest")' "$wf"
-  assert_success   # refresh pushes ONLY :latest; version tags stay frozen
-  run grep -F 'TAGS=(-t "${IMAGE}:${REF_NAME}" -t "${IMAGE}:latest")' "$wf"
-  assert_success   # a release moves both, ungated (the human override)
-  # The gate must scan the IMAGES, never the sluice SBOM: the six-ecosystem SBOM lists gh as an apk
-  # package, so an sbom: scan is structurally blind to go-module CVEs vendored inside it (the exact
-  # class - GHSA-hrxh-6v49-42gf in gh's grpc - that motivated the gate). Proven live: sbom: scans of
-  # both sides returned zero findings while a docker: scan of the same published image returned six.
+  # Exactly ONE multi-arch build (the candidate) - the published bytes must be the evaluated bytes,
+  # never a second from-scratch rebuild-to-push. Promotion is a re-tag (imagetools create), which
+  # rebuilds nothing: refresh moves :latest only, release moves the frozen version tag too.
+  [ "$(grep -cF 'buildx build --platform linux/amd64,linux/arm64' "$wf")" = 1 ]
+  run grep -F -- '-t "${IMAGE}:candidate" --push --metadata-file cand-meta.json' "$wf"
+  assert_success
+  run grep -F 'imagetools create -t "${IMAGE}:latest" "${IMAGE}@${DIGEST}"' "$wf"
+  assert_success   # refresh: :latest only
+  run grep -F 'imagetools create -t "${IMAGE}:${REF_NAME}" -t "${IMAGE}:latest" "${IMAGE}@${DIGEST}"' "$wf"
+  assert_success   # release: both, ungated (the human override)
+  # A workflow_dispatch from a tag ref must be refused, never silently run release mode.
+  run grep -F 'manual dispatch from a tag ref' "$wf"
+  assert_success
+  # The gate must scan the IMAGES by digest, never the sluice SBOM: the six-ecosystem SBOM lists gh as
+  # one apk package, so an sbom: scan is structurally blind to go-module CVEs vendored inside it (the
+  # exact class - GHSA-hrxh-6v49-42gf in gh's grpc - that motivated the gate). Proven live: sbom: scans
+  # of both sides returned zero while a docker: scan of the same published image returned six.
   run grep -F 'grype "sbom:' "$wf"
   assert_failure
   [ "$(grep -cF 'grype "docker:' "$wf")" = 2 ]
