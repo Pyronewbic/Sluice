@@ -61,6 +61,18 @@ commandTests:
     command: sh
     args: ["-c", "command -v sudo || true"]
     excludedOutput: ["sudo"]
+  # shadow is build-time only (useradd/groupadd in the Dockerfile) and deleted from the shipped image.
+  # busybox ships adduser, not useradd, so this cannot pass vacuously via a busybox symlink.
+  - name: "shadow tools absent from the shipped image"
+    command: sh
+    args: ["-c", "command -v useradd || true"]
+    excludedOutput: ["useradd"]
+  # POSITIVE CONTROL for the shadow removal: the in-box inventory path (lock/sbom) runs
+  # `su -s /bin/sh sluice`, which resolves to busybox su, not shadow - prove it still drops privileges.
+  - name: "busybox su still drops to the sluice user (inventory path dependency)"
+    command: su
+    args: ["-s", "/bin/sh", "sluice", "-c", "id -u"]
+    expectedOutput: ["^1000\\s*$"]
   # NO setuid/setgid-root binary anywhere: the shadow package ships chfn/chsh/passwd/... setuid, stripped
   # in the Dockerfile (chmod -s clears both bits), so uid 1000 has no setuid/setgid primitive even
   # independent of no-new-privileges. find's stderr is merged into the count (2>&1), so a partial or

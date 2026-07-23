@@ -41,7 +41,9 @@ minimal config is just a `SLUICE_RUN_CMD`.
   (`@some/mcp-server@1.2.3`).
 - `SLUICE_SETUP_ROOT_CMDS` - one shell string run as root at build, before
   `SLUICE_SETUP_CMDS` - provisioning outside the home dir (`/opt`, a `/nix` the `sluice`
-  user then owns). Same trust as `SLUICE_EXTRA_PKGS`.
+  user then owns). Same trust as `SLUICE_EXTRA_PKGS`. The base deletes the `shadow`
+  package after its own build-time use; a setup needing `useradd`/`groupadd` re-adds it
+  with `SLUICE_EXTRA_PKGS="shadow"`.
 - `SLUICE_SETUP_CMDS` - one shell string run at build as the non-root `sluice` user in
   `/home/sluice`: clones, dependency installs, codegen. Build egress is unrestricted; the
   running container stays locked to the allowlist.
