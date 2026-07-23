@@ -155,6 +155,7 @@ jobs:
           fi
           for i in 1 2 3; do
             if timeout 900 docker buildx build --platform linux/amd64,linux/arm64 --target base \
+                 --build-arg VCS_REF="$GITHUB_SHA" \
                  "${TAGS[@]}" --push --metadata-file push-meta.json core/; then
               digest="$(jq -r '."containerimage.digest" // empty' push-meta.json)"
               case "$digest" in
