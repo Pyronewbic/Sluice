@@ -64,6 +64,13 @@ resolve_base_digest() {
 }
 
 build() {
+  # Resolve + verify the signed base BEFORE assembling the context: a digest-resolution or
+  # verification die must not leave a mktemp dir (holding a copy of the user's config) behind.
+  local _basedig=""
+  if [ -n "${SLUICE_BASE_IMAGE:-}" ]; then
+    _basedig="$(resolve_base_digest "$SLUICE_BASE_IMAGE")"   # same DIGEST for verify + FROM (TOCTOU)
+    verify_base "$_basedig"
+  fi
   local tmp; tmp="$(mktemp -d)"
   cp -R "$CORE"/. "$tmp"/
   cp "$PROJECT_CONFIG" "$tmp/sluice.config.sh"
@@ -98,12 +105,7 @@ build() {
     --label "sluice.ports=${SLUICE_PORTS:-}"
     --label "sluice.overlays=${SLUICE_OVERLAY_DIRS:-}"
     --label "sluice.desc=${SLUICE_DESC:-}" "$@")   # extra flags, e.g. --no-cache
-  if [ -n "${SLUICE_BASE_IMAGE:-}" ]; then
-    # Verify + build FROM the same DIGEST, not the tag (closes the verify-tag / build-tag TOCTOU).
-    local _basedig; _basedig="$(resolve_base_digest "$SLUICE_BASE_IMAGE")"
-    verify_base "$_basedig"
-    args+=(--build-arg "BASE_IMAGE=$_basedig")     # project layer FROM the verified digest
-  fi
+  [ -n "$_basedig" ] && args+=(--build-arg "BASE_IMAGE=$_basedig")   # FROM the digest verified above
   # Pin mode: build FROM the exact base digest recorded in sluice.pin and turn on the replay legs.
   if [ -n "$_pin_active" ]; then
     args+=(--build-arg SLUICE_PIN=1)

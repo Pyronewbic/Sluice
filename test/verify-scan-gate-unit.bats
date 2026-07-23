@@ -12,8 +12,7 @@ setup() {
 }
 
 @test "scan-gate: purl-identical inventories SKIP (2) even when the scans differ" {
-  # ref1/ref2 differ in metadata.component.name (the image ref the SBOM embeds) and purl ORDER -
-  # only the sorted purl SET may decide identity, or weekly refreshes push no-op images forever.
+  # ref1/ref2 differ only in embedded image-ref and purl order: identity is the sorted SET, not bytes.
   run "$GATE" "$FIX/cdx-a-ref1.json" "$FIX/cdx-a-ref2.json" "$FIX/grype-1high.json" "$FIX/grype-clean.json"
   [ "$status" -eq 2 ]
 }
@@ -62,8 +61,6 @@ setup() {
 }
 
 @test "scan-gate: a hollow SBOM (zero purls) fails closed (4), never SKIP-by-emptiness" {
-  # two hollow SBOMs compare equal as empty sets; without this guard a masked inventory read would
-  # SKIP forever and the published base would silently fossilize again.
   run "$GATE" "$FIX/cdx-hollow.json" "$FIX/cdx-hollow.json" "$FIX/grype-clean.json" "$FIX/grype-clean.json"
   [ "$status" -eq 4 ]
 }
@@ -76,8 +73,8 @@ setup() {
 # --- attack-changes round 1: fail-open severity counting + multiset purl identity ---
 
 @test "scan-gate: a clean scan is ZERO findings, not a phantom unknown (refuses a real new Unknown)" {
-  # candidate carries a real new Unknown CVE, published is clean. The bug: jq's // on an empty match
-  # stream invented one phantom 'unknown' for the clean side, cancelling the real one into a PUSH.
+  # jq's // read the clean side's empty match stream as absent and invented a phantom 'unknown',
+  # cancelling the candidate's real one into a PUSH.
   run "$GATE" "$FIX/cdx-b.json" "$FIX/cdx-a-ref1.json" "$FIX/grype-1unknown.json" "$FIX/grype-clean.json"
   [ "$status" -eq 3 ]
 }
@@ -94,8 +91,8 @@ setup() {
 }
 
 @test "scan-gate: an embedded-newline purl stays one distinct member, not two SKIP-matching lines" {
-  # a raw-line multiset would split the forged purl into lines equal to {bash,curl} and SKIP a real
-  # inventory change; the jq-array compare keeps it distinct, so this is NOT a skip.
+  # a raw-line multiset splits the forged purl into lines equal to {bash,curl} and SKIPs; the jq-array
+  # compare keeps it one distinct member.
   run "$GATE" "$FIX/cdx-newline.json" "$FIX/cdx-a-ref1.json" "$FIX/grype-clean.json" "$FIX/grype-clean.json"
   [ "$status" -ne 2 ]
 }
