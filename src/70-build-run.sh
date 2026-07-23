@@ -14,12 +14,12 @@ verify_base() {
   fi
   if cosign verify "$img" \
        --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
-       --certificate-identity-regexp='^https://github\.com/Pyronewbic/Sluice/\.github/workflows/publish-base\.yml@refs/tags/v' >/dev/null 2>&1; then
+       --certificate-identity-regexp='^https://github\.com/Pyronewbic/Sluice/\.github/workflows/publish-base\.yml@(refs/tags/v|refs/heads/main$)' >/dev/null 2>&1; then
     echo "[sluice] ${E_GRN}cosign-verified${E_RST} base image: $img" >&2
     # also confirm the signed CycloneDX SBOM attestation (soft; bases signed before this had none).
     cosign verify-attestation --type cyclonedx "$img" \
       --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
-      --certificate-identity-regexp='^https://github\.com/Pyronewbic/Sluice/\.github/workflows/publish-base\.yml@refs/tags/v' >/dev/null 2>&1 && att=0 || att=$?
+      --certificate-identity-regexp='^https://github\.com/Pyronewbic/Sluice/\.github/workflows/publish-base\.yml@(refs/tags/v|refs/heads/main$)' >/dev/null 2>&1 && att=0 || att=$?
     if [ "$att" = 0 ]; then
       echo "[sluice] ${E_GRN}cosign-verified${E_RST} SBOM attestation: $img" >&2
     else

@@ -136,11 +136,11 @@ The same checks the launcher runs:
 ```bash
 cosign verify ghcr.io/pyronewbic/sluice-base:latest \
   --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
-  --certificate-identity-regexp='^https://github\.com/Pyronewbic/Sluice/\.github/workflows/publish-base\.yml@refs/tags/v'
+  --certificate-identity-regexp='^https://github\.com/Pyronewbic/Sluice/\.github/workflows/publish-base\.yml@(refs/tags/v|refs/heads/main$)'
 
 cosign verify-attestation --type cyclonedx ghcr.io/pyronewbic/sluice-base:latest \
   --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
-  --certificate-identity-regexp='^https://github\.com/Pyronewbic/Sluice/\.github/workflows/publish-base\.yml@refs/tags/v'
+  --certificate-identity-regexp='^https://github\.com/Pyronewbic/Sluice/\.github/workflows/publish-base\.yml@(refs/tags/v|refs/heads/main$)'
 ```
 
 ## No key in the image
