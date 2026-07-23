@@ -81,6 +81,20 @@ commandTests:
     command: sh
     args: ["-c", "find / -xdev -type f \\( -perm -4000 -o -perm -2000 \\) -print 2>&1 | grep -c . | tr -d ' '"]
     expectedOutput: ["^0\\s*$"]   # also covers setgid (-2000), matching the Dockerfile sweep
+  # The npm prefix dir is uid-1000-writable, so PATH must keep it strictly LAST: a root-context
+  # maintenance exec resolves system tools from root-owned dirs first, and a uid-1000-planted
+  # ~/.npm-global/bin/tail never shadows /usr/bin/tail for root. Pins the Dockerfile's append-not-
+  # prepend claim (a prepend regression would put it before /usr/local/sbin and fail both patterns).
+  - name: "uid-1000-writable npm dir is strictly last on PATH"
+    command: sh
+    args: ["-c", "printenv PATH"]
+    expectedOutput: ["^/usr/local/sbin:.*:/home/sluice/\\.npm-global/bin\\s*$"]
+    excludedOutput: ["npm-global.*(sbin|/usr/bin)"]   # never before any system dir
+  # Back-compat: older configs whose SLUICE_MOUNTS target /home/node must keep landing in the real home.
+  - name: "/home/node compat symlink resolves to /home/sluice"
+    command: readlink
+    args: ["/home/node"]
+    expectedOutput: ["^/home/sluice\\s*$"]
 
 metadataTest:
   entrypoint: ["/usr/local/bin/entrypoint.sh"]
