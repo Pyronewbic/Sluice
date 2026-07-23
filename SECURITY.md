@@ -82,7 +82,7 @@ at build time, soft by default or enforced with `SLUICE_REQUIRE_SIGNED=1`. To ve
 ```sh
 cosign verify ghcr.io/pyronewbic/sluice-base:latest \
   --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
-  --certificate-identity-regexp='^https://github\.com/Pyronewbic/Sluice/\.github/workflows/publish-base\.yml@refs/tags/v'
+  --certificate-identity-regexp='^https://github\.com/Pyronewbic/Sluice/\.github/workflows/publish-base\.yml@(refs/tags/v|refs/heads/main$)'
 ```
 
 The same flags with `cosign verify-attestation --type cyclonedx` check the image's attached

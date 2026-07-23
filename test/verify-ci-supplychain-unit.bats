@@ -165,3 +165,20 @@ _sha256_file() {
   run grep -E 'curl.*wolfi-signing' "$ROOT/core/Dockerfile"
   assert_failure
 }
+
+# The BASE cosign identity regexp appears in the launcher (x2, via bin/sluice), the publish workflow
+# (x2) and two docs (supply-chain x2, SECURITY x1). All 7 must be BYTE-IDENTICAL - a drifted copy
+# verifies against a different signer set - and must accept BOTH legitimate signing refs: a v tag
+# (release) and refs/heads/main (scheduled refresh + workflow_dispatch sign at the branch ref).
+# The policy-signing identity (SLUICE_POLICY_IDENTITY, docs/policy.md) is a separate feature and
+# deliberately NOT in this sync set.
+@test "supplychain: the base cosign identity regexp is identical in all 7 places and accepts main" {
+  local all
+  all="$( { grep -o "certificate-identity-regexp='[^']*'" "$ROOT/bin/sluice"
+            grep -o "certificate-identity-regexp='[^']*'" "$ROOT/.github/workflows/publish-base.yml"
+            grep -o "certificate-identity-regexp='[^']*'" "$ROOT/docs/supply-chain.md"
+            grep -o "certificate-identity-regexp='[^']*'" "$ROOT/SECURITY.md"; } | grep publish-base )"
+  [ "$(printf '%s\n' "$all" | wc -l | tr -d ' ')" = 7 ] || { echo "expected 7 occurrences, got:"; printf '%s\n' "$all"; return 1; }
+  [ "$(printf '%s\n' "$all" | sort -u | wc -l | tr -d ' ')" = 1 ] || { echo "regexp drift:"; printf '%s\n' "$all" | sort -u; return 1; }
+  printf '%s\n' "$all" | head -1 | grep -qF 'refs/heads/main$' || { echo "regexp does not accept the main signing ref"; return 1; }
+}

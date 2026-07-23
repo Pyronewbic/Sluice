@@ -160,7 +160,9 @@ The guarantees below hold only while these do:
   when cosign is installed, a keyless signature that **fails to verify refuses the build**
   (fail closed, no knob) - only a missing cosign downgrades to a warning, and a mirror ref
   skips verification. `SLUICE_REQUIRE_SIGNED=1` additionally requires cosign, the SBOM
-  attestation, a digest-resolvable ref, and the official base. The image carries no private key (the
+  attestation, a digest-resolvable ref, and the official base. The accepted signer is pinned to
+  this repo's publish-base workflow, signing at a `v` tag (release) or on `main` (the gated
+  refresh) - not any certificate the OIDC issuer minted. The image carries no private key (the
   splice cert is generated per-container). Your own layer on top is covered by `sluice lock`:
   a committable package inventory with drift detection, plus an advisory host-side CVE scan -
   a clean scan means "no *known* CVE in the scanner's DB," not proof of safety. Full tour:
