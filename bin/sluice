@@ -3412,9 +3412,13 @@ verify_base() {
     [ "${SLUICE_REQUIRE_SIGNED:-}" = 1 ] && die "SLUICE_REQUIRE_SIGNED=1 but cosign is not installed"
     echo "[sluice] ${E_YEL}note${E_RST}: cosign not installed - skipping base signature check ($img)" >&2; return 0
   fi
-  if cosign verify "$img" \
+  # Capture cosign's stderr (declare-then-assign so the assignment carries cosign's status, not local's):
+  # a signature MISMATCH and a transient outage (offline, Rekor/Fulcio down) both exit nonzero, and
+  # swallowing the reason presents an outage as tamper. Surface it on the die so the operator can tell.
+  local _verr
+  if _verr="$(cosign verify "$img" \
        --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
-       --certificate-identity-regexp='^https://github\.com/Pyronewbic/Sluice/\.github/workflows/publish-base\.yml@(refs/tags/v|refs/heads/main$)' >/dev/null 2>&1; then
+       --certificate-identity-regexp='^https://github\.com/Pyronewbic/Sluice/\.github/workflows/publish-base\.yml@(refs/tags/v|refs/heads/main$)' 2>&1 >/dev/null)"; then
     echo "[sluice] ${E_GRN}cosign-verified${E_RST} base image: $img" >&2
     # also confirm the signed CycloneDX SBOM attestation (soft; bases signed before this had none).
     cosign verify-attestation --type cyclonedx "$img" \
@@ -3427,9 +3431,11 @@ verify_base() {
       echo "[sluice] ${E_YEL}note${E_RST}: $img is signed but has no verifiable SBOM attestation (continuing)" >&2
     fi
   else
-    # Fail CLOSED: cosign is present and the official base does not verify - a tamper signal, not a
-    # soft condition. (Missing cosign above stays a warning; a mirror ref skips verification entirely.)
-    die "cosign verification failed for $img - refusing to build on it (use a mirror ref to skip verification, or fix the ref)"
+    # Fail CLOSED: cosign is present and the official base does not verify. Surface cosign's own words
+    # (the tail) so a network/Sigstore outage is distinguishable from a real signature failure, and do
+    # NOT advise disabling verification to escape what may be a transient blip.
+    [ -n "$_verr" ] && printf '%s\n' "$_verr" | tail -n 5 >&2
+    die "cosign verification failed for $img - refusing to build on it. If this is a network or Sigstore outage, retry when online; a genuine signature failure means do NOT build on this image (cosign output above)."
   fi
 }
 

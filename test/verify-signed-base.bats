@@ -47,6 +47,27 @@ teardown() { rm -rf "$W"; }
   refute_output --partial "image build failed"   # died on the signature, never reached the build
 }
 
+@test "signed-base: cosign's failure reason reaches the user (offline != tamper), no bypass advice" {
+  # A transient outage and a real mismatch both exit nonzero; the die must surface cosign's own words
+  # so they are distinguishable, and must not steer the user to disable verification.
+  W="$(mktemp -d)"; mkdir -p "$W/bin" "$W/p"
+  _docker_stub > "$W/bin/docker"
+  cat > "$W/bin/cosign" <<'EOF'
+#!/bin/sh
+echo 'error: getting Rekor entries: dial tcp: lookup rekor.sigstore.dev: no such host' >&2
+exit 1
+EOF
+  chmod +x "$W/bin/docker" "$W/bin/cosign"
+  printf 'SLUICE_NAME="sb"\nSLUICE_BASE_IMAGE="ghcr.io/pyronewbic/sluice-base:test"\nSLUICE_REQUIRE_SIGNED=\nSLUICE_RUN_CMD="true"\n' > "$W/p/sluice.config.sh"
+  run bash -c "cd '$W/p' && PATH='$W/bin:$PATH' SLUICE_ENGINE=docker '$SLUICE' build 2>&1"
+  assert_failure
+  assert_output --partial "rekor.sigstore.dev"        # cosign's reason surfaced, not swallowed
+  assert_output --partial "network or Sigstore outage"
+  refute_output --partial "skip verification"         # no security-downgrade steer
+  refute_output --partial "image build failed"        # died before the build
+  rm -rf "$W"
+}
+
 @test "signed-base: a GOOD signature proceeds to the build (positive control for the gate)" {
   _build_with_stubs '' 0                         # cosign exits 0: signature + attestation verify
   assert_output --partial "cosign-verified"
