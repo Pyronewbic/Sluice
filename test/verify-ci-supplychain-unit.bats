@@ -185,6 +185,13 @@ _sha256_file() {
   assert_success   # refresh pushes ONLY :latest; version tags stay frozen
   run grep -F 'TAGS=(-t "${IMAGE}:${REF_NAME}" -t "${IMAGE}:latest")' "$wf"
   assert_success   # a release moves both, ungated (the human override)
+  # The gate must scan the IMAGES, never the sluice SBOM: the six-ecosystem SBOM lists gh as an apk
+  # package, so an sbom: scan is structurally blind to go-module CVEs vendored inside it (the exact
+  # class - GHSA-hrxh-6v49-42gf in gh's grpc - that motivated the gate). Proven live: sbom: scans of
+  # both sides returned zero findings while a docker: scan of the same published image returned six.
+  run grep -F 'grype "sbom:' "$wf"
+  assert_failure
+  [ "$(grep -cF 'grype "docker:' "$wf")" = 2 ]
 }
 
 # The BASE cosign identity regexp appears in the launcher (x2, via bin/sluice), the publish workflow

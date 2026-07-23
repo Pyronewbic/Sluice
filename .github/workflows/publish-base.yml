@@ -116,9 +116,12 @@ jobs:
         if: steps.mode.outputs.mode == 'refresh'
         run: |
           set -euo pipefail
+          # Inventory identity comes from the sluice SBOMs; severity comes from scanning the IMAGES.
+          # Never scan the sbom: - the six-ecosystem SBOM lists gh as one apk package, so it is blind
+          # to go-module CVEs vendored inside it (grype's syft catalog of the image sees them).
           bin/sluice __sbom "${IMAGE}:latest" > current.cdx.json
-          grype "sbom:base.cdx.json"    -o json > cand.grype.json
-          grype "sbom:current.cdx.json" -o json > cur.grype.json
+          grype "docker:sluice-base:smoke" -o json > cand.grype.json
+          grype "docker:${IMAGE}:latest"   -o json > cur.grype.json
           rc=0; scripts/base-scan-gate.sh base.cdx.json current.cdx.json cand.grype.json cur.grype.json || rc=$?
           case "$rc" in
             0) echo "push=yes" >> "$GITHUB_OUTPUT" ;;
