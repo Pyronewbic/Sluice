@@ -157,8 +157,10 @@ The guarantees below hold only while these do:
   bit-for-bit; see [docs/supply-chain.md](docs/supply-chain.md)).
 - **Tampered sandbox core** -> the generic core (proxy, firewall, entrypoint, non-root user)
   can be pulled as a **cosign-signed base image** from GHCR (opt-in via `SLUICE_BASE_IMAGE`);
-  `sluice` verifies the keyless signature - and the SBOM attestation alongside it - before
-  building on it (`SLUICE_REQUIRE_SIGNED=1` to enforce). The image carries no private key (the
+  when cosign is installed, a keyless signature that **fails to verify refuses the build**
+  (fail closed, no knob) - only a missing cosign downgrades to a warning, and a mirror ref
+  skips verification. `SLUICE_REQUIRE_SIGNED=1` additionally requires cosign, the SBOM
+  attestation, a digest-resolvable ref, and the official base. The image carries no private key (the
   splice cert is generated per-container). Your own layer on top is covered by `sluice lock`:
   a committable package inventory with drift detection, plus an advisory host-side CVE scan -
   a clean scan means "no *known* CVE in the scanner's DB," not proof of safety. Full tour:

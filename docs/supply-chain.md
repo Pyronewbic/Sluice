@@ -124,8 +124,10 @@ structure-tests the base invariants (uid 1000, no sudo, the firewall packages, n
 CycloneDX SBOM is derived from the amd64 image.
 
 When `SLUICE_BASE_IMAGE` points at a `sluice-base` ref and cosign is installed, the launcher
-verifies the signature and attestation automatically - warn-and-continue by default, fatal with
-`SLUICE_REQUIRE_SIGNED=1`.
+verifies the signature automatically - a FAILED verification refuses the build (fail closed);
+a missing SBOM attestation only notes, and a missing cosign only warns. `SLUICE_REQUIRE_SIGNED=1`
+makes all of those fatal too: cosign, the attestation, and a digest-resolvable official ref
+become mandatory.
 
 ## Verify it yourself
 

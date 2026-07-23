@@ -55,8 +55,9 @@ minimal config is just a `SLUICE_RUN_CMD`.
 - `SLUICE_BASE_IMAGE` - build the project layer FROM a published ref instead of rebuilding
   the core locally; the published sluice base is cosign-verified when cosign is installed.
   Default: build from `core/`. See [supply-chain](supply-chain.md).
-- `SLUICE_REQUIRE_SIGNED` - `=1` makes a missing/failed base signature or SBOM attestation
-  fatal (default: warn and continue).
+- `SLUICE_REQUIRE_SIGNED` - a FAILED signature on the official base is always fatal (fail
+  closed); `=1` additionally makes a missing cosign, a missing SBOM attestation, an
+  unresolvable digest, or a non-official ref fatal (default for those: warn and continue).
 - `SLUICE_PIN` - `=1` builds from `sluice.pin` (written by `sluice lock --pin`): the recorded base
   digest + exact package versions, replayed and then **verified** against `sluice.lock` (the build
   fails closed on any drift). Requires a `sluice.pin`; `sluice update` re-resolves and re-pins. See
