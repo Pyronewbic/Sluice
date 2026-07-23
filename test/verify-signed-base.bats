@@ -69,6 +69,28 @@ EOF
   rm -rf "$W"
 }
 
+@test "signed-base: pin mode + REQUIRE_SIGNED=1 builds FROM the pin when the live tag won't resolve" {
+  # Air-gapped / rate-limited: docker pull fails so the live tag yields no digest. But in pin mode the
+  # FROM is the pinned @sha256, so the digest-resolution die must NOT fire - the build must reach
+  # docker with BASE_IMAGE set to the PINNED digest. Marker asserts arrival, not a stderr message.
+  W="$(mktemp -d)"; mkdir -p "$W/bin" "$W/p"; local dig; dig="sha256:$(printf '%064d' 1)"
+  cat > "$W/bin/docker" <<EOF
+#!/bin/sh
+[ "\$1" = pull ] && exit 1
+if [ "\$1" = build ]; then printf '%s\n' "\$*" > "$W/build-args"; exit 1; fi
+exit 1
+EOF
+  printf '#!/bin/sh\nexit 0\n' > "$W/bin/cosign"       # cosign still verifies the pinned digest
+  chmod +x "$W/bin/docker" "$W/bin/cosign"
+  printf 'base ghcr.io/pyronewbic/sluice-base@%s\n' "$dig" > "$W/p/sluice.pin"
+  printf 'SLUICE_NAME="sb"\nSLUICE_BASE_IMAGE="ghcr.io/pyronewbic/sluice-base:latest"\nSLUICE_REQUIRE_SIGNED=1\nSLUICE_PIN=1\nSLUICE_RUN_CMD="true"\n' > "$W/p/sluice.config.sh"
+  run bash -c "cd '$W/p' && PATH='$W/bin:$PATH' SLUICE_ENGINE=docker '$SLUICE' build 2>&1"
+  refute_output --partial "cannot be resolved to a @sha256 digest"
+  [ -f "$W/build-args" ]
+  grep -q "BASE_IMAGE=ghcr.io/pyronewbic/sluice-base@$dig" "$W/build-args"
+  rm -rf "$W"
+}
+
 @test "signed-base: a GOOD signature proceeds to the build (positive control for the gate)" {
   _build_with_stubs '' 0                         # cosign exits 0: signature + attestation verify
   assert_output --partial "cosign-verified"

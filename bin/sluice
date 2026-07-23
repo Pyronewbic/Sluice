@@ -3467,11 +3467,27 @@ resolve_base_digest() {
 }
 
 build() {
-  # Resolve + verify the signed base BEFORE assembling the context: a digest-resolution or
-  # verification die must not leave a mktemp dir (holding a copy of the user's config) behind.
+  # Resolve + verify the base BEFORE assembling the context: a resolution or verification die must
+  # leave no mktemp dir (holding a copy of the user's config) behind. In pin mode the FROM is the
+  # pinned digest, so verify THAT, not the live tag - the pin is already a @sha256 ref, so no pull
+  # happens (a signed pin replays air-gapped) and verify_base checks the exact bytes that get built.
+  local _pin_active="" _pinbase=""
+  if [ "${SLUICE_PIN:-}" = 1 ] && [ "${_SLUICE_PIN_SKIP:-}" != 1 ]; then
+    [ -f "$PROJECT_DIR/sluice.pin" ] || die "SLUICE_PIN=1 but no sluice.pin - run 'sluice lock --pin' first"
+    _pinbase="$(awk '$1=="base"{print $2; exit}' "$PROJECT_DIR/sluice.pin")"
+    case "$_pinbase" in *@sha256:*) ;; *) die "sluice.pin has no @sha256 base digest - re-run 'sluice lock --pin'" ;; esac
+    _pin_active=1
+  fi
   local _basedig=""
   if [ -n "${SLUICE_BASE_IMAGE:-}" ]; then
-    _basedig="$(resolve_base_digest "$SLUICE_BASE_IMAGE")"   # same DIGEST for verify + FROM (TOCTOU)
+    if [ -n "$_pinbase" ]; then
+      # Pin mode FROMs the pinned digest; it must be the same repo as the configured base (else re-pin).
+      local _pbrepo="${_pinbase%@*}" _birepo="${SLUICE_BASE_IMAGE%@*}"; _birepo="${_birepo%:*}"; _pbrepo="${_pbrepo%:*}"
+      [ "$_pbrepo" = "$_birepo" ] || die "config base ($SLUICE_BASE_IMAGE) changed since the pin ($_pinbase) - re-run 'sluice lock --pin'"
+      _basedig="$_pinbase"
+    else
+      _basedig="$(resolve_base_digest "$SLUICE_BASE_IMAGE")"   # same DIGEST for verify + FROM (TOCTOU)
+    fi
     verify_base "$_basedig"
   fi
   local tmp; tmp="$(mktemp -d)"
@@ -3487,16 +3503,10 @@ build() {
     [ -f "$PROJECT_DIR/$_pf" ] && cp "$PROJECT_DIR/$_pf" "$tmp/prefetch/" 2>/dev/null || true
   done
   set +f
-  # Pinned replay (SLUICE_PIN=1): the Dockerfile always COPY's pin/, so keep a .keep there; drop the real
-  # sluice.pin in ONLY when pin mode is active (so an env-only SLUICE_PIN=1 still crosses into the build).
-  # _SLUICE_PIN_SKIP is an internal, non-contract flag the `update` path sets to re-resolve fresh first.
+  # Pinned replay (SLUICE_PIN=1): the Dockerfile always COPY's pin/, so keep a .keep there; drop the
+  # real sluice.pin in ONLY when pin mode is active (detected + validated above, before the mktemp).
   mkdir -p "$tmp/pin"; : > "$tmp/pin/.keep"
-  local _pin_active=""
-  if [ "${SLUICE_PIN:-}" = 1 ] && [ "${_SLUICE_PIN_SKIP:-}" != 1 ]; then
-    [ -f "$PROJECT_DIR/sluice.pin" ] || { rm -rf "$tmp"; die "SLUICE_PIN=1 but no sluice.pin - run 'sluice lock --pin' first"; }
-    cp "$PROJECT_DIR/sluice.pin" "$tmp/pin/sluice.pin"
-    _pin_active=1
-  fi
+  [ -n "$_pin_active" ] && cp "$PROJECT_DIR/sluice.pin" "$tmp/pin/sluice.pin"
   # Self-describing labels (read by `sluice ls`; not part of config_hash, so no spurious rebuild).
   # Hoist the hash: `local args=($(config_hash))` masks its exit status (local returns 0), so a failing
   # config_hash (e.g. shasum rc 127) would silently bake an empty label under set -e; assigned alone it dies.
@@ -3508,20 +3518,13 @@ build() {
     --label "sluice.ports=${SLUICE_PORTS:-}"
     --label "sluice.overlays=${SLUICE_OVERLAY_DIRS:-}"
     --label "sluice.desc=${SLUICE_DESC:-}" "$@")   # extra flags, e.g. --no-cache
-  [ -n "$_basedig" ] && args+=(--build-arg "BASE_IMAGE=$_basedig")   # FROM the digest verified above
-  # Pin mode: build FROM the exact base digest recorded in sluice.pin and turn on the replay legs.
+  # FROM the verified digest (which IS the pinned digest in pin mode + signed base - resolved above).
+  [ -n "$_basedig" ] && args+=(--build-arg "BASE_IMAGE=$_basedig")
   if [ -n "$_pin_active" ]; then
     args+=(--build-arg SLUICE_PIN=1)
-    local _pinbase; _pinbase="$(awk '$1=="base"{print $2; exit}' "$PROJECT_DIR/sluice.pin")"
-    case "$_pinbase" in *@sha256:*) ;; *) rm -rf "$tmp"; die "sluice.pin has no @sha256 base digest - re-run 'sluice lock --pin'" ;; esac
-    if [ -n "${SLUICE_BASE_IMAGE:-}" ]; then
-      # Signed-base build: the pinned base must be the same repo as the configured one (else re-pin).
-      local _pbrepo="${_pinbase%@*}" _birepo="${SLUICE_BASE_IMAGE%@*}"; _birepo="${_birepo%:*}"; _pbrepo="${_pbrepo%:*}"
-      [ "$_pbrepo" = "$_birepo" ] || { rm -rf "$tmp"; die "config base ($SLUICE_BASE_IMAGE) changed since the pin ($_pinbase) - re-run 'sluice lock --pin'"; }
-      args+=(--build-arg "BASE_IMAGE=$_pinbase")   # FROM the pinned digest (verify_base already ran above)
-    else
-      args+=(--build-arg "WOLFI_BASE=$_pinbase")   # local build: pin the wolfi base by digest
-    fi
+    # Local build (no SLUICE_BASE_IMAGE): pin the wolfi base by digest. The signed-base case already
+    # set BASE_IMAGE to the pinned digest above, so it is not re-appended here.
+    [ -z "${SLUICE_BASE_IMAGE:-}" ] && args+=(--build-arg "WOLFI_BASE=$_pinbase")
   fi
   # Quiet the engine's build transcript (layer/apk/npm chatter) to a per-box log; on failure replay
   # the tail so the error is visible. The full transcript is always one `cat` away at the logged path.
