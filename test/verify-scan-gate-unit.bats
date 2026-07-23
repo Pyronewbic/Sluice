@@ -72,3 +72,30 @@ setup() {
   run "$GATE" "$FIX/cdx-b.json"
   [ "$status" -eq 4 ]
 }
+
+# --- attack-changes round 1: fail-open severity counting + multiset purl identity ---
+
+@test "scan-gate: a clean scan is ZERO findings, not a phantom unknown (refuses a real new Unknown)" {
+  # candidate carries a real new Unknown CVE, published is clean. The bug: jq's // on an empty match
+  # stream invented one phantom 'unknown' for the clean side, cancelling the real one into a PUSH.
+  run "$GATE" "$FIX/cdx-b.json" "$FIX/cdx-a-ref1.json" "$FIX/grype-1unknown.json" "$FIX/grype-clean.json"
+  [ "$status" -eq 3 ]
+}
+
+@test "scan-gate: an off-list severity string is not invisible - a worse candidate still refuses (3)" {
+  # 'Moderate' matches no tier; the old filter dropped it, so a strictly-worse candidate PUSHed.
+  run "$GATE" "$FIX/cdx-b.json" "$FIX/cdx-a-ref1.json" "$FIX/grype-1moderate.json" "$FIX/grype-clean.json"
+  [ "$status" -eq 3 ]
+}
+
+@test "scan-gate: duplicate purls are one SET member - a dup-only diff SKIPs (2), not a no-op PUSH" {
+  run "$GATE" "$FIX/cdx-dup.json" "$FIX/cdx-a-ref1.json" "$FIX/grype-clean.json" "$FIX/grype-clean.json"
+  [ "$status" -eq 2 ]
+}
+
+@test "scan-gate: an embedded-newline purl stays one distinct member, not two SKIP-matching lines" {
+  # a raw-line multiset would split the forged purl into lines equal to {bash,curl} and SKIP a real
+  # inventory change; the jq-array compare keeps it distinct, so this is NOT a skip.
+  run "$GATE" "$FIX/cdx-newline.json" "$FIX/cdx-a-ref1.json" "$FIX/grype-clean.json" "$FIX/grype-clean.json"
+  [ "$status" -ne 2 ]
+}
