@@ -13,6 +13,11 @@ ARG WOLFI_BASE=cgr.dev/chainguard/wolfi-base
 # ============ base: generic sluice core (published + cosign-signed) =====================
 FROM ${WOLFI_BASE} AS base
 
+# OCI provenance: links the GHCR package to the repo; revision is CI-stamped (empty on local builds).
+ARG VCS_REF=""
+LABEL org.opencontainers.image.source="https://github.com/Pyronewbic/Sluice" \
+      org.opencontainers.image.revision="${VCS_REF}"
+
 # Add the full Wolfi OS repo so SLUICE_EXTRA_PKGS can pull anything Wolfi ships. The signing key is
 # VENDORED (sha256 pinned in test/verify-ci-supplychain-unit.bats), never fetched at build; if upstream
 # rotates it, apk fails closed until the copy is refreshed (re-fetch from packages.wolfi.dev AND the

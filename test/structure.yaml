@@ -101,3 +101,8 @@ metadataTest:
   envVars:
     - key: NPM_CONFIG_PREFIX
       value: /home/sluice/.npm-global
+  # OCI provenance label links the GHCR package back to this repo (revision is CI-stamped and
+  # empty on local builds, so only the static source label is asserted).
+  labels:
+    - key: org.opencontainers.image.source
+      value: https://github.com/Pyronewbic/Sluice
