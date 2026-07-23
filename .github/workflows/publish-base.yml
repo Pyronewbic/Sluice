@@ -1,15 +1,19 @@
 name: publish base image
 
-# Two modes, one signing identity (this file at refs/tags/v* or refs/heads/main - the launcher
+# One build, evaluated then promoted - the published bytes are always the evaluated bytes. Every run
+# builds+pushes the multi-arch base ONCE to a throwaway :candidate digest, structure-tests both arches
+# and scans that exact digest, and only then re-tags it (imagetools create, no rebuild) onto the real
+# tags. Two modes, one signing identity (this file at refs/tags/v* or refs/heads/main - the launcher
 # pins exactly these two refs of exactly this workflow):
 #
-#   release (a v* tag): build amd64+arm64, structure-test BOTH arches, push :<tag> AND :latest,
-#     sign + attest. No scan gate - release day moves :latest unconditionally (the human override).
+#   release (a v* TAG PUSH): promote the evaluated digest to :<tag> AND :latest, sign + attest. No scan
+#     gate - release day moves :latest unconditionally (the human override). A workflow_dispatch from a
+#     tag ref is REFUSED (it would repush a frozen version tag); dispatch from a branch to refresh.
 #
-#   refresh (weekly schedule / manual dispatch): rebuild from rolling Wolfi, structure-test both
-#     arches, then push :latest ONLY if scripts/base-scan-gate.sh rules the candidate purl-different
-#     and no worse than the published :latest at every severity tier. Identical inventory skips the
-#     push; a worse scan or an unevaluable gate fails the job (fail closed). Version tags stay frozen.
+#   refresh (weekly schedule / branch dispatch): promote to :latest ONLY if scripts/base-scan-gate.sh
+#     rules the candidate purl-different and no worse than the published :latest at every severity tier.
+#     Identical inventory skips; a worse scan or an unevaluable gate fails the job (fail closed). Version
+#     tags stay frozen.
 #
 # The refresh exists because the base used to fossilize between releases: rolling Wolfi ships CVE
 # fixes continuously (a gh rebuilt against a patched grpc, a fixed libnghttp2) that a tag-only
@@ -54,47 +58,63 @@ jobs:
       - name: Mode (release on a v* tag, refresh on schedule/dispatch)
         id: mode
         env:
+          EVENT: ${{ github.event_name }}
           REF_TYPE: ${{ github.ref_type }}
         run: |
           set -euo pipefail
-          if [ "$REF_TYPE" = tag ]; then echo "mode=release"; else echo "mode=refresh"; fi >> "$GITHUB_OUTPUT"
+          # A workflow_dispatch can be launched FROM a tag ref; keying release on ref_type alone would
+          # then run ungated release mode and force-repush the frozen version tag. Refuse it outright.
+          if [ "$EVENT" = workflow_dispatch ] && [ "$REF_TYPE" = tag ]; then
+            echo "::error::manual dispatch from a tag ref would repush a frozen version tag - refusing (dispatch from a branch to refresh)"
+            exit 1
+          fi
+          # Release only on an actual TAG PUSH; schedule and branch dispatch are gated refreshes.
+          if [ "$EVENT" = push ] && [ "$REF_TYPE" = tag ]; then echo "mode=release"; else echo "mode=refresh"; fi >> "$GITHUB_OUTPUT"
 
-      # --- gate 1: build amd64 and assert the baked invariants before publishing anything.
-      #     Retried: base layers pull from registries that occasionally time out on shared runners. ---
-      - name: Build the base (amd64, retried)
+      # --- build + push the multi-arch base ONCE to a throwaway :candidate pointer, capturing the index
+      #     digest. Every gate below evaluates THIS exact digest; :latest / :vX are only re-tagged onto it
+      #     after all gates pass (promote step). The old flow built a :smoke image, tested THAT, then did a
+      #     SECOND from-scratch rebuild to push - so the published bytes were never the evaluated bytes. ---
+      - name: Build + push the candidate (multi-arch, by digest; retried)
+        id: candidate
         run: |
           set -euo pipefail
           for i in 1 2 3; do
-            if timeout 240 docker build --target base -t sluice-base:smoke core/; then exit 0; fi
-            echo "::warning::amd64 base build attempt $i failed or timed out; retrying"
+            if timeout 900 docker buildx build --platform linux/amd64,linux/arm64 --target base \
+                 --build-arg VCS_REF="$GITHUB_SHA" \
+                 -t "${IMAGE}:candidate" --push --metadata-file cand-meta.json core/; then
+              d="$(jq -r '."containerimage.digest" // empty' cand-meta.json)"
+              case "$d" in sha256:*) echo "digest=$d" >> "$GITHUB_OUTPUT"; exit 0 ;; esac
+              echo "::error::candidate push produced no digest - refusing to evaluate blind"; exit 1
+            fi
+            echo "::warning::candidate build/push attempt $i failed or timed out; retrying"
             sleep $((i * 10))
           done
-          echo "::error::amd64 base build failed after 3 attempts"
-          exit 1
+          echo "::error::candidate build/push failed after 3 attempts"; exit 1
       - name: Install container-structure-test (pinned, checksummed)
         run: bash scripts/install-cst.sh
-      - name: Assert base invariants (amd64)
-        # Same spec the PR gate runs (acceptance.yml) - no sudo, uid 1000, firewall packages, keyless.
-        run: container-structure-test test --image sluice-base:smoke --config test/structure.yaml
-
-      # --- gate 2: the arm64 image is PUSHED, so it gets the same invariants (emulated via qemu) ---
-      - name: Build the base (arm64 under qemu, retried)
+      - name: Assert base invariants on the PUSHED digest (amd64 + arm64)
+        # Same spec the PR gate runs (no sudo, uid 1000, firewall packages, keyless) - now against the
+        # exact bytes that will be promoted, not a sibling build. amd64 is the host platform (a plain
+        # digest pull resolves to it); arm64 is the sibling manifest by its own digest, tested under qemu.
+        env:
+          DIGEST: ${{ steps.candidate.outputs.digest }}
         run: |
           set -euo pipefail
-          for i in 1 2 3; do
-            if timeout 900 docker buildx build --platform linux/arm64 --target base --load -t sluice-base:smoke-arm64 core/; then exit 0; fi
-            echo "::warning::arm64 base build attempt $i failed or timed out; retrying"
-            sleep $((i * 10))
-          done
-          echo "::error::arm64 base build failed after 3 attempts"
-          exit 1
-      - name: Assert base invariants (arm64, emulated)
-        run: container-structure-test test --image sluice-base:smoke-arm64 --config test/structure.yaml
+          docker pull "${IMAGE}@${DIGEST}"
+          container-structure-test test --image "${IMAGE}@${DIGEST}" --config test/structure.yaml
+          arm="$(docker buildx imagetools inspect "${IMAGE}@${DIGEST}" --format '{{json .}}' \
+                 | jq -r '.manifest.manifests[] | select(.platform.architecture=="arm64" and .platform.os=="linux") | .digest')"
+          case "$arm" in sha256:*) ;; *) echo "::error::no arm64 manifest in the pushed index"; exit 1 ;; esac
+          docker pull "${IMAGE}@${arm}"
+          container-structure-test test --image "${IMAGE}@${arm}" --config test/structure.yaml
 
-      # --- the candidate SBOM: the attest predicate and the refresh gate share it. Derived from the
-      #     amd64 smoke image; the apk/npm set is arch-invariant (only the purl arch qualifier differs). ---
-      - name: Generate base SBOM (from the amd64 smoke image)
-        run: bin/sluice __sbom sluice-base:smoke > base.cdx.json
+      # --- the candidate SBOM: attest predicate + the refresh gate share it. From the pushed amd64 image
+      #     (pulled above); the apk/npm set is arch-invariant (only the purl arch qualifier differs). ---
+      - name: Generate base SBOM (from the pushed amd64 image)
+        env:
+          DIGEST: ${{ steps.candidate.outputs.digest }}
+        run: bin/sluice __sbom "${IMAGE}@${DIGEST}" > base.cdx.json
 
       # --- refresh mode only: the scan gate against the published :latest ---
       - name: Pull the published :latest (refresh baseline, retried)
@@ -114,14 +134,17 @@ jobs:
       - name: Scan gate (push only if no worse than the published base)
         id: gate
         if: steps.mode.outputs.mode == 'refresh'
+        env:
+          DIGEST: ${{ steps.candidate.outputs.digest }}
         run: |
           set -euo pipefail
           # Inventory identity comes from the sluice SBOMs; severity comes from scanning the IMAGES.
           # Never scan the sbom: - the six-ecosystem SBOM lists gh as one apk package, so it is blind
-          # to go-module CVEs vendored inside it (grype's syft catalog of the image sees them).
+          # to go-module CVEs vendored inside it (grype's syft catalog of the image sees them). The
+          # candidate side scans the exact pushed digest that will be promoted.
           bin/sluice __sbom "${IMAGE}:latest" > current.cdx.json
-          grype "docker:sluice-base:smoke" -o json > cand.grype.json
-          grype "docker:${IMAGE}:latest"   -o json > cur.grype.json
+          grype "docker:${IMAGE}@${DIGEST}" -o json > cand.grype.json
+          grype "docker:${IMAGE}:latest"    -o json > cur.grype.json
           rc=0; scripts/base-scan-gate.sh base.cdx.json current.cdx.json cand.grype.json cur.grype.json || rc=$?
           case "$rc" in
             0) echo "push=yes" >> "$GITHUB_OUTPUT" ;;
@@ -142,36 +165,24 @@ jobs:
           set -euo pipefail
           if [ "$MODE" = release ]; then echo "push=yes"; else echo "push=${GATE_PUSH:-no}"; fi >> "$GITHUB_OUTPUT"
 
-      # --- build + push the multi-arch base (layers cached from the smoke builds), then sign the digest ---
-      - name: Build + push (amd64 + arm64, retried)
+      # --- promote the EVALUATED candidate digest to the real tags by re-tagging (imagetools create
+      #     copies no bytes and rebuilds nothing) - so :latest always points at bytes that passed every
+      #     gate above. Refresh moves :latest only; release moves :latest AND the frozen version tag. ---
+      - name: Promote the evaluated digest
         id: push
         if: steps.decide.outputs.push == 'yes'
         env:
           MODE: ${{ steps.mode.outputs.mode }}
           REF_NAME: ${{ github.ref_name }}
+          DIGEST: ${{ steps.candidate.outputs.digest }}
         run: |
           set -euo pipefail
           if [ "$MODE" = release ]; then
-            TAGS=(-t "${IMAGE}:${REF_NAME}" -t "${IMAGE}:latest")
+            docker buildx imagetools create -t "${IMAGE}:${REF_NAME}" -t "${IMAGE}:latest" "${IMAGE}@${DIGEST}"
           else
-            TAGS=(-t "${IMAGE}:latest")
+            docker buildx imagetools create -t "${IMAGE}:latest" "${IMAGE}@${DIGEST}"
           fi
-          for i in 1 2 3; do
-            if timeout 900 docker buildx build --platform linux/amd64,linux/arm64 --target base \
-                 --build-arg VCS_REF="$GITHUB_SHA" \
-                 "${TAGS[@]}" --push --metadata-file push-meta.json core/; then
-              digest="$(jq -r '."containerimage.digest" // empty' push-meta.json)"
-              case "$digest" in
-                sha256:*) echo "digest=$digest" >> "$GITHUB_OUTPUT"; exit 0 ;;
-              esac
-              echo "::error::push succeeded but no digest in the metadata - refusing to sign blind"
-              exit 1
-            fi
-            echo "::warning::multi-arch push attempt $i failed or timed out; retrying"
-            sleep $((i * 10))
-          done
-          echo "::error::multi-arch push failed after 3 attempts"
-          exit 1
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
       - name: cosign sign (keyless)
         if: steps.decide.outputs.push == 'yes'
         env:
